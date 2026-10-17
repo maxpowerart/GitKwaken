@@ -356,6 +356,10 @@ pub fn discard(dir: &Path) -> Result<()> {
 pub fn run(cmd: &str, args: &[String]) -> Result<()> {
     match cmd {
         "discard" => discard(Path::new(args.first().context("discard <repo>")?)),
+        "diff-open" => diff_open(
+            Path::new(args.first().context("diff-open <repo> <path>")?),
+            args.get(1).context("diff-open <repo> <path>")?,
+        ),
         "stage" => {
             let dir = args.first().context("stage <repo> [files]")?;
             let n = args
@@ -385,6 +389,37 @@ pub fn run(cmd: &str, args: &[String]) -> Result<()> {
     }
 }
 
+/// What opening an unstaged file's diff costs in the app, step by step:
+/// reading both sides (index blob + worktree file through the filter
+/// pipeline) and the diff itself, as `Session::diff` runs them.
+pub fn diff_open(dir: &Path, path: &str) -> Result<()> {
+    crate::regress::own_repo(dir)?;
+    let repo = gk_core::Repo::open(dir, CommandLog::default())?;
+    let target = gk_core::content::DiffTarget::Unstaged { path: path.into() };
+    let (old, new) = median(&format!("load_sides {path}"), 7, || {
+        gk_core::content::load_sides(&repo, &target)
+    })?;
+    let (old, new) = (old.unwrap_or_default(), new.unwrap_or_default());
+    let d = median("gk_diff::diff (3 lines context)", 7, || {
+        Ok(gk_diff::diff(&old, &new, gk_diff::Options::default()))
+    })?;
+    median("load_sides + diff", 7, || {
+        let (o, n) = gk_core::content::load_sides(&repo, &target)?;
+        Ok(gk_diff::diff(
+            o.as_deref().unwrap_or_default(),
+            n.as_deref().unwrap_or_default(),
+            gk_diff::Options::default(),
+        ))
+    })?;
+    println!(
+        "{:<52} {} + {} bytes, {} diff lines",
+        "",
+        old.len(),
+        new.len(),
+        d.lines.len()
+    );
+    Ok(())
+}
 #[cfg(test)]
 mod tests {
     use super::*;

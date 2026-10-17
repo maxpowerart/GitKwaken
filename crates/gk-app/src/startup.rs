@@ -1,7 +1,8 @@
 //! Startup trace for measuring the "first frame from cache" budget end to end.
 //!
 //! With `GITKWAKEN_STARTUP_LOG=<file>` set, each milestone is appended once as
-//! `<label> <ms since main()> <unix ms>`; the unix time lets a harness add the
+//! `<label> <ms> <unix ms>` (ms since `main()`, or the measured duration for
+//! [`record`]); the unix time lets a harness add the
 //! time from process creation to `main()`. Without the variable nothing runs
 //! beyond one environment lookup.
 
@@ -31,8 +32,19 @@ pub fn active() -> bool {
 
 /// Records `label` (once per label). `last` marks the final milestone.
 pub fn mark(label: &str, last: bool) {
+    let Some(start) = START.get() else { return };
+    write(label, start.elapsed(), last);
+}
+
+/// Records a measured duration (e.g. diff request to rendered) under `label`,
+/// once per label; does not end the trace.
+pub fn record(label: &str, took: std::time::Duration) {
+    write(label, took, false);
+}
+
+fn write(label: &str, took: std::time::Duration, last: bool) {
     static SEEN: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
-    let (Some(start), Some(Some(path))) = (START.get(), LOG.get()) else {
+    let Some(Some(path)) = LOG.get() else {
         return;
     };
     let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
@@ -44,7 +56,7 @@ pub fn mark(label: &str, last: bool) {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
-    let ms = start.elapsed().as_secs_f64() * 1000.0;
+    let ms = took.as_secs_f64() * 1000.0;
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)

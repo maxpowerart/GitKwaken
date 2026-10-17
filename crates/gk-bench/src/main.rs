@@ -50,7 +50,7 @@ fn main() -> Result<()> {
             let n: usize = args.get(3).context("commits")?.parse()?;
             regress::gen_dag(&dir, n)
         }
-        Some(cmd @ ("stage" | "discard" | "filter" | "diff" | "file-history")) => {
+        Some(cmd @ ("stage" | "discard" | "filter" | "diff" | "diff-open" | "file-history")) => {
             budgets::run(cmd, &args[2..])
         }
         // Startup / latency budgets (see startup.rs).
@@ -60,7 +60,7 @@ fn main() -> Result<()> {
             bench_history(&dir)
         }
         _ => bail!(
-            "usage: gk-bench gen <dir> <files> | status <dir> [runs] | status-mem <dir> [entries] | history <dir> | regress [opts] | gen-dag <dir> <n> | stage <repo> [n] | discard <repo> | filter [n] | diff [lines] | file-history <repo> [paths]"
+            "usage: gk-bench gen <dir> <files> | status <dir> [runs] | status-mem <dir> [entries] | history <dir> | regress [opts] | gen-dag <dir> <n> | stage <repo> [n] | discard <repo> | filter [n] | diff [lines] | diff-open <repo> <path> | file-history <repo> [paths]"
         ),
     }
 }

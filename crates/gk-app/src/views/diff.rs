@@ -99,6 +99,9 @@ pub struct DiffView {
     whole_file: bool,
     shown: Option<Shown>,
     loading_since: Option<Instant>,
+    /// Startup trace only (`GITKWAKEN_STARTUP_LOG`): when the shown target was
+    /// first requested, to log request-to-rendered time once.
+    trace_open: Option<(DiffTarget, Instant)>,
     inline: HashMap<u32, Inline>,
     sel: Selection,
     /// Line where the current drag selection started.
@@ -177,6 +180,12 @@ impl DiffView {
             _ => status_gen,
         };
         let mut failed: Option<String> = None;
+        if crate::startup::active()
+            && self.shown.as_ref().is_none_or(|s| &s.target != target)
+            && self.trace_open.as_ref().is_none_or(|(t, _)| t != target)
+        {
+            self.trace_open = Some((target.clone(), Instant::now()));
+        }
         // Large files: measure first, diff only within the limit or on request.
         let limit = shared.settings.diff.max_file_kb.saturating_mul(1024);
         let gate = self
@@ -266,6 +275,13 @@ impl DiffView {
             } else {
                 let editable = current && self.editable(mode, &shown.target);
                 self.body(ui, &shown, mode, editable, &mut acts, shared);
+                if let Some((t, at)) = self.trace_open.take_if(|(t, _)| *t == shown.target) {
+                    let lines = shown.diff.lines.len();
+                    crate::startup::record(
+                        &format!("diff_open:{}:{lines}_lines", t.path()),
+                        at.elapsed(),
+                    );
+                }
             }
             self.shown = Some(shown);
         } else if spinner {

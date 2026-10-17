@@ -176,10 +176,12 @@ pub fn diff(old: &[u8], new: &[u8], opts: Options) -> FileDiff {
         let nb: Vec<Vec<u8>> = b.iter().map(|l| normalize_ws(l)).collect();
         line_flags(&na, &nb)
     } else {
-        let strip = |l: &&[u8]| -> Vec<u8> { l.strip_suffix(b"\r").unwrap_or(l).to_vec() };
+        fn strip(l: &[u8]) -> &[u8] {
+            l.strip_suffix(b"\r").unwrap_or(l)
+        }
         // Compare ignoring a trailing CR so mixed line endings don't flag every line.
-        let na: Vec<Vec<u8>> = a.iter().map(strip).collect();
-        let nb: Vec<Vec<u8>> = b.iter().map(strip).collect();
+        let na: Vec<&[u8]> = a.iter().map(|l| strip(l)).collect();
+        let nb: Vec<&[u8]> = b.iter().map(|l| strip(l)).collect();
         line_flags(&na, &nb)
     };
 
@@ -235,10 +237,14 @@ pub fn diff(old: &[u8], new: &[u8], opts: Options) -> FileDiff {
         (start, out.text.len() as u32)
     };
 
+    // Ranges ascend, so the line position is advanced from the previous
+    // hunk instead of recounted from the top (quadratic on many hunks).
+    let mut at = (0usize, 0usize, 0usize);
     for r in ranges {
         let hunk_idx = out.hunks.len() as u32;
         let first_line = out.lines.len();
-        let (oi, nj) = position_at(&seq, r.start);
+        at = advance(&seq, at, r.start);
+        let (_, oi, nj) = at;
         let (mut old_start, mut new_start) = (oi as u32 + 1, nj as u32 + 1);
         let (mut old_len, mut new_len) = (0u32, 0u32);
         for &(kind, ai, bj) in &seq[r.clone()] {
@@ -314,10 +320,14 @@ pub fn diff(old: &[u8], new: &[u8], opts: Options) -> FileDiff {
     out
 }
 
-/// Number of old and new lines consumed before `seq[k]`.
-fn position_at(seq: &[(LineKind, usize, usize)], k: usize) -> (usize, usize) {
-    let (mut o, mut n) = (0, 0);
-    for s in &seq[..k] {
+/// Moves `(index, old lines, new lines)` consumed before `seq[from]` forward
+/// to the counts before `seq[k]` (`k >= from`).
+fn advance(
+    seq: &[(LineKind, usize, usize)],
+    (from, mut o, mut n): (usize, usize, usize),
+    k: usize,
+) -> (usize, usize, usize) {
+    for s in &seq[from..k] {
         match s.0 {
             LineKind::Removed => o += 1,
             LineKind::Added => n += 1,
@@ -327,7 +337,7 @@ fn position_at(seq: &[(LineKind, usize, usize)], k: usize) -> (usize, usize) {
             }
         }
     }
-    (o, n)
+    (k, o, n)
 }
 
 pub(crate) struct Seq<'a, T>(pub &'a [T]);
@@ -343,10 +353,21 @@ impl<'a, T: AsRef<[u8]>> imara_diff::TokenSource for Seq<'a, T> {
     }
 }
 
+/// Above this many lines (both sides) the diff uses Myers instead of
+/// Histogram: Histogram reads better on code, but its cost grows with the
+/// number of separate edits (50k lines with 1,500 scattered edits: 72 ms vs
+/// 0.9 ms for Myers, git's default).
+const HISTOGRAM_MAX_LINES: usize = 20_000;
+
 /// Per-line removed/added flags for the two sides.
 fn line_flags<T: AsRef<[u8]>>(a: &[T], b: &[T]) -> (Vec<bool>, Vec<bool>) {
     let input = InternedInput::new(Seq(a), Seq(b));
-    let mut d = Diff::compute(Algorithm::Histogram, &input);
+    let algo = if a.len() + b.len() > HISTOGRAM_MAX_LINES {
+        Algorithm::Myers
+    } else {
+        Algorithm::Histogram
+    };
+    let mut d = Diff::compute(algo, &input);
     d.postprocess_no_heuristic(&input);
     let removed = (0..a.len() as u32).map(|i| d.is_removed(i)).collect();
     let added = (0..b.len() as u32).map(|i| d.is_added(i)).collect();
@@ -434,6 +455,30 @@ mod tests {
         assert_eq!(d.deletions, 1);
         assert_eq!(d.line_bytes(&d.lines[0]), b"a\r");
         assert_eq!(d.line_text(&d.lines[0]), "a");
+    }
+
+    #[test]
+    fn large_scattered_edits_are_exact_and_fast() {
+        // Above HISTOGRAM_MAX_LINES (Myers path): 30k lines, every 33rd edited.
+        let line = |i: usize, edited: bool| {
+            if edited {
+                format!("// edited {i}\n")
+            } else {
+                format!("fn line_{i}() {{ compute({i}); }}\n")
+            }
+        };
+        let a: String = (1..=30_000).map(|i| line(i, false)).collect();
+        let b: String = (1..=30_000).map(|i| line(i, i % 33 == 0)).collect();
+        let t = std::time::Instant::now();
+        let d = diff(a.as_bytes(), b.as_bytes(), Options::default());
+        let took = t.elapsed();
+        assert_eq!((d.additions, d.deletions), (909, 909));
+        assert_eq!(d.hunks.len(), 909);
+        let h = &d.hunks[1];
+        assert_eq!((h.old_start, h.old_len, h.new_start, h.new_len), (63, 7, 63, 7));
+        // Was ~70 ms (Histogram) plus a quadratic hunk-position scan; generous
+        // bound for debug builds on slow CI machines.
+        assert!(took.as_millis() < 2_000, "{took:?}");
     }
 
     #[test]
