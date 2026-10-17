@@ -99,6 +99,18 @@ impl Gfx {
         };
         unsafe { self.context.ClearRenderTargetView(&rtv, &clear) };
         self.renderer.render(&self.context, &rtv, ctx, output)?;
+        if let Some(path) = take_screenshot_request() {
+            match self.capture() {
+                Ok(img) => {
+                    let result = save_png(&path, &img);
+                    log::info!("gk-dx11: screenshot {} -> {result:?}", path.display());
+                    if std::env::var_os("GK_DX11_SCREENSHOT_EXIT").is_some() {
+                        std::process::exit(if result.is_ok() { 0 } else { 1 });
+                    }
+                }
+                Err(e) => log::warn!("gk-dx11: screenshot failed: {e}"),
+            }
+        }
 
         let hr = unsafe { self.swap_chain.Present(u32::from(vsync), DXGI_PRESENT(0)) };
         if hr == DXGI_STATUS_OCCLUDED {
@@ -106,6 +118,36 @@ impl Gfx {
         } else {
             hr.ok().map(|()| Presented::Shown)
         }
+    }
+
+    /// Reads the rendered back buffer as tightly packed RGBA.
+    fn capture(&self) -> windows::core::Result<([u32; 2], Vec<u8>)> {
+        let back: ID3D11Texture2D = unsafe { self.swap_chain.GetBuffer(0) }?;
+        let mut desc = D3D11_TEXTURE2D_DESC::default();
+        unsafe { back.GetDesc(&mut desc) };
+        desc.Usage = D3D11_USAGE_STAGING;
+        desc.BindFlags = 0;
+        desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ.0 as u32;
+        desc.MiscFlags = 0;
+        let mut staging = None;
+        unsafe { self.device.CreateTexture2D(&desc, None, Some(&mut staging)) }?;
+        let staging = staging.ok_or_else(|| windows::core::Error::from(E_INVALIDARG))?;
+        unsafe { self.context.CopyResource(&staging, &back) };
+        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+        unsafe { self.context.Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped)) }?;
+        let (w, h) = (desc.Width as usize, desc.Height as usize);
+        let mut rgba = Vec::with_capacity(w * h * 4);
+        for y in 0..h {
+            let row = unsafe {
+                std::slice::from_raw_parts((mapped.pData as *const u8).add(y * mapped.RowPitch as usize), w * 4)
+            };
+            for px in row.chunks_exact(4) {
+                // BGRA -> RGBA, opaque
+                rgba.extend_from_slice(&[px[2], px[1], px[0], 255]);
+            }
+        }
+        unsafe { self.context.Unmap(&staging, 0) };
+        Ok(([desc.Width, desc.Height], rgba))
     }
 
     fn resize(&mut self, size: [u32; 2]) -> windows::core::Result<()> {
@@ -125,6 +167,34 @@ impl Gfx {
         self.size = size;
         Ok(())
     }
+}
+
+/// `GK_DX11_SCREENSHOT=<file.png>` captures the window's own frame once,
+/// `GK_DX11_SCREENSHOT_AFTER_MS` (default 3000) after start; with
+/// `GK_DX11_SCREENSHOT_EXIT` set the process exits afterwards. Used for
+/// automated UI review; only this window's back buffer is read.
+fn take_screenshot_request() -> Option<std::path::PathBuf> {
+    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static START: OnceLock<std::time::Instant> = OnceLock::new();
+    static DONE: AtomicBool = AtomicBool::new(false);
+    let path = std::env::var_os("GK_DX11_SCREENSHOT")?;
+    let start = *START.get_or_init(std::time::Instant::now);
+    let after: u64 = std::env::var("GK_DX11_SCREENSHOT_AFTER_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(3000);
+    if DONE.load(Ordering::SeqCst) || start.elapsed().as_millis() < after as u128 {
+        return None;
+    }
+    DONE.store(true, Ordering::SeqCst);
+    Some(path.into())
+}
+
+fn save_png(path: &std::path::Path, (size, rgba): &([u32; 2], Vec<u8>)) -> Result<()> {
+    let file = std::io::BufWriter::new(std::fs::File::create(path)?);
+    let mut enc = png::Encoder::new(file, size[0], size[1]);
+    enc.set_color(png::ColorType::Rgba);
+    enc.set_depth(png::BitDepth::Eight);
+    enc.write_header()?.write_image_data(rgba)?;
+    Ok(())
 }
 
 /// Hardware first, then WARP (VMs, RDP, broken drivers).

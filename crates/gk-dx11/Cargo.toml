@@ -12,6 +12,7 @@ log = "0.4"
 
 [target.'cfg(windows)'.dependencies]
 egui-directx11 = "0.13"
+png = "0.18"
 egui-winit = { version = "0.35", default-features = false, features = ["clipboard", "links"] }
 winit = { version = "0.30.13", default-features = false, features = ["rwh_06"] }
 windows = { version = "0.62", features = [

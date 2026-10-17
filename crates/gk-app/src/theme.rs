@@ -88,6 +88,36 @@ impl Palette {
     }
 }
 
+/// Uses the platform UI fonts when present (Segoe UI / Consolas on Windows)
+/// and adds symbol and emoji fonts as fallbacks so icons like ⑂ ⇄ 🏷 render.
+pub fn install_fonts(ctx: &egui::Context) {
+    use egui::{FontData, FontDefinitions, FontFamily};
+    let mut fonts = FontDefinitions::default();
+    let dir = std::env::var_os("WINDIR").map(|w| std::path::PathBuf::from(w).join("Fonts"));
+    let load = |name: &str| -> Option<FontData> {
+        let p = dir.as_ref()?.join(name);
+        std::fs::read(p).ok().map(FontData::from_owned)
+    };
+    let mut add = |key: &str, file: &str, family: FontFamily, primary: bool| {
+        if let Some(data) = load(file) {
+            fonts.font_data.insert(key.to_string(), std::sync::Arc::new(data));
+            let list = fonts.families.entry(family).or_default();
+            if primary {
+                list.insert(0, key.to_string());
+            } else {
+                list.push(key.to_string());
+            }
+        }
+    };
+    add("segoe-ui", "segoeui.ttf", FontFamily::Proportional, true);
+    add("consolas", "consola.ttf", FontFamily::Monospace, true);
+    for family in [FontFamily::Proportional, FontFamily::Monospace] {
+        add("segoe-symbol", "seguisym.ttf", family.clone(), false);
+        add("segoe-emoji", "seguiemj.ttf", family, false);
+    }
+    ctx.set_fonts(fonts);
+}
+
 pub fn apply(ctx: &egui::Context, theme: gk_settings::Theme, ui_scale: f32, font_size: f32) -> Palette {
     let dark = match theme {
         gk_settings::Theme::Dark => true,

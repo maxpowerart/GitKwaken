@@ -46,6 +46,7 @@ pub struct GkApp {
 
 impl GkApp {
     pub fn new(ctx: &egui::Context, settings: Settings, initial: Vec<PathBuf>) -> Self {
+        theme::install_fonts(ctx);
         let palette = theme::apply(ctx, settings.theme, settings.ui_scale, settings.font_size);
         let c = ctx.clone();
         let askpass = gk_askpass::Server::start(Box::new(move || c.request_repaint())).ok().map(Arc::new);
@@ -158,7 +159,7 @@ impl GkApp {
                 }
                 ui.separator();
             }
-            if ui.button("＋").on_hover_text("Open repository (Ctrl+O)").clicked() {
+            if ui.button("+").on_hover_text("Open repository (Ctrl+O)").clicked() {
                 self.actions.push(Action::OpenRepoDialog);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

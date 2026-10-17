@@ -244,6 +244,10 @@ impl Running {
 
         let app = &mut self.app;
         let output = ctx.run_ui(input, |ui| app.ui(ui));
+        if std::env::var_os("GK_DX11_SCREENSHOT").is_some() {
+            // Keep frames coming until the scheduled screenshot is taken.
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
         self.textures.record(&output.textures_delta);
         let (mut r_out, platform, viewports) = egui_directx11::split_output(output);
         self.state.handle_platform_output_with_event_loop(&self.window, el, platform);
