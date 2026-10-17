@@ -160,6 +160,17 @@ pub fn hunk_keys(d: &FileDiff, h: usize) -> Vec<LineKey> {
         .unwrap_or_default()
 }
 
+/// Where a primary press in the diff body landed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Press {
+    /// A hunk header row (its buttons handle the click).
+    Header,
+    /// Line `n` of the diff.
+    Line(u32),
+    /// Empty space below the last row.
+    Empty,
+}
+
 /// Selected changed lines (indices into `FileDiff::lines`).
 #[derive(Debug, Default, Clone)]
 pub struct Selection {
@@ -192,6 +203,54 @@ impl Selection {
             self.lines.insert(i);
         }
         self.anchor = Some(i);
+    }
+
+    /// Applies a primary press (with Shift / Ctrl state) and returns the new
+    /// drag start. Presses on hunk headers leave everything untouched, so
+    /// their "Stage lines" buttons still see the selection on release.
+    pub fn press(
+        &mut self,
+        at: Press,
+        shift: bool,
+        command: bool,
+        drag_from: Option<u32>,
+        lines: &[Line],
+    ) -> Option<u32> {
+        let changed = |i: u32| {
+            lines
+                .get(i as usize)
+                .is_some_and(|l| l.kind != LineKind::Context)
+        };
+        match at {
+            Press::Header => drag_from,
+            Press::Line(i) if shift => {
+                let a = self.anchor.unwrap_or(i);
+                self.range(a, i, lines, command);
+                self.anchor = Some(a);
+                Some(a)
+            }
+            Press::Line(i) if command => {
+                if changed(i) {
+                    self.toggle(i);
+                }
+                None
+            }
+            Press::Line(i) => {
+                if changed(i) {
+                    self.single(i);
+                } else {
+                    self.clear();
+                    self.anchor = Some(i);
+                }
+                Some(i)
+            }
+            Press::Empty => {
+                if !shift && !command {
+                    self.clear();
+                }
+                None
+            }
+        }
     }
 
     /// Selects the changed lines between `a` and `b` (inclusive, any order);
@@ -355,6 +414,37 @@ mod tests {
         assert_eq!(s.lines.len(), 1);
         assert_eq!(s.count_in_hunk(&d, 0), 1);
         assert_eq!(s.text(&d), "+D\n");
+    }
+
+    #[test]
+    fn press_on_hunk_header_keeps_selection() {
+        let d = diff(b"a\nb\nc\n", b"a\nB\nc\nd\n", Options::default());
+        // lines: a, -b, +B, c, +d
+        let mut s = Selection::default();
+        let drag = s.press(Press::Line(2), false, false, None, &d.lines);
+        assert_eq!(drag, Some(2));
+        assert_eq!(s.lines.iter().copied().collect::<Vec<_>>(), vec![2]);
+        // pressing a header (e.g. its "Stage lines (1)" button) changes nothing
+        let drag = s.press(Press::Header, false, false, drag, &d.lines);
+        assert_eq!(drag, Some(2));
+        assert_eq!(s.lines.iter().copied().collect::<Vec<_>>(), vec![2]);
+        assert_eq!(s.anchor, Some(2));
+        // shift extends from the anchor, ctrl toggles, context lines just anchor
+        s.press(Press::Line(4), true, false, None, &d.lines);
+        assert_eq!(s.lines.len(), 2);
+        s.press(Press::Line(1), false, true, None, &d.lines);
+        assert_eq!(s.lines.len(), 3);
+        assert_eq!(
+            s.press(Press::Line(0), false, false, None, &d.lines),
+            Some(0)
+        );
+        assert!(s.is_empty() && s.anchor == Some(0));
+        // empty space clears (unless a modifier is held)
+        s.single(2);
+        assert_eq!(s.press(Press::Empty, false, true, Some(2), &d.lines), None);
+        assert!(!s.is_empty());
+        s.press(Press::Empty, false, false, None, &d.lines);
+        assert!(s.is_empty());
     }
 
     #[test]

@@ -25,6 +25,8 @@ gk-askpass = { path = "../gk-askpass" }
 gk-dx11 = { path = "../gk-dx11" }
 gk-update = { path = "../gk-update" }
 png = "0.18"
+syntect = { version = "5", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp", "ico", "tga"] }
 
 [build-dependencies]
 winresource = "0.1"

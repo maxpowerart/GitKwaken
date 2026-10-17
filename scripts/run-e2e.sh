@@ -34,7 +34,7 @@ bash "$ROOT/scripts/make-demo-repo.sh" "$WORK/r2" >/dev/null
 run stage-line "$WORK/r2" status
 cached=$(git -C "$WORK/r2" diff --cached -- README.md)
 rest=$(git -C "$WORK/r2" diff -- README.md)
-[[ "$cached" == *"+More docs."* ]] && [[ "$rest" == *"+"* ]] && [[ "$rest" != *"More docs."* ]] \
+[[ "$cached" == *"+More docs."* ]] && [[ "$rest" == *"+"* ]] && [[ "$rest" != *"+More docs."* ]] \
   && ok stage-line || bad stage-line "cached='$cached' unstaged='$rest'"
 
 # 3. create and check out a branch
@@ -54,6 +54,20 @@ grep -q 'first' "$WORK/r4/src/lib.rs" && [ -z "$unmerged" ] && [ "$markers" = "0
 # 5. command palette switches the view (checked on the screenshot)
 run palette "$WORK/r1" status
 [ -s "$OUT/palette.png" ] && ok palette-ran || bad palette-ran "no screenshot"
+
+# 6. drag README.md onto the staged list
+bash "$ROOT/scripts/make-demo-repo.sh" "$WORK/r6" >/dev/null
+run drag "$WORK/r6" status
+staged=$(git -C "$WORK/r6" diff --cached --name-only | tr "
+" " ")
+unst=$(git -C "$WORK/r6" diff --name-only -- README.md)
+[[ "$staged" == *README.md* ]] && [ -z "$unst" ] && ok drag-to-stage || bad drag-to-stage "staged='$staged'"
+
+# 7. staging a file that still has conflict markers asks first
+bash "$ROOT/scripts/make-demo-repo.sh" "$WORK/r7" --conflict >/dev/null
+run conflict-guard "$WORK/r7" status
+unmerged=$(git -C "$WORK/r7" diff --name-only --diff-filter=U)
+[ "$unmerged" = "src/lib.rs" ] && ok conflict-guard || bad conflict-guard "file was staged with markers"
 
 echo "passed $pass, failed $fail (screenshots: $OUT)"
 [ "$fail" = 0 ]

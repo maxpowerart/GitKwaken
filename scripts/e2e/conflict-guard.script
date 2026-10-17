@@ -1,0 +1,6 @@
+# Tick the checkbox of a conflicted file that still has markers.
+wait 3000
+click 266 213
+wait 1500
+shot $OUT/conflict-guard.png
+exit

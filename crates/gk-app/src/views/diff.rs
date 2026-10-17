@@ -7,6 +7,8 @@
 //! loaded diff ([`model::Layout`]); word highlights lazily per visible line.
 
 mod model;
+mod preview;
+mod syntax;
 
 use crate::app::Shared;
 use egui::text::{LayoutJob, TextFormat};
@@ -14,10 +16,11 @@ use egui::{Align2, Color32, FontId, Id, Pos2, Rect, RichText, Sense, Ui, pos2, v
 use gk_core::content::DiffTarget;
 use gk_core::{Load, Session};
 use gk_diff::{FileDiff, Line, LineKind};
-use model::{Layout, LineKey, NONE, Row, Selection};
+use model::{Layout, LineKey, NONE, Press, Row, Selection};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ops::Range;
+use syntax::{Highlights, HlCache, Span};
 
 /// Below this width the diff header puts the path on its own row.
 const NARROW_TOOLBAR: f32 = 560.0;
@@ -41,8 +44,6 @@ pub enum DiffMode {
 const SPINNER_DELAY: Duration = Duration::from_millis(150);
 /// Word-highlight cache entries kept before the cache is reset.
 const INLINE_CACHE_MAX: usize = 4096;
-
-const IMAGE_EXTS: [&str; 8] = ["png", "jpg", "jpeg", "gif", "bmp", "webp", "ico", "tga"];
 
 /// Highlight ranges of a paired (removed, added) line.
 type Inline = Arc<(Vec<Range<usize>>, Vec<Range<usize>>)>;
@@ -94,6 +95,10 @@ pub struct DiffView {
     row_h: f32,
     /// Worktree size of a binary file, per target.
     file_size: Option<(DiffTarget, Option<u64>)>,
+    /// Syntax highlight results of recently shown diffs.
+    syntax: HlCache,
+    /// Before / after preview of changed images.
+    images: preview::ImagePreview,
 }
 
 impl DiffView {
@@ -180,7 +185,10 @@ impl DiffView {
             );
         } else if let Some(shown) = self.shown.take() {
             let d = shown.diff.clone();
-            if d.binary {
+            if d.binary && preview::is_image(shown.target.path()) {
+                self.images
+                    .show(ui, session.repo(), &shown.target, diff_gen, &shared.palette);
+            } else if d.binary {
                 self.binary_info(ui, session, &shown.target, shared);
             } else if d.lines.is_empty() {
                 ui.add_space(8.0);
@@ -220,6 +228,7 @@ impl DiffView {
                 let same =
                     s.diff.lines == d.lines && s.diff.text == d.text && s.diff.binary == d.binary;
                 if same {
+                    self.syntax.rekey(&s.diff, &d);
                     s.diff = d;
                     return;
                 }
@@ -404,11 +413,7 @@ impl DiffView {
     ) {
         let p = shared.palette;
         let path = target.path();
-        let ext = path
-            .rsplit_once('.')
-            .map(|(_, e)| e.to_ascii_lowercase())
-            .unwrap_or_default();
-        let image = IMAGE_EXTS.contains(&ext.as_str());
+        let image = preview::is_image(path);
         if !matches!(&self.file_size, Some((t, _)) if t == target) {
             // One stat per target, only for files that exist in the worktree.
             let size = match target {
@@ -470,6 +475,24 @@ impl DiffView {
             } else {
                 p.removed_word
             }
+        };
+        // Token colors, computed in the background; plain text until ready.
+        let syn: Option<Arc<Highlights>> =
+            if shared.settings.diff.syntax_highlight && d.lines.len() <= syntax::MAX_LINES {
+                self.syntax.get_or_start(&shown.diff, p.dark, || {
+                    syntax::spawn(
+                        shown.diff.clone(),
+                        shown.target.path().to_string(),
+                        p.dark,
+                        ui.ctx().clone(),
+                    )
+                })
+            } else {
+                None
+            };
+        let spans_of = |i: u32, kind: LineKind, old_side: bool| -> &[Span] {
+            syn.as_deref()
+                .map_or(&[], |h| h.spans(i as usize, kind, old_side))
         };
 
         let mut sa = egui::ScrollArea::both()
@@ -538,35 +561,12 @@ impl DiffView {
             if pressed && body.is_pointer_button_down_on() {
                 body.request_focus();
                 if let Some(pos) = body.interact_pointer_pos() {
-                    match line_at(pos) {
-                        Some(i) if !on_header(pos) => {
-                            if shift {
-                                let a = self.sel.anchor.unwrap_or(i);
-                                self.sel.range(a, i, &d.lines, command);
-                                self.sel.anchor = Some(a);
-                                self.drag_from = Some(a);
-                            } else if command {
-                                if is_changed(i) {
-                                    self.sel.toggle(i);
-                                }
-                                self.drag_from = None;
-                            } else {
-                                if is_changed(i) {
-                                    self.sel.single(i);
-                                } else {
-                                    self.sel.clear();
-                                    self.sel.anchor = Some(i);
-                                }
-                                self.drag_from = Some(i);
-                            }
-                        }
-                        _ => {
-                            if !shift && !command {
-                                self.sel.clear();
-                            }
-                            self.drag_from = None;
-                        }
-                    }
+                    let at = if on_header(pos) {
+                        Press::Header
+                    } else {
+                        line_at(pos).map_or(Press::Empty, Press::Line)
+                    };
+                    self.drag_from = self.sel.press(at, shift, command, self.drag_from, &d.lines);
                 }
             }
             if body.dragged()
@@ -802,6 +802,7 @@ impl DiffView {
                         let job = line_job(
                             &line_text(d, l, false),
                             &hls,
+                            spans_of(i, l.kind, false),
                             hl(l.kind),
                             &font,
                             text_color,
@@ -870,6 +871,7 @@ impl DiffView {
                             let job = line_job(
                                 &line_text(d, l, left),
                                 &hls,
+                                spans_of(idx, l.kind, left),
                                 hl(l.kind),
                                 &font,
                                 text_color,
@@ -1165,6 +1167,7 @@ fn line_text<'a>(d: &'a FileDiff, l: &Line, old_side: bool) -> Cow<'a, str> {
 fn line_job(
     text: &str,
     hl: &[Range<usize>],
+    syn: &[Span],
     hl_color: Color32,
     font: &FontId,
     color: Color32,
@@ -1176,17 +1179,33 @@ fn line_job(
     let mut job = LayoutJob::default();
     let mut col = 0usize;
     let mut buf = String::new();
+    // Word-highlight segments (background), split further at token
+    // boundaries (foreground). Both span lists are sorted and disjoint.
+    let mut si = 0usize;
     for (r, h) in model::segments(cut.len(), hl) {
-        buf.clear();
-        let Some(part) = cut.get(r) else { continue };
-        model::expand_tabs(part, &mut col, tab, &mut buf);
-        let format = TextFormat {
-            font_id: font.clone(),
-            color,
-            background: if h { hl_color } else { Color32::TRANSPARENT },
-            ..Default::default()
-        };
-        job.append(&buf, 0.0, format);
+        let mut pos = r.start;
+        while pos < r.end {
+            while si < syn.len() && (syn[si].end as usize) <= pos {
+                si += 1;
+            }
+            let (end, fg) = match syn.get(si) {
+                Some(s) if (s.start as usize) <= pos => ((s.end as usize).min(r.end), s.color),
+                Some(s) => ((s.start as usize).min(r.end), color),
+                None => (r.end, color),
+            };
+            let piece = pos..end;
+            pos = end;
+            buf.clear();
+            let Some(part) = cut.get(piece) else { continue };
+            model::expand_tabs(part, &mut col, tab, &mut buf);
+            let format = TextFormat {
+                font_id: font.clone(),
+                color: fg,
+                background: if h { hl_color } else { Color32::TRANSPARENT },
+                ..Default::default()
+            };
+            job.append(&buf, 0.0, format);
+        }
     }
     let note = TextFormat {
         font_id: font.clone(),
@@ -1256,6 +1275,7 @@ mod tests {
         let j = line_job(
             "a\tb",
             std::slice::from_ref(&(2..3)),
+            &[],
             Color32::RED,
             &f,
             Color32::WHITE,
@@ -1271,6 +1291,55 @@ mod tests {
                 .iter()
                 .any(|s| s.format.background == Color32::RED
                     && &j.text[s.byte_range.start.0..s.byte_range.end.0] == "b")
+        );
+    }
+
+    #[test]
+    fn job_combines_tokens_and_word_highlights() {
+        let f = FontId::monospace(12.0);
+        // "let x = 1": token "let" blue, "1" green; word highlight over "x = 1"
+        let syn = [
+            Span {
+                start: 0,
+                end: 3,
+                color: Color32::BLUE,
+            },
+            Span {
+                start: 8,
+                end: 9,
+                color: Color32::GREEN,
+            },
+        ];
+        let j = line_job(
+            "let x = 1",
+            std::slice::from_ref(&(4..9)),
+            &syn,
+            Color32::RED,
+            &f,
+            Color32::WHITE,
+            Color32::GRAY,
+            4,
+            false,
+        );
+        let parts: Vec<(&str, Color32, Color32)> = j
+            .sections
+            .iter()
+            .map(|s| {
+                (
+                    &j.text[s.byte_range.start.0..s.byte_range.end.0],
+                    s.format.color,
+                    s.format.background,
+                )
+            })
+            .collect();
+        assert_eq!(
+            parts,
+            vec![
+                ("let", Color32::BLUE, Color32::TRANSPARENT),
+                (" ", Color32::WHITE, Color32::TRANSPARENT),
+                ("x = ", Color32::WHITE, Color32::RED),
+                ("1", Color32::GREEN, Color32::RED),
+            ]
         );
     }
 
