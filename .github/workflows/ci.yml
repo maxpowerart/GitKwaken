@@ -140,7 +140,9 @@ jobs:
           mkdir /home/builder/pkg
           cp pkg/PKGBUILD pkg/*.tar.gz /home/builder/pkg/
           chown -R builder /home/builder/pkg
-          su builder -c 'cd ~/pkg && makepkg --noconfirm'
+          # --nodeps: nothing is compiled; pacman -U below pulls the runtime depends from the
+          # repositories (what makepkg -si does on a desktop), which also checks their names.
+          su builder -c 'cd ~/pkg && makepkg --nodeps --noconfirm'
           cp /home/builder/pkg/gitkwaken-bin-*.pkg.tar.zst pkg/
           pacman -U --noconfirm pkg/gitkwaken-bin-*.pkg.tar.zst
           pacman -Qi gitkwaken-bin
