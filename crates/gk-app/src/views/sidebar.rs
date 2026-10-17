@@ -514,6 +514,81 @@ fn dialog(d: Dialog) -> Cmd {
     Cmd::Dialog(Box::new(d))
 }
 
+// ------------------------------------------------- actions shared with the palette
+
+/// `git submodule update --init --recursive [-- path]` (all when `None`).
+pub(crate) fn update_submodule(tab: &RepoTab, path: Option<String>) {
+    let label = match &path {
+        Some(p) => format!("Update submodule {p}"),
+        None => "Update submodules".to_string(),
+    };
+    tab.session.run_op(label, move |r, c, p| {
+        let mut args = vec!["submodule", "update", "--init", "--recursive"];
+        if let Some(path) = &path {
+            args.extend(["--", path.as_str()]);
+        }
+        r.git().run_streaming(&args, None, c, p)?.check()?;
+        Ok(String::new())
+    });
+}
+
+/// Opens the "Add worktree" form.
+pub(crate) fn add_worktree(tab: &mut RepoTab) {
+    tab.sidebar.modal = Some(SidebarModal::AddWorktree {
+        path: String::new(),
+        branch: String::new(),
+    });
+}
+
+/// Asks to remove the worktree at `path`.
+pub(crate) fn remove_worktree(tab: &mut RepoTab, path: PathBuf) {
+    tab.sidebar.modal = Some(SidebarModal::RemoveWorktree { path, force: false });
+}
+
+/// Loaded submodules: (path, initialized). Empty until the Submodules
+/// section has been shown expanded once.
+pub(crate) fn submodules(tab: &RepoTab) -> Vec<(String, bool)> {
+    tab.sidebar
+        .submodules
+        .items()
+        .iter()
+        .map(|m| (m.path.clone(), m.state != SubState::NotInitialized))
+        .collect()
+}
+
+/// A worktree as offered by the palette.
+pub(crate) struct WorktreeInfo {
+    pub path: PathBuf,
+    pub label: String,
+    pub openable: bool,
+    pub removable: bool,
+}
+
+/// Loaded worktrees (empty until the Worktrees section was shown expanded).
+pub(crate) fn worktrees(tab: &RepoTab) -> Vec<WorktreeInfo> {
+    tab.sidebar
+        .worktrees
+        .items()
+        .iter()
+        .enumerate()
+        .map(|(i, w)| {
+            let current = model::path_key(&w.path) == model::path_key(&tab.path);
+            let label = match (&w.branch, &w.head) {
+                _ if w.bare => "(bare)".to_string(),
+                (Some(b), _) => b.clone(),
+                (None, Some(h)) => format!("detached {}", crate::util::short_id(h)),
+                (None, None) => "unknown".to_string(),
+            };
+            WorktreeInfo {
+                path: w.path.clone(),
+                label,
+                openable: !current && !w.bare,
+                removable: i != 0 && !current,
+            }
+        })
+        .collect()
+}
+
 fn worktree_dirty(snap: &Snapshot) -> bool {
     !snap.status.staged.is_empty()
         || snap
@@ -567,30 +642,9 @@ fn apply(cmd: Cmd, ui: &Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Sha
         Cmd::Explore(p) => {
             let _ = open::that(p);
         }
-        Cmd::SubmoduleUpdate(path) => {
-            tab.session
-                .run_op(format!("Update submodule {path}"), move |r, c, p| {
-                    let args = [
-                        "submodule",
-                        "update",
-                        "--init",
-                        "--recursive",
-                        "--",
-                        path.as_str(),
-                    ];
-                    r.git().run_streaming(&args, None, c, p)?.check()?;
-                    Ok(String::new())
-                });
-        }
-        Cmd::AddWorktree => {
-            st.modal = Some(SidebarModal::AddWorktree {
-                path: String::new(),
-                branch: String::new(),
-            })
-        }
-        Cmd::RemoveWorktree(path) => {
-            st.modal = Some(SidebarModal::RemoveWorktree { path, force: false })
-        }
+        Cmd::SubmoduleUpdate(path) => update_submodule(tab, Some(path)),
+        Cmd::AddWorktree => add_worktree(tab),
+        Cmd::RemoveWorktree(path) => remove_worktree(tab, path),
         Cmd::Reload => {
             st.submodules.invalidate();
             st.worktrees.invalidate();
@@ -1235,13 +1289,13 @@ fn row_ui(ui: &mut Ui, cx: &Cx, row: &Row, h: f32, cmds: &mut Vec<Cmd>) {
             let abs = cx.workdir.join(&m.path);
             let initialized = m.state != SubState::NotInitialized;
             if resp.clicked() {
-                cmds.push(Cmd::Select(key));
+                cmds.push(Cmd::Select(key.clone()));
             }
             if resp.double_clicked() && initialized {
                 cmds.push(Cmd::OpenRepo(abs.clone()));
             }
-            resp.context_menu(|ui| {
-                if menu_item(ui, initialized, "Open") {
+            cx.menus(&resp, &key, rect, cmds, |ui, cmds| {
+                if keys::menu_item(ui, initialized, "Open", keys::CHECKOUT_KEY) {
                     cmds.push(Cmd::OpenRepo(abs.clone()));
                 }
                 if menu_item(ui, true, "Update") {
@@ -1306,19 +1360,19 @@ fn row_ui(ui: &mut Ui, cx: &Cx, row: &Row, h: f32, cmds: &mut Vec<Cmd>) {
                 resp
             };
             if resp.clicked() {
-                cmds.push(Cmd::Select(key));
+                cmds.push(Cmd::Select(key.clone()));
             }
             if resp.double_clicked() && !current && !wt.bare {
                 cmds.push(Cmd::OpenRepo(wt.path.clone()));
             }
-            resp.context_menu(|ui| {
-                if menu_item(ui, !current && !wt.bare, "Open") {
+            cx.menus(&resp, &key, rect, cmds, |ui, cmds| {
+                if keys::menu_item(ui, !current && !wt.bare, "Open", keys::CHECKOUT_KEY) {
                     cmds.push(Cmd::OpenRepo(wt.path.clone()));
                 }
                 if menu_item(ui, true, "Show in Explorer") {
                     cmds.push(Cmd::Explore(wt.path.clone()));
                 }
-                if menu_item(ui, !main && !current, "Remove…") {
+                if keys::menu_item(ui, !main && !current, "Remove…", keys::DELETE_KEY) {
                     cmds.push(Cmd::RemoveWorktree(wt.path.clone()));
                 }
                 ui.separator();
@@ -1462,7 +1516,14 @@ fn branch_menu(ui: &mut Ui, b: &gk_core::refs::Branch, snap: &Snapshot, cmds: &m
 }
 
 /// Enter / Delete / Ctrl+B / Ctrl+T on the selected sidebar row.
-fn key_cmds(k: keys::ListKeys, sel: &str, snap: &Snapshot, cmds: &mut Vec<Cmd>) {
+fn key_cmds(
+    k: keys::ListKeys,
+    sel: &str,
+    snap: &Snapshot,
+    st: &SidebarState,
+    workdir: &std::path::Path,
+    cmds: &mut Vec<Cmd>,
+) {
     let refs = &snap.refs;
     let (kind, name) = sel.split_once(':').unwrap_or(("", sel));
     let name = name.to_string();
@@ -1504,6 +1565,29 @@ fn key_cmds(k: keys::ListKeys, sel: &str, snap: &Snapshot, cmds: &mut Vec<Cmd>) 
             }
             if k.delete {
                 cmds.push(dialog(Dialog::stash_drop(idx)));
+            }
+        }
+        "sm" => {
+            let initialized = st
+                .submodules
+                .items()
+                .iter()
+                .any(|m| m.path == name && m.state != SubState::NotInitialized);
+            if k.enter && initialized {
+                cmds.push(Cmd::OpenRepo(workdir.join(&name)));
+            }
+        }
+        "wt" => {
+            let path = PathBuf::from(&name);
+            let wts = st.worktrees.items();
+            let main = wts.first().is_some_and(|w| w.path == path);
+            let current = model::path_key(&path) == model::path_key(workdir);
+            let bare = wts.iter().any(|w| w.path == path && w.bare);
+            if k.enter && !current && !bare {
+                cmds.push(Cmd::OpenRepo(path.clone()));
+            }
+            if k.delete && !main && !current {
+                cmds.push(Cmd::RemoveWorktree(path));
             }
         }
         _ => {}
@@ -1798,7 +1882,7 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
         tab.sidebar.focused && !any_focus && tab.dialog.is_none(),
     );
     if let Some(sel) = tab.sidebar.selected.clone() {
-        key_cmds(k, &sel, snap, &mut cmds);
+        key_cmds(k, &sel, snap, &tab.sidebar, &tab.path, &mut cmds);
     }
 
     // A branch being dragged follows the pointer.
@@ -1842,7 +1926,8 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
             strong: ui.visuals().strong_text_color(),
             kb_menu: k.menu,
         };
-        let h = (ui.text_style_height(&egui::TextStyle::Body) + 4.0).max(16.0);
+        let h = crate::theme::Density::of(shared.settings.compact)
+            .sidebar_row(ui.text_style_height(&egui::TextStyle::Body));
         ui.scope(|ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             egui::ScrollArea::vertical()

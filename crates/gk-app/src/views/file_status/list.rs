@@ -3,7 +3,9 @@
 //! emits [`Ev`]ents; the parent runs the operations.
 
 use super::dnd::DragFiles;
+use super::filter;
 use super::tree::{self, Tree, TreeRow};
+use crate::keymap::{self, Act};
 use crate::theme::Palette;
 use egui::{Align2, Color32, Id, Pos2, Rect, Sense, Ui, pos2, vec2};
 use gk_status::{Entry, Kind};
@@ -103,6 +105,8 @@ pub struct Model {
     pub tree: Option<Tree>,
     /// Files passing the filter.
     pub files: usize,
+    /// The last filter pass, narrowed incrementally while typing.
+    matched: Option<filter::Matched>,
 }
 
 #[derive(Default)]
@@ -163,21 +167,24 @@ impl ListState {
         if self.model.key.as_ref() == Some(&key) {
             return false;
         }
-        let mut fuzzy = tree::Filter::new(filter);
-        let items: Vec<(u32, &str)> = paths
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| {
-                kinds == 0
-                    || entries
-                        .get(*i)
-                        .is_some_and(|e| kinds & kind_bit(e.kind) != 0)
-            })
-            .filter(|(_, p)| fuzzy.matches(p))
-            .map(|(i, p)| (i as u32, p.as_str()))
-            .collect();
-        self.model.files = items.len();
+        // Same status, chips and query (tree mode or collapsed folders
+        // changed): keep the matches. A query that only grew filters the
+        // previous matches; anything else runs a full (parallel) pass.
+        let idx = match self.model.matched.take() {
+            Some(m) if m.status_gen == status_gen && m.kinds == kinds && m.query == filter => m.idx,
+            prev => {
+                let within = prev
+                    .as_ref()
+                    .and_then(|m| m.reusable(status_gen, kinds, filter));
+                filter::filter_indices(paths, entries, kinds, filter, within)
+            }
+        };
+        self.model.files = idx.len();
         if tree_mode {
+            let items: Vec<(u32, &str)> = idx
+                .iter()
+                .map(|&i| (i, paths[i as usize].as_str()))
+                .collect();
             let t = tree::build(&items);
             self.model.rows = tree::flatten(&t, &self.collapsed)
                 .into_iter()
@@ -198,15 +205,18 @@ impl ListState {
                 .collect();
             self.model.tree = Some(t);
         } else {
-            self.model.rows = items
+            self.model.rows = idx
                 .iter()
-                .map(|(i, _)| Row::File {
-                    entry: *i,
-                    depth: 0,
-                })
+                .map(|&i| Row::File { entry: i, depth: 0 })
                 .collect();
             self.model.tree = None;
         }
+        self.model.matched = Some(filter::Matched {
+            status_gen,
+            kinds,
+            query: filter.to_string(),
+            idx,
+        });
         // Forget selected paths that are gone from the list.
         if self
             .model
@@ -413,6 +423,7 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
 
     let mut click: Option<Click> = None;
     let mut toggle_dir: Option<String> = None;
+    let mut kb_menu_open = false;
     let focused = ui.memory(|m| m.focused() == Some(list_id));
     let strong = ui.visuals().strong_text_color();
     let hover_fill = ui
@@ -423,6 +434,9 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
         .gamma_multiply(0.5);
     let stroke_color = ui.visuals().widgets.inactive.fg_stroke.color;
 
+    // Where a keyboard-opened context menu appears: below the cursor row
+    // when it is on screen, else at the top of the list.
+    let mut menu_pos: Option<Pos2> = None;
     let sa_out = sa.show_viewport(ui, |ui, vp| {
         ui.set_min_height(n as f32 * row_h);
         let origin = ui.max_rect().min;
@@ -431,6 +445,7 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
         if bg.clicked() {
             click = Some(Click::Background);
         }
+        menu_pos = Some(vis.left_top() + vec2(30.0, 0.0));
         let first = ((vp.min.y / row_h).floor().max(0.0) as usize).min(n);
         let last = ((vp.max.y / row_h).ceil() as usize + 1).min(n);
         let painter = ui.painter().clone();
@@ -463,6 +478,9 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
                         painter.rect_filled(rect, 0.0, fill);
                     } else if resp.hovered() {
                         painter.rect_filled(rect, 0.0, hover_fill);
+                    }
+                    if is_cursor && vis.contains(rect.center()) {
+                        menu_pos = Some(pos2(rect.left() + 30.0, rect.bottom()));
                     }
                     if is_cursor && focused {
                         painter.rect_stroke(
@@ -629,9 +647,11 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
                 }
             }
         }
+        bg
     });
     ls.offset = sa_out.state.offset.y;
     ls.view_h = sa_out.inner_rect.height();
+    let bg = sa_out.inner;
 
     // ---- apply clicks
     match click {
@@ -685,18 +705,25 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
             )
         });
         use egui::Key;
-        let (up, down, space, enter, all, shift, home, end) = ui.input_mut(|i| {
+        let acts = keymap::pressed(ui.ctx(), &FILE_ACTS);
+        let (up, down, enter, all, shift, home, end, menu) = ui.input_mut(|i| {
             (
                 i.key_pressed(Key::ArrowUp),
                 i.key_pressed(Key::ArrowDown),
-                i.consume_key(egui::Modifiers::NONE, Key::Space),
                 i.consume_key(egui::Modifiers::NONE, Key::Enter),
                 i.consume_key(egui::Modifiers::COMMAND, Key::A),
                 i.modifiers.shift,
                 i.key_pressed(Key::Home),
                 i.key_pressed(Key::End),
+                i.consume_key(egui::Modifiers::SHIFT, Key::F10),
             )
         });
+        if menu && ls.target_count() > 0 {
+            kb_menu_open = true;
+        }
+        for a in acts {
+            key_action(a, ls, c, out);
+        }
         if up || down || home || end {
             let rows = &ls.model.rows;
             let is_file = |r: usize| matches!(rows.get(r), Some(Row::File { .. }));
@@ -724,12 +751,6 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
                 out.push(Ev::Activate);
             }
         }
-        if space {
-            let t = ls.targets();
-            if !t.is_empty() {
-                out.push(Ev::Toggle(t));
-            }
-        }
         if enter {
             out.push(Ev::FocusDiff);
         }
@@ -746,6 +767,79 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
             ls.selected = paths.into_iter().collect();
             out.push(Ev::Activate);
         }
+    }
+
+    // ---- context menu opened from the keyboard (Shift+F10): the same menu,
+    // for the selection (or the cursor file), anchored below the cursor row.
+    let targets = ls.targets();
+    if !targets.is_empty() {
+        let pos = menu_pos.unwrap_or(bg.rect.left_top());
+        crate::views::history::keys::keyboard_menu(
+            &bg,
+            list_id.with("kb-menu"),
+            kb_menu_open,
+            pos,
+            |ui| file_menu(ui, c, &targets, out),
+        );
+    }
+}
+
+/// Keymap actions of the file lists (see `keymap.rs`, scope `FileList`).
+const FILE_ACTS: [Act; 6] = [
+    Act::FileToggle,
+    Act::FileDiscard,
+    Act::FileHistory,
+    Act::FileBlame,
+    Act::FileExternalDiff,
+    Act::FileIgnore,
+];
+
+/// Runs a file-list shortcut on the selection (or the cursor file).
+fn key_action(a: Act, ls: &ListState, c: &ListCtx, out: &mut Vec<Ev>) {
+    let targets = ls.targets();
+    if targets.is_empty() {
+        return;
+    }
+    // One-file actions use the cursor file when several are selected.
+    let one = match targets.as_slice() {
+        [t] => Some(t.clone()),
+        _ => ls.cursor.clone(),
+    };
+    let unstaged = c.side == Side::Unstaged;
+    match a {
+        Act::FileToggle => out.push(Ev::Toggle(targets)),
+        Act::FileDiscard if unstaged => {
+            let (untracked, tracked): (Vec<String>, Vec<String>) = targets
+                .into_iter()
+                .partition(|t| kind_of(c, t).is_some_and(|e| e.kind == Kind::Untracked));
+            out.push(Ev::Discard { tracked, untracked });
+        }
+        Act::FileHistory => out.extend(one.map(Ev::History)),
+        Act::FileBlame => out.extend(one.map(Ev::Blame)),
+        Act::FileExternalDiff => out.extend(one.map(Ev::ExternalDiff)),
+        Act::FileIgnore if unstaged => out.push(Ev::IgnoreCustom(ignore_suggestion(&targets))),
+        _ => {}
+    }
+}
+
+/// Prefilled pattern of the custom-ignore editor: `*.ext` when all files
+/// share an extension, else the single file itself.
+fn ignore_suggestion(targets: &[String]) -> String {
+    let ext = |p: &str| {
+        let file = p.rsplit('/').next().unwrap_or(p);
+        file.rsplit_once('.')
+            .filter(|(stem, _)| !stem.is_empty())
+            .map(|(_, e)| e.to_string())
+    };
+    let shared = targets.first().and_then(|f| ext(f)).filter(|e| {
+        targets
+            .iter()
+            .all(|p| ext(p).as_deref() == Some(e.as_str()))
+    });
+    match (shared, targets) {
+        (Some(e), _) => format!("*.{e}"),
+        (None, [one]) => format!("/{one}"),
+        _ => String::new(),
     }
 }
 
@@ -813,21 +907,22 @@ fn file_menu(ui: &mut Ui, c: &ListCtx, targets: &[String], out: &mut Vec<Ev>) {
             format!("{verb} {n} files")
         }
     };
+    // Menu buttons show their keymap shortcut on the right.
+    let ctx = ui.ctx().clone();
+    let item = |text: String, act: Act| shortcut_button(&ctx, text, act);
     match c.side {
         Side::Unstaged => {
-            if ui
-                .button(label(if conflicts == n {
-                    "Mark resolved (stage)"
-                } else {
-                    "Stage"
-                }))
-                .clicked()
-            {
+            let verb = if conflicts == n {
+                "Mark resolved (stage)"
+            } else {
+                "Stage"
+            };
+            if ui.add(item(label(verb), Act::FileToggle)).clicked() {
                 emit(ui, Ev::Toggle(targets.to_vec()));
             }
         }
         Side::Staged => {
-            if ui.button(label("Unstage")).clicked() {
+            if ui.add(item(label("Unstage"), Act::FileToggle)).clicked() {
                 emit(ui, Ev::Toggle(targets.to_vec()));
             }
         }
@@ -859,7 +954,11 @@ fn file_menu(ui: &mut Ui, c: &ListCtx, targets: &[String], out: &mut Vec<Ev>) {
         }
     }
     ui.separator();
-    if c.side == Side::Unstaged && ui.button(label("Discard") + "…").clicked() {
+    if c.side == Side::Unstaged
+        && ui
+            .add(item(label("Discard") + "…", Act::FileDiscard))
+            .clicked()
+    {
         emit(
             ui,
             Ev::Discard {
@@ -895,14 +994,11 @@ fn file_menu(ui: &mut Ui, c: &ListCtx, targets: &[String], out: &mut Vec<Ev>) {
                 );
             }
             ui.separator();
-            if ui.button("Custom pattern…").clicked() {
-                let suggestion = single
-                    .as_deref()
-                    .and_then(|p| p.rsplit('/').next())
-                    .and_then(|f| f.rsplit_once('.').filter(|(s, _)| !s.is_empty()))
-                    .map(|(_, ext)| format!("*.{ext}"))
-                    .unwrap_or_default();
-                emit(ui, Ev::IgnoreCustom(suggestion));
+            if ui
+                .add(item("Custom pattern…".into(), Act::FileIgnore))
+                .clicked()
+            {
+                emit(ui, Ev::IgnoreCustom(ignore_suggestion(targets)));
             }
         });
     }
@@ -911,7 +1007,7 @@ fn file_menu(ui: &mut Ui, c: &ListCtx, targets: &[String], out: &mut Vec<Ev>) {
         let b = ui
             .add_enabled(
                 c.has_diff_tool,
-                egui::Button::new("Open in external diff tool"),
+                item("Open in external diff tool".into(), Act::FileExternalDiff),
             )
             .on_disabled_hover_text("Configure an external diff tool in Settings");
         if b.clicked() {
@@ -932,12 +1028,26 @@ fn file_menu(ui: &mut Ui, c: &ListCtx, targets: &[String], out: &mut Vec<Ev>) {
     }
     if let Some(p) = &single {
         ui.separator();
-        if ui.button("File history").clicked() {
+        if ui
+            .add(item("File history".into(), Act::FileHistory))
+            .clicked()
+        {
             emit(ui, Ev::History(p.clone()));
         }
-        if ui.button("Blame").clicked() {
+        if ui.add(item("Blame".into(), Act::FileBlame)).clicked() {
             emit(ui, Ev::Blame(p.clone()));
         }
+    }
+}
+
+/// A menu button with `act`'s current shortcut on the right.
+fn shortcut_button(ctx: &egui::Context, text: String, act: Act) -> egui::Button<'static> {
+    let sc = keymap::text(ctx, act);
+    let b = egui::Button::new(text);
+    if sc.is_empty() {
+        b
+    } else {
+        b.shortcut_text(egui::RichText::new(sc).weak())
     }
 }
 
@@ -1076,5 +1186,128 @@ mod tests {
         assert_eq!(ls.model.files, 2, "modified + deleted");
         ls.sync(1, &paths, &entries, "", 32, false);
         assert_eq!(ls.model.files, 0);
+    }
+
+    #[test]
+    fn typing_narrows_and_backspace_widens() {
+        let paths = strs(&["a.rs", "b.rs", "c.txt", "src/d.rs"]);
+        let mut ls = state(&paths, false);
+        ls.sync(1, &paths, &[], "s", 0, false);
+        assert_eq!(ls.model.files, 3);
+        ls.sync(1, &paths, &[], "rs", 0, false);
+        assert_eq!(ls.model.files, 3);
+        ls.sync(1, &paths, &[], "rs$", 0, false);
+        assert_eq!(ls.model.files, 3);
+        ls.sync(1, &paths, &[], "src rs$", 0, false);
+        assert_eq!(ls.model.files, 1);
+        ls.sync(1, &paths, &[], "t", 0, false);
+        assert_eq!(ls.model.files, 1, "c.txt");
+        // A new status never reuses matches of the old one.
+        let more = strs(&["a.rs", "t.rs"]);
+        ls.sync(2, &more, &[], "t", 0, false);
+        assert_eq!(ls.model.files, 1, "t.rs");
+        // Tree mode toggles keep the matches.
+        assert!(ls.sync(2, &more, &[], "t", 0, true));
+        assert_eq!(ls.model.files, 1);
+    }
+
+    fn ctx_for<'a>(
+        side: Side,
+        paths: &'a [String],
+        entries: &'a [Entry],
+        pending: &'a dyn Fn(&str) -> bool,
+    ) -> ListCtx<'a> {
+        ListCtx {
+            side,
+            entries,
+            paths,
+            palette: Palette::dark(),
+            tree: false,
+            active: true,
+            pending,
+            has_merge_tool: false,
+            dnd_scope: Id::new("t"),
+            has_diff_tool: true,
+            row_pad: 6.0,
+        }
+    }
+
+    #[test]
+    fn keyboard_actions_on_selection_and_cursor() {
+        let paths = strs(&["a.rs", "b.rs", "new.txt"]);
+        let entries = vec![
+            Entry::new("a.rs", Kind::Modified),
+            Entry::new("b.rs", Kind::Modified),
+            Entry::new("new.txt", Kind::Untracked),
+        ];
+        let no = |_: &str| false;
+        let c = ctx_for(Side::Unstaged, &paths, &entries, &no);
+        let mut ls = state(&paths, false);
+        let run = |ls: &ListState, a: Act, c: &ListCtx| {
+            let mut out = Vec::new();
+            key_action(a, ls, c, &mut out);
+            out
+        };
+        assert!(run(&ls, Act::FileToggle, &c).is_empty(), "nothing selected");
+        ls.select_only("b.rs".into(), 1);
+        ls.selected.insert("new.txt".into());
+        assert!(
+            matches!(&run(&ls, Act::FileToggle, &c)[..], [Ev::Toggle(p)] if *p == strs(&["b.rs", "new.txt"]))
+        );
+        assert!(matches!(
+            &run(&ls, Act::FileDiscard, &c)[..],
+            [Ev::Discard { tracked, untracked }] if *tracked == strs(&["b.rs"]) && *untracked == strs(&["new.txt"])
+        ));
+        // One-file actions take the cursor when several files are selected.
+        assert!(matches!(&run(&ls, Act::FileHistory, &c)[..], [Ev::History(p)] if p == "b.rs"));
+        assert!(matches!(&run(&ls, Act::FileBlame, &c)[..], [Ev::Blame(p)] if p == "b.rs"));
+        assert!(
+            matches!(&run(&ls, Act::FileExternalDiff, &c)[..], [Ev::ExternalDiff(p)] if p == "b.rs")
+        );
+        assert!(
+            matches!(&run(&ls, Act::FileIgnore, &c)[..], [Ev::IgnoreCustom(s)] if s.is_empty())
+        );
+        // The staged list neither discards nor ignores.
+        let staged = ctx_for(Side::Staged, &paths, &entries, &no);
+        assert!(run(&ls, Act::FileDiscard, &staged).is_empty());
+        assert!(run(&ls, Act::FileIgnore, &staged).is_empty());
+        // Global actions are not handled here.
+        assert!(run(&ls, Act::Fetch, &c).is_empty());
+    }
+
+    #[test]
+    fn ignore_suggestions() {
+        assert_eq!(ignore_suggestion(&strs(&["a/b.log"])), "*.log");
+        assert_eq!(ignore_suggestion(&strs(&["a/b.log", "c.log"])), "*.log");
+        assert_eq!(ignore_suggestion(&strs(&["Makefile"])), "/Makefile");
+        assert_eq!(ignore_suggestion(&strs(&["a.log", "b.txt"])), "");
+        assert_eq!(ignore_suggestion(&strs(&[".env"])), "/.env");
+        assert_eq!(ignore_suggestion(&[]), "");
+    }
+
+    /// Whole row-model rebuild (flat list) per keystroke on 1M paths:
+    /// `cargo test --release -p gk-app -- --ignored --nocapture sync_1m`
+    #[test]
+    #[ignore]
+    fn sync_1m_paths_per_keystroke() {
+        let mut paths: Vec<String> = (0..1_000_000)
+            .map(|i| format!("src/module_{:03}/sub_{:02}/file_{i:07}.rs", i % 997, i % 37))
+            .collect();
+        paths.sort();
+        let mut ls = ListState::default();
+        ls.sync(1, &paths, &[], "", 0, false);
+        let typed = "module_12 sub_3 rs";
+        let mut worst = 0.0f64;
+        for end in (1..=typed.len()).chain((1..typed.len()).rev()) {
+            let q = &typed[..end];
+            let t = std::time::Instant::now();
+            ls.sync(1, &paths, &[], q, 0, false);
+            ls.repair_cursor(&paths);
+            let ms = t.elapsed().as_secs_f64() * 1e3;
+            println!("{q:<20} {ms:>7.1} ms  {} rows", ls.model.rows.len());
+            worst = worst.max(ms);
+        }
+        println!("worst keystroke: {worst:.1} ms");
+        assert!(worst < 50.0);
     }
 }

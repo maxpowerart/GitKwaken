@@ -1,0 +1,33 @@
+# File Status from the keyboard. Click A-long.txt (first unstaged row) to
+# focus the list; Shift+F10 opens its context menu (screenshot), Escape
+# closes it. Click the row again, Enter focuses the diff, N moves to the
+# second hunk, S stages only that hunk. Click the row again, Down selects
+# README.md, Delete asks to discard it and Enter confirms.
+wait 4000
+click 320 217
+wait 1500
+key F10 shift
+wait 500
+shot $OUT/fb-keys-menu.png
+key Escape
+wait 300
+click 320 217
+wait 800
+key Enter
+wait 800
+key N
+wait 500
+shot $OUT/fb-keys-hunk.png
+key S
+wait 2500
+# A-long.txt is now also staged: the unstaged list moved down one row.
+click 320 237
+wait 800
+key ArrowDown
+wait 500
+key Delete
+wait 800
+shot $OUT/fb-keys-discard.png
+key Enter
+wait 2500
+exit

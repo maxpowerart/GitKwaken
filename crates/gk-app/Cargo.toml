@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow = { workspace = true }
 parking_lot = { workspace = true }
+rayon = { workspace = true }
 egui = "0.35"
 rfd = "0.17"
 open = "5"

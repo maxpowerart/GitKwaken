@@ -57,6 +57,19 @@ struct Shown {
     tab: usize,
 }
 
+use crate::keymap::Act as KAct;
+
+/// Keymap actions of the diff body (see `keymap.rs`, scope `Diff`).
+const DIFF_ACTS: [KAct; 7] = [
+    KAct::DiffNextHunk,
+    KAct::DiffPrevHunk,
+    KAct::DiffStage,
+    KAct::DiffUnstage,
+    KAct::DiffDiscard,
+    KAct::DiffSelectDown,
+    KAct::DiffSelectUp,
+];
+
 #[derive(Debug, Clone, Copy)]
 enum Act {
     StageHunk(usize),
@@ -106,6 +119,11 @@ pub struct DiffView {
     size_guard: guard::SizeGuard,
     /// Show the raw text of an LFS pointer diff.
     lfs_raw: bool,
+    /// Hunk the keyboard acts on (next / previous hunk, S / U / Delete);
+    /// `None` or off screen: the hunk at the top of the view.
+    hunk_cursor: Option<usize>,
+    /// Moving end of a keyboard line selection (Shift+Down / Shift+Up).
+    line_cursor: Option<u32>,
 }
 
 impl DiffView {
@@ -118,6 +136,7 @@ impl DiffView {
     pub fn clear_selection(&mut self) {
         self.sel.clear();
         self.drag_from = None;
+        self.line_cursor = None;
     }
 
     /// Forgets the displayed diff (e.g. when nothing is selected any more).
@@ -281,14 +300,20 @@ impl DiffView {
                     s.diff = d;
                     return;
                 }
-                // Same file, new content: line indices are invalid now.
+                // Same file, new content: line indices are invalid now. The
+                // hunk cursor stays: after staging hunk 2, hunk 2 is the next one.
                 self.clear_selection();
+                self.hunk_cursor = self
+                    .hunk_cursor
+                    .map(|h| h.min(d.hunks.len().saturating_sub(1)));
             } else if &s.target != target {
                 self.clear_selection();
+                self.hunk_cursor = None;
                 self.scroll_to = Some(0.0);
             }
         } else {
             self.clear_selection();
+            self.hunk_cursor = None;
             self.scroll_to = Some(0.0);
         }
         self.inline.clear();
@@ -405,16 +430,24 @@ impl DiffView {
                     .filter(|_| current)
                     .map(|s| s.layout.hunk_rows(self.side_by_side).len())
                     .unwrap_or(0);
+                let hint = |text: &str, a: KAct| match crate::keymap::text(ui.ctx(), a) {
+                    sc if sc.is_empty() => text.to_string(),
+                    sc => format!("{text} ({sc})"),
+                };
+                let (next_hint, prev_hint) = (
+                    hint("Next hunk", KAct::DiffNextHunk),
+                    hint("Previous hunk", KAct::DiffPrevHunk),
+                );
                 if ui
                     .add_enabled(hunks > 0, egui::Button::new("▼").small())
-                    .on_hover_text("Next hunk")
+                    .on_hover_text(next_hint)
                     .clicked()
                 {
                     self.jump_hunk(true);
                 }
                 if ui
                     .add_enabled(hunks > 0, egui::Button::new("▲").small())
-                    .on_hover_text("Previous hunk")
+                    .on_hover_text(prev_hint)
                     .clicked()
                 {
                     self.jump_hunk(false);
@@ -437,19 +470,55 @@ impl DiffView {
     }
 
     fn jump_hunk(&mut self, next: bool) {
-        let Some(s) = &self.shown else { return };
+        if let Some(s) = self.shown.take() {
+            self.jump_in(&s.layout, next);
+            self.shown = Some(s);
+        }
+    }
+
+    /// First and last display row on screen (from the last frame).
+    fn view_rows(&self) -> (u32, u32) {
+        if self.row_h <= 0.0 {
+            return (0, 0);
+        }
+        let top = (self.offset / self.row_h).round() as u32;
+        let bottom = ((self.offset + self.view_h) / self.row_h).floor() as u32;
+        (top, bottom.max(top))
+    }
+
+    /// The hunk cursor when it is on screen.
+    fn hunk_cursor_on_screen(&self, layout: &Layout) -> Option<usize> {
+        let hr = layout.hunk_rows(self.side_by_side);
+        let total = layout.rows(self.side_by_side).len() as u32;
+        let (top, bottom) = self.view_rows();
+        self.hunk_cursor
+            .filter(|&h| model::hunk_on_screen(hr, total, h, top, bottom))
+    }
+
+    /// The hunk keyboard actions apply to: the hunk cursor when on screen,
+    /// else the hunk at the top of the view.
+    fn current_hunk(&self, layout: &Layout) -> Option<usize> {
+        self.hunk_cursor_on_screen(layout)
+            .or_else(|| model::hunk_at(layout.hunk_rows(self.side_by_side), self.view_rows().0))
+    }
+
+    /// Moves the hunk cursor to the next / previous hunk and scrolls its
+    /// header to the top.
+    fn jump_in(&mut self, layout: &Layout, next: bool) {
         if self.row_h <= 0.0 {
             return;
         }
-        let top = (self.offset / self.row_h).round() as u32;
-        let rows = s.layout.hunk_rows(self.side_by_side);
-        let target = if next {
-            rows.iter().copied().find(|&r| r > top)
-        } else {
-            rows.iter().rev().copied().find(|&r| r < top)
+        let hr = layout.hunk_rows(self.side_by_side);
+        let top = self.view_rows().0;
+        let target = match self.hunk_cursor_on_screen(layout) {
+            Some(h) if next => (h + 1 < hr.len()).then_some(h + 1),
+            Some(h) => h.checked_sub(1),
+            None if next => hr.iter().position(|&r| r > top),
+            None => hr.iter().rposition(|&r| r < top),
         };
-        if let Some(r) = target {
-            self.scroll_to = Some(r as f32 * self.row_h);
+        if let Some(t) = target {
+            self.hunk_cursor = Some(t);
+            self.scroll_to = Some(hr[t] as f32 * self.row_h);
         }
     }
 
@@ -509,7 +578,8 @@ impl DiffView {
         let (font_h, char_w) = ui
             .ctx()
             .fonts_mut(|f| (f.row_height(&font), f.glyph_width(&font, '0')));
-        let row_h = (font_h + 5.0).round().max(16.0);
+        let row_h = (font_h + 5.0).round().max(16.0)
+            + crate::theme::Density::of(shared.settings.compact).row_extra();
         self.row_h = row_h;
         let num_w = shown.layout.digits as f32 * char_w + 12.0;
         let sign_w = char_w + 8.0;
@@ -616,6 +686,7 @@ impl DiffView {
                         line_at(pos).map_or(Press::Empty, Press::Line)
                     };
                     self.drag_from = self.sel.press(at, shift, command, self.drag_from, &d.lines);
+                    self.line_cursor = None;
                 }
             }
             if body.dragged()
@@ -648,13 +719,23 @@ impl DiffView {
             }
             body.context_menu(|ui| {
                 let n = self.sel.lines.len();
+                let ctx = ui.ctx().clone();
+                let item = |text: String, a: KAct| -> egui::Button<'static> {
+                    let sc = crate::keymap::text(&ctx, a);
+                    let b = egui::Button::new(text);
+                    if sc.is_empty() {
+                        b
+                    } else {
+                        b.shortcut_text(RichText::new(sc).weak())
+                    }
+                };
                 if editable && n > 0 {
                     match mode {
                         DiffMode::Unstaged => {
                             if ui
                                 .add_enabled(
                                     !self.ignore_ws,
-                                    egui::Button::new(format!("Stage {n} selected line(s)")),
+                                    item(format!("Stage {n} selected line(s)"), KAct::DiffStage),
                                 )
                                 .clicked()
                             {
@@ -664,7 +745,10 @@ impl DiffView {
                             if ui
                                 .add_enabled(
                                     !self.ignore_ws,
-                                    egui::Button::new(format!("Discard {n} selected line(s)…")),
+                                    item(
+                                        format!("Discard {n} selected line(s)…"),
+                                        KAct::DiffDiscard,
+                                    ),
                                 )
                                 .clicked()
                             {
@@ -676,7 +760,10 @@ impl DiffView {
                             if ui
                                 .add_enabled(
                                     !self.ignore_ws,
-                                    egui::Button::new(format!("Unstage {n} selected line(s)")),
+                                    item(
+                                        format!("Unstage {n} selected line(s)"),
+                                        KAct::DiffUnstage,
+                                    ),
                                 )
                                 .clicked()
                             {
@@ -729,6 +816,11 @@ impl DiffView {
                         },
                     )
                 });
+                // Keymap actions first: they take Shift+Down / Shift+Up
+                // before the scroll keys below see them.
+                for a in crate::keymap::pressed(ui.ctx(), &DIFF_ACTS) {
+                    self.key_action(a, shown, mode, editable, acts);
+                }
                 use egui::Key;
                 let (up, down, pgup, pgdn, home, end, esc, copy, all) = ui.input_mut(|i| {
                     (
@@ -784,6 +876,11 @@ impl DiffView {
             }
 
             // ---- paint visible rows
+            // With keyboard focus, the hunk S / U / Delete act on is outlined.
+            let key_hunk = body
+                .has_focus()
+                .then(|| self.current_hunk(&shown.layout))
+                .flatten();
             let painter = ui.painter().clone();
             for (r, row) in rows.iter().enumerate().take(last).skip(first) {
                 let y = origin.y + r as f32 * row_h;
@@ -792,6 +889,14 @@ impl DiffView {
                     Row::Hunk(h) => {
                         let h = h as usize;
                         painter.rect_filled(rect, 0.0, p.hunk_bg);
+                        if key_hunk == Some(h) {
+                            painter.rect_stroke(
+                                rect.shrink(1.0),
+                                0.0,
+                                (1.0, p.branch),
+                                egui::StrokeKind::Inside,
+                            );
+                        }
                         if let Some(hk) = d.hunks.get(h) {
                             painter.text(
                                 pos2(rect.left() + 8.0, rect.center().y),
@@ -963,6 +1068,85 @@ impl DiffView {
         self.view_h = out.inner_rect.height();
     }
 
+    /// A diff shortcut (keymap scope `Diff`) while the body has focus.
+    /// Stage / unstage / discard act on the selected lines when there are
+    /// any, else on the current hunk.
+    fn key_action(
+        &mut self,
+        a: KAct,
+        shown: &Shown,
+        mode: DiffMode,
+        editable: bool,
+        acts: &mut Vec<Act>,
+    ) {
+        let d = &*shown.diff;
+        let layout = &shown.layout;
+        let can_edit = editable && !self.ignore_ws;
+        let lines = !self.sel.is_empty();
+        let hunk = self.current_hunk(layout);
+        match a {
+            KAct::DiffNextHunk => self.jump_in(layout, true),
+            KAct::DiffPrevHunk => self.jump_in(layout, false),
+            KAct::DiffStage if can_edit && mode == DiffMode::Unstaged => {
+                acts.extend(if lines {
+                    Some(Act::StageSel)
+                } else {
+                    hunk.map(Act::StageHunk)
+                });
+            }
+            KAct::DiffUnstage if can_edit && mode == DiffMode::Staged => {
+                acts.extend(if lines {
+                    Some(Act::UnstageSel)
+                } else {
+                    hunk.map(Act::UnstageHunk)
+                });
+            }
+            KAct::DiffDiscard if can_edit && mode == DiffMode::Unstaged => {
+                acts.extend(if lines {
+                    Some(Act::DiscardSel)
+                } else {
+                    hunk.map(Act::DiscardHunk)
+                });
+            }
+            KAct::DiffSelectDown | KAct::DiffSelectUp => {
+                let down = a == KAct::DiffSelectDown;
+                // Continue from the keyboard cursor, else from the mouse
+                // selection's end, else start in the current hunk.
+                let from = self.line_cursor.or_else(|| {
+                    if down {
+                        self.sel.lines.last().copied()
+                    } else {
+                        self.sel.lines.first().copied()
+                    }
+                });
+                let Some(j) = model::step_changed(d, from, down, hunk) else {
+                    return;
+                };
+                match (from, self.sel.anchor.or(from)) {
+                    (Some(_), Some(anchor)) => {
+                        self.sel.range(anchor, j, &d.lines, false);
+                        self.sel.anchor = Some(anchor);
+                    }
+                    _ => self.sel.single(j),
+                }
+                self.line_cursor = Some(j);
+                self.hunk_cursor = model::hunk_of_line(d, j).or(self.hunk_cursor);
+                // Keep the moving end on screen.
+                if let Some(r) = model::row_of_line(layout.rows(self.side_by_side), j)
+                    && self.row_h > 0.0
+                {
+                    let (y0, y1) = (r as f32 * self.row_h, (r + 1) as f32 * self.row_h);
+                    if y0 < self.offset {
+                        self.scroll_to = Some(y0);
+                    } else if y1 > self.offset + self.view_h {
+                        self.scroll_to = Some(y1 - self.view_h);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn hunk_buttons(
         &self,
@@ -977,25 +1161,44 @@ impl DiffView {
         let n_sel = self.sel.lines.len();
         let in_hunk = self.sel.count_in_hunk(d, h) > 0;
         let lines = in_hunk && n_sel > 0;
-        let buttons: Vec<(String, Act)> = match mode {
+        let buttons: Vec<(String, Act, KAct)> = match mode {
             DiffMode::Unstaged if lines => vec![
-                (format!("Stage lines ({n_sel})"), Act::StageSel),
-                (format!("Discard lines ({n_sel})…"), Act::DiscardSel),
+                (
+                    format!("Stage lines ({n_sel})"),
+                    Act::StageSel,
+                    KAct::DiffStage,
+                ),
+                (
+                    format!("Discard lines ({n_sel})…"),
+                    Act::DiscardSel,
+                    KAct::DiffDiscard,
+                ),
             ],
             DiffMode::Unstaged => vec![
-                ("Stage hunk".into(), Act::StageHunk(h)),
-                ("Discard hunk…".into(), Act::DiscardHunk(h)),
+                ("Stage hunk".into(), Act::StageHunk(h), KAct::DiffStage),
+                (
+                    "Discard hunk…".into(),
+                    Act::DiscardHunk(h),
+                    KAct::DiffDiscard,
+                ),
             ],
-            DiffMode::Staged if lines => {
-                vec![(format!("Unstage lines ({n_sel})"), Act::UnstageSel)]
-            }
-            DiffMode::Staged => vec![("Unstage hunk".into(), Act::UnstageHunk(h))],
+            DiffMode::Staged if lines => vec![(
+                format!("Unstage lines ({n_sel})"),
+                Act::UnstageSel,
+                KAct::DiffUnstage,
+            )],
+            DiffMode::Staged => vec![(
+                "Unstage hunk".into(),
+                Act::UnstageHunk(h),
+                KAct::DiffUnstage,
+            )],
             DiffMode::ReadOnly => Vec::new(),
         };
         let enabled = !self.ignore_ws;
         let mut x = rect.right() - 6.0;
         let color = ui.visuals().text_color();
-        for (label, act) in buttons.into_iter().rev() {
+        for (label, act, key) in buttons.into_iter().rev() {
+            let sc = crate::keymap::text(ui.ctx(), key);
             let w = ui
                 .painter()
                 .layout_no_wrap(label.clone(), font.clone(), color)
@@ -1018,6 +1221,11 @@ impl DiffView {
                 .on_disabled_hover_text(
                     "Turn off \"Ignore WS\" to stage or discard parts of a file",
                 );
+            let resp = if sc.is_empty() {
+                resp
+            } else {
+                resp.on_hover_text(format!("Shortcut: {sc} (diff focused)"))
+            };
             if resp.clicked() {
                 acts.push(act);
             }

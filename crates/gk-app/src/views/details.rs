@@ -26,6 +26,11 @@ pub struct DetailsState {
 }
 
 impl DetailsState {
+    /// The file whose diff the details panel shows.
+    pub fn selected_file(&self) -> Option<&str> {
+        self.selected_file.as_deref()
+    }
+
     /// Shows `path`'s diff when the selected commit changes it.
     pub fn preselect(&mut self, path: String) {
         self.selected_file = Some(path);

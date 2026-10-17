@@ -5,7 +5,8 @@
 # keymap editor + rebound shortcut, background sparse clone, stage/unstage
 # all shortcuts, Optimize diagnostics, Authentication diagnostics (GCM setup,
 # connection test), bookmarking the open repository from "Repositories ▾",
-# the large-history commit-graph banner, large-file / LFS / image overlay views.
+# the large-history commit-graph banner, large-file / LFS / image overlay views,
+# File Status from the keyboard (Shift+F10 menu, hunk staging, discard).
 # Drives the real app through scripted input (GK_DX11_INPUT_SCRIPT) and
 # checks repositories and settings files afterwards.
 # Usage: scripts/run-e2e-features-b.sh <path to gitkwaken.exe> [scenario filter]
@@ -98,6 +99,19 @@ if want stage-keys; then
   run fb-unstage-all "$r" status
   staged=$(g "$r" diff --cached --name-only | wc -l)
   [ "$staged" = 0 ] && ok unstage-all-shortcut || bad unstage-all-shortcut "$staged staged entries left"
+fi
+
+if want keys-status; then
+  r=$(demo keysstatus)
+  for i in $(seq 1 30); do echo "line $i"; done > "$r/A-long.txt"
+  g "$r" add A-long.txt; g "$r" commit -q -m "Add a long file"
+  sed -i -e 's/^line 3$/LINE 3/' -e 's/^line 27$/LINE 27/' "$r/A-long.txt"
+  run fb-keys-status "$r" status
+  staged=$(g "$r" diff --cached -- A-long.txt); unstaged=$(g "$r" diff -- A-long.txt)
+  [[ "$staged" == *"+LINE 27"* ]] && [[ "$staged" != *"+LINE 3"* ]] && [[ "$unstaged" == *"+LINE 3"* ]] \
+    && [ -s "$OUT/fb-keys-menu.png" ] \
+    && ok keys-hunk-stage || bad keys-hunk-stage "staged='$staged'"
+  [ -z "$(g "$r" diff -- README.md)" ] && ok keys-discard || bad keys-discard "README.md still modified"
 fi
 
 if want commit-options; then

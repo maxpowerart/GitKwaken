@@ -303,9 +303,95 @@ pub fn apply_with(
     }
 }
 
+/// UI density (`settings.compact`). Compact, the default, is the look the
+/// app always had; Comfortable adds room to every list and widget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Density {
+    Compact,
+    Comfortable,
+}
+
+impl Density {
+    pub fn of(compact: bool) -> Self {
+        if compact {
+            Density::Compact
+        } else {
+            Density::Comfortable
+        }
+    }
+
+    /// Extra height of list rows (sidebar, history, search, reflog).
+    pub fn row_extra(self) -> f32 {
+        match self {
+            Density::Compact => 0.0,
+            Density::Comfortable => 4.0,
+        }
+    }
+
+    /// Padding added to the text height of File Status rows.
+    pub fn file_row_pad(self) -> f32 {
+        match self {
+            Density::Compact => 6.0,
+            Density::Comfortable => 10.0,
+        }
+    }
+
+    /// Sidebar row height for a body text of height `text_h`.
+    pub fn sidebar_row(self, text_h: f32) -> f32 {
+        (text_h + 4.0).max(16.0) + self.row_extra()
+    }
+
+    /// History / search / reflog row height from `settings.history.row_height`.
+    pub fn history_row(self, setting: f32) -> f32 {
+        setting.clamp(14.0, 60.0) + self.row_extra()
+    }
+
+    fn spacing(self, s: &mut egui::style::Spacing) {
+        let (item, button, interact_h) = match self {
+            Density::Compact => (egui::vec2(6.0, 4.0), egui::vec2(6.0, 3.0), 18.0),
+            Density::Comfortable => (egui::vec2(8.0, 6.0), egui::vec2(8.0, 5.0), 22.0),
+        };
+        s.item_spacing = item;
+        s.button_padding = button;
+        s.interact_size.y = interact_h;
+    }
+}
+
+/// Applies the global widget spacing of `density` (both themes).
+pub fn apply_density(ctx: &egui::Context, density: Density) {
+    ctx.all_styles_mut(|s| density.spacing(&mut s.spacing));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compact_density_keeps_the_classic_look() {
+        let ctx = egui::Context::default();
+        apply_with(&ctx, gk_settings::Theme::Dark, 1.0, 13.0, 12.5);
+        let before = ctx.style_of(egui::Theme::Dark).spacing.clone();
+        apply_density(&ctx, Density::Compact);
+        let after = ctx.style_of(egui::Theme::Dark).spacing.clone();
+        assert_eq!(before.item_spacing, after.item_spacing);
+        assert_eq!(before.button_padding, after.button_padding);
+        assert_eq!(before.interact_size, after.interact_size);
+        let c = Density::Compact;
+        assert_eq!(c.file_row_pad(), 6.0);
+        assert_eq!(c.history_row(22.0), 22.0);
+        assert_eq!(c.sidebar_row(13.0), 17.0);
+        // Comfortable is roomier everywhere.
+        apply_density(&ctx, Density::Comfortable);
+        let roomy = ctx.style_of(egui::Theme::Dark).spacing.clone();
+        assert!(roomy.item_spacing.y > after.item_spacing.y);
+        assert!(roomy.button_padding.y > after.button_padding.y);
+        assert!(roomy.interact_size.y > after.interact_size.y);
+        let r = Density::Comfortable;
+        assert!(r.file_row_pad() > c.file_row_pad());
+        assert!(r.history_row(22.0) > c.history_row(22.0));
+        assert!(r.sidebar_row(13.0) > c.sidebar_row(13.0));
+        assert_eq!(Density::of(true), c);
+    }
 
     /// Every icon the UI draws must still render without Segoe UI Emoji.
     #[test]

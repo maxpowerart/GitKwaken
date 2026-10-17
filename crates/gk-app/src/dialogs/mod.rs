@@ -145,6 +145,9 @@ impl Dialog {
     pub fn stash_apply(index: usize) -> Self {
         Self::new(worktree::StashApply::new(index))
     }
+    pub fn stash_pop(index: usize) -> Self {
+        Self::new(worktree::StashApply::pop(index))
+    }
     pub fn stash_drop(index: usize) -> Self {
         Self::new(worktree::StashDrop::new(index))
     }
