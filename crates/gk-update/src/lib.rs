@@ -15,7 +15,7 @@
 //! {
 //!   "version": "1.0.1",
 //!   "notes": "Changelog text (plain / markdown)",
-//!   "url": "https://github.com/OWNER/gitkwaken/releases/download/v1.0.1/GitKwaken-1.0.1-x64.zip",
+//!   "url": "https://github.com/<owner>/gitkwaken/releases/download/v1.0.1/GitKwaken-1.0.1-x64.zip",
 //!   "sha256": "<64 hex chars of the zip>",
 //!   "published": "2026-10-17"
 //! }
@@ -30,9 +30,10 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-/// Placeholder channel; `OWNER` must be replaced with the real GitHub org/user before release.
-pub const DEFAULT_CHANNEL_URL: &str =
-    "https://github.com/OWNER/gitkwaken/releases/latest/download/update.json";
+/// Release channel baked in at build time from `GITKWAKEN_UPDATE_CHANNEL`
+/// (the release workflow sets it to the repository's `latest/download/update.json`).
+/// `None` for local builds, which then only use a channel configured at runtime.
+pub const DEFAULT_CHANNEL_URL: Option<&str> = option_env!("GITKWAKEN_UPDATE_CHANNEL");
 
 /// File name of the executable inside the release zip (matched case-insensitively, any folder).
 pub const EXE_NAME: &str = "gitkwaken.exe";
@@ -112,8 +113,19 @@ pub fn check(current: &str, channel_url: &str) -> Result<Option<Release>> {
         .limit(MANIFEST_LIMIT)
         .read_to_string()
         .context("read update manifest")?;
-    let release = parse_manifest(&body)?;
+    let mut release = parse_manifest(&body)?;
+    release.url = resolve_url(channel_url, &release.url);
     Ok(is_newer(current, &release.version)?.then_some(release))
+}
+
+/// Resolves a download URL that is relative to the manifest's location
+/// (e.g. `GitKwaken-1.0.1-x64.zip` next to `update.json`).
+pub fn resolve_url(manifest_url: &str, url: &str) -> String {
+    if url.contains("://") {
+        return url.to_string();
+    }
+    let base = manifest_url.rsplit_once('/').map_or(manifest_url, |(b, _)| b);
+    format!("{base}/{}", url.trim_start_matches("./"))
 }
 
 /// Directory used for downloads and the staged exe.

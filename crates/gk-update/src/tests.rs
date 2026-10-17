@@ -294,3 +294,13 @@ fn self_replace_while_exe_is_running() {
     }
     assert_eq!(removed, 1);
 }
+
+#[test]
+fn relative_download_urls_resolve_against_manifest() {
+    use crate::resolve_url;
+    assert_eq!(
+        resolve_url("http://h/r/update.json", "./GitKwaken-1.0.1-x64.zip"),
+        "http://h/r/GitKwaken-1.0.1-x64.zip"
+    );
+    assert_eq!(resolve_url("http://h/r/update.json", "https://x/y.zip"), "https://x/y.zip");
+}

@@ -17,14 +17,14 @@ Installers:
   - Architecture: x64
     InstallerType: inno
     Scope: user
-    InstallerUrl: https://github.com/OWNER/gitkwaken/releases/download/v{{VERSION}}/GitKwaken-{{VERSION}}-x64-setup.exe
+    InstallerUrl: https://github.com/{{REPO}}/releases/download/v{{VERSION}}/GitKwaken-{{VERSION}}-x64-setup.exe
     InstallerSha256: "{{SETUP_SHA256}}"
     InstallerSwitches:
       Custom: /CURRENTUSER
   - Architecture: x64
     InstallerType: inno
     Scope: machine
-    InstallerUrl: https://github.com/OWNER/gitkwaken/releases/download/v{{VERSION}}/GitKwaken-{{VERSION}}-x64-setup.exe
+    InstallerUrl: https://github.com/{{REPO}}/releases/download/v{{VERSION}}/GitKwaken-{{VERSION}}-x64-setup.exe
     InstallerSha256: "{{SETUP_SHA256}}"
     InstallerSwitches:
       Custom: /ALLUSERS
@@ -35,7 +35,7 @@ Installers:
     NestedInstallerFiles:
       - RelativeFilePath: GitKwaken-{{VERSION}}-x64\gitkwaken.exe
         PortableCommandAlias: gitkwaken
-    InstallerUrl: https://github.com/OWNER/gitkwaken/releases/download/v{{VERSION}}/GitKwaken-{{VERSION}}-x64.zip
+    InstallerUrl: https://github.com/{{REPO}}/releases/download/v{{VERSION}}/GitKwaken-{{VERSION}}-x64.zip
     InstallerSha256: "{{ZIP_SHA256}}"
 ManifestType: installer
 ManifestVersion: 1.6.0

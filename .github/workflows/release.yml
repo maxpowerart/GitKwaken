@@ -53,6 +53,7 @@ jobs:
         run: |
           ./packaging/build-release.ps1 `
             -Version $env:VERSION `
+            -Repo "${{ github.repository }}" `
             -DownloadBaseUrl "https://github.com/${{ github.repository }}/releases/download/$env:TAG" `
             -Notes "GitKwaken $env:VERSION. Release notes: https://github.com/${{ github.repository }}/releases/tag/$env:TAG"
 

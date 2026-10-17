@@ -19,7 +19,10 @@
 
 #define AppName "GitKwaken"
 #define AppExe "gitkwaken.exe"
-#define AppUrl "https://github.com/OWNER/gitkwaken"
+#ifndef AppUrl
+  ; Passed by build-release.ps1 from the repository (/DAppUrl=...).
+  #define AppUrl "https://github.com"
+#endif
 
 [Setup]
 ; NEVER change AppId: it is what makes a new installer upgrade the existing install.

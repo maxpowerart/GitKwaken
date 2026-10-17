@@ -27,6 +27,9 @@ param(
     [string]$Version,
     [string]$DownloadBaseUrl,
     [string]$Notes,
+    # GitHub "owner/name"; defaults to the origin remote. Drives download URLs
+    # and the update channel compiled into the executable.
+    [string]$Repo,
     [switch]$SkipBuild
 )
 
@@ -45,11 +48,22 @@ try {
     }
     $Version = $Version.TrimStart('v')
     $TargetDir = $meta.target_directory   # honours CARGO_TARGET_DIR
-    if (-not $DownloadBaseUrl) {
-        $DownloadBaseUrl = "https://github.com/OWNER/gitkwaken/releases/download/v$Version"
+    if (-not $Repo) {
+        $origin = git remote get-url origin 2>$null
+        if ($LASTEXITCODE -eq 0 -and $origin -match 'github.com[:/]([^/]+/[^/]+?)(.git)?$') { $Repo = $Matches[1] }
     }
-    if (-not $Notes) {
-        $Notes = "GitKwaken $Version. See https://github.com/OWNER/gitkwaken/releases/tag/v$Version"
+    if ($Repo) {
+        $RepoUrl = "https://github.com/$Repo"
+        if (-not $DownloadBaseUrl) { $DownloadBaseUrl = "$RepoUrl/releases/download/v$Version" }
+        if (-not $Notes) { $Notes = "GitKwaken $Version. See $RepoUrl/releases/tag/v$Version" }
+        $env:GITKWAKEN_UPDATE_CHANNEL = "$RepoUrl/releases/latest/download/update.json"
+        Write-Host "==> repository $Repo; update channel $env:GITKWAKEN_UPDATE_CHANNEL"
+    } else {
+        $RepoUrl = ''
+        Remove-Item Env:GITKWAKEN_UPDATE_CHANNEL -ErrorAction SilentlyContinue
+        Write-Warning 'No GitHub repository (use -Repo owner/name or add an origin remote): the build has no built-in update channel and update.json uses relative URLs.'
+        if (-not $DownloadBaseUrl) { $DownloadBaseUrl = '.' }
+        if (-not $Notes) { $Notes = "GitKwaken $Version" }
     }
     $Name = "GitKwaken-$Version-x64"
     Write-Host "==> GitKwaken $Version (target dir: $TargetDir)"
@@ -124,7 +138,8 @@ try {
     $Setup = $null
     if ($Iscc) {
         Write-Host "==> Inno Setup: $Iscc"
-        & $Iscc /Qp "/DAppVersion=$Version" "/DSourceDir=$Stage" "/DOutputDir=$Dist" (Join-Path $PSScriptRoot 'gitkwaken.iss')
+        $urlDef = if ($RepoUrl) { "/DAppUrl=$RepoUrl" } else { "/DAppUrl=https://github.com" }
+        & $Iscc /Qp "/DAppVersion=$Version" "/DSourceDir=$Stage" "/DOutputDir=$Dist" $urlDef (Join-Path $PSScriptRoot 'gitkwaken.iss')
         if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
         $Setup = Join-Path $Dist "$Name-setup.exe"
         Write-Host ("==> {0} ({1:N2} MB)" -f $Setup, ((Get-Item $Setup).Length / 1MB))
@@ -137,6 +152,25 @@ try {
         '{0}  {1}' -f (Get-FileHash -Algorithm SHA256 $f).Hash.ToLowerInvariant(), (Split-Path -Leaf $f)
     }
     [System.IO.File]::WriteAllText((Join-Path $Dist 'SHA256SUMS.txt'), (($sums -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding $false))
+
+    # ---------------------------------------------------------------- winget
+    if ($Repo -and $Setup) {
+        $WingetOut = Join-Path $Dist 'winget'
+        New-Item -ItemType Directory -Force $WingetOut | Out-Null
+        $vars = @{
+            '{{VERSION}}'      = $Version
+            '{{REPO}}'         = $Repo
+            '{{RELEASE_DATE}}' = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
+            '{{ZIP_SHA256}}'   = (Get-FileHash -Algorithm SHA256 $Zip).Hash.ToUpperInvariant()
+            '{{SETUP_SHA256}}' = (Get-FileHash -Algorithm SHA256 $Setup).Hash.ToUpperInvariant()
+        }
+        foreach ($t in Get-ChildItem (Join-Path $PSScriptRoot 'winget') -Filter '*.yaml') {
+            $text = [System.IO.File]::ReadAllText($t.FullName)
+            foreach ($k in $vars.Keys) { $text = $text.Replace($k, $vars[$k]) }
+            [System.IO.File]::WriteAllText((Join-Path $WingetOut $t.Name), $text, (New-Object System.Text.UTF8Encoding $false))
+        }
+        Write-Host "==> dist\winget (manifests for $Repo)"
+    }
 
     Write-Host '==> done'
 }

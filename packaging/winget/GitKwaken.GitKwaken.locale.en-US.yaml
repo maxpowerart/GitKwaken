@@ -3,12 +3,12 @@ PackageIdentifier: GitKwaken.GitKwaken
 PackageVersion: "{{VERSION}}"
 PackageLocale: en-US
 Publisher: GitKwaken contributors
-PublisherUrl: https://github.com/OWNER/gitkwaken
-PublisherSupportUrl: https://github.com/OWNER/gitkwaken/issues
+PublisherUrl: https://github.com/{{REPO}}
+PublisherSupportUrl: https://github.com/{{REPO}}/issues
 PackageName: GitKwaken
-PackageUrl: https://github.com/OWNER/gitkwaken
+PackageUrl: https://github.com/{{REPO}}
 License: MIT OR Apache-2.0
-LicenseUrl: https://github.com/OWNER/gitkwaken/blob/main/LICENSE-MIT
+LicenseUrl: https://github.com/{{REPO}}/blob/main/LICENSE-MIT
 ShortDescription: A fast, lightweight SourceTree-like git client.
 Description: |-
   GitKwaken is a native Windows git client written in Rust: commit graph, staging with hunk/line
@@ -21,6 +21,6 @@ Tags:
   - git-gui
   - vcs
   - sourcetree
-ReleaseNotesUrl: https://github.com/OWNER/gitkwaken/releases/tag/v{{VERSION}}
+ReleaseNotesUrl: https://github.com/{{REPO}}/releases/tag/v{{VERSION}}
 ManifestType: defaultLocale
 ManifestVersion: 1.6.0
