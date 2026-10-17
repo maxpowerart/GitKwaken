@@ -34,6 +34,8 @@ enum Cmd {
     Explorer,
     ToggleOutput,
     Checkout(String),
+    Merge(String),
+    Blame(String),
 }
 
 struct Item {
@@ -67,11 +69,37 @@ fn items(snap: Option<&Snapshot>) -> Vec<Item> {
         add("Add remote…", Cmd::Dialog(|_| Dialog::add_remote()));
         add("Apply patch…", Cmd::Dialog(|_| Dialog::apply_patch()));
         add("Git console…", Cmd::Dialog(|_| Dialog::console()));
+        add("Bisect…", Cmd::Dialog(Dialog::bisect));
+        add("Git Flow…", Cmd::Dialog(Dialog::git_flow));
+        add("Git LFS…", Cmd::Dialog(Dialog::lfs));
+        add("Sparse checkout…", Cmd::Dialog(Dialog::sparse_checkout));
+        add("Clean working copy…", Cmd::Dialog(|_| Dialog::clean()));
+        add("Optimize repository…", Cmd::Dialog(Dialog::optimize));
+        add("Add submodule…", Cmd::Dialog(|_| Dialog::submodule_add()));
         add("Open terminal", Cmd::Terminal);
         add("Show in Explorer", Cmd::Explorer);
         for b in &snap.refs.branches {
             if !b.is_head {
                 v.push(Item { label: format!("Checkout {}", b.name), cmd: Cmd::Checkout(b.name.clone()) });
+            }
+        }
+        // Conflicted files open in the merge editor; changed tracked files can be blamed.
+        let mut blames = 0;
+        for e in &snap.status.unstaged {
+            let path = e.path.to_string();
+            match e.kind {
+                gk_status::Kind::Conflict(_) => {
+                    v.push(Item { label: format!("Resolve in merge editor: {path}"), cmd: Cmd::Merge(path) })
+                }
+                gk_status::Kind::Untracked
+                | gk_status::Kind::Added
+                | gk_status::Kind::Deleted
+                | gk_status::Kind::IntentToAdd => {}
+                _ if blames < 500 => {
+                    blames += 1;
+                    v.push(Item { label: format!("Blame {path}"), cmd: Cmd::Blame(path) });
+                }
+                _ => {}
             }
         }
     }
@@ -178,6 +206,8 @@ pub fn show(ctx: &egui::Context, st: &mut PaletteState, tab: Option<&mut RepoTab
             let _ = open::that(&t.path);
         }
         (Cmd::Checkout(b), Some(t), _) => t.dialog = Some(Dialog::checkout(b)),
+        (Cmd::Merge(p), Some(t), _) => crate::views::merge::open_merge(t, p),
+        (Cmd::Blame(p), Some(t), _) => crate::views::blame::open_blame(t, p, None),
         _ => {}
     }
 }

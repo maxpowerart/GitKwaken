@@ -324,6 +324,7 @@ fn handle(ui: &Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared, side
         Ev::Reveal(p) => reveal(&session.repo().abs(&p)),
         Ev::Copy(text) => ui.ctx().copy_text(text),
         Ev::History(p) => crate::views::search::open_file_history(tab, p),
+        Ev::Blame(p) => crate::views::blame::open_blame(tab, p, None),
         Ev::ResolveOurs(paths) => {
             tab.status.set_pending(snap, &paths, None);
             session.run_index_op("Resolve using mine", move |r| r.resolve_with(&paths, MergeSide::Ours));

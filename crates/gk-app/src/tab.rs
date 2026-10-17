@@ -11,6 +11,10 @@ pub enum View {
     FileStatus,
     History,
     Search,
+    /// Built-in 3-way merge editor; state in [`RepoTab::merge`].
+    Merge,
+    /// Blame of one file; state in [`RepoTab::blame`].
+    Blame,
 }
 
 pub struct RepoTab {
@@ -25,6 +29,10 @@ pub struct RepoTab {
     pub details: views::details::DetailsState,
     pub sidebar: views::sidebar::SidebarState,
     pub search: views::search::SearchState,
+    /// Open merge editor (see [`views::merge::open_merge`]).
+    pub merge: Option<Box<views::merge::MergeState>>,
+    /// Open blame (see [`views::blame::open_blame`]).
+    pub blame: Option<Box<views::blame::BlameState>>,
     pub dialog: Option<Dialog>,
     /// Last snapshot generation seen, to detect changes cheaply.
     pub seen_generation: u64,
@@ -69,6 +77,8 @@ impl RepoTab {
             details: Default::default(),
             sidebar: Default::default(),
             search: Default::default(),
+            merge: None,
+            blame: None,
             dialog: None,
             seen_generation: 0,
             last_fetch: None,
@@ -76,6 +86,18 @@ impl RepoTab {
             state,
         };
         tab.status.commit.message = tab.state.commit_message_draft.clone();
+        // Debug/screenshot aid: `GITKWAKEN_START_VIEW` = `status`, `history`,
+        // `search`, `merge:<path>` or `blame:<path>` opens that view on startup.
+        if let Ok(v) = std::env::var("GITKWAKEN_START_VIEW") {
+            match (v.as_str(), v.split_once(':')) {
+                ("status", _) => tab.view = View::FileStatus,
+                ("history", _) => tab.view = View::History,
+                ("search", _) => tab.view = View::Search,
+                (_, Some(("merge", p))) => views::merge::open_merge(&mut tab, p.to_string()),
+                (_, Some(("blame", p))) => views::blame::open_blame(&mut tab, p.to_string(), None),
+                _ => {}
+            }
+        }
         Ok(tab)
     }
 
@@ -159,6 +181,8 @@ impl RepoTab {
             View::FileStatus => views::file_status::show(ui, self, &snap, shared),
             View::History => views::history::show(ui, self, &snap, shared),
             View::Search => views::search::show(ui, self, &snap, shared),
+            View::Merge => views::merge::show(ui, self, &snap, shared),
+            View::Blame => views::blame::show(ui, self, &snap, shared),
         });
         if let Some(mut d) = self.dialog.take() {
             if d.show(ui.ctx(), self, &snap, shared) {

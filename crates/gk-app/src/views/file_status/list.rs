@@ -40,6 +40,7 @@ pub enum Ev {
     Reveal(String),
     Copy(String),
     History(String),
+    Blame(String),
     ResolveOurs(Vec<String>),
     ResolveTheirs(Vec<String>),
     MarkResolved(Vec<String>),
@@ -638,6 +639,9 @@ fn file_menu(ui: &mut Ui, c: &ListCtx, targets: &[String], out: &mut Vec<Ev>) {
         ui.separator();
         if ui.button("File history").clicked() {
             emit(ui, Ev::History(p.clone()));
+        }
+        if ui.button("Blame").clicked() {
+            emit(ui, Ev::Blame(p.clone()));
         }
     }
 }

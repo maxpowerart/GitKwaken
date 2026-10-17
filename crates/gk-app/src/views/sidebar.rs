@@ -810,6 +810,8 @@ fn row_ui(ui: &mut Ui, cx: &Cx, row: &Row, h: f32, cmds: &mut Vec<Cmd>) {
                 View::FileStatus => ("📝", "File status"),
                 View::History => ("🕘", "History"),
                 View::Search => ("🔍", "Search"),
+                View::Merge => ("⇄", "Merge"),
+                View::Blame => ("👤", "Blame"),
             };
             let mut badges = Vec::new();
             if *v == View::FileStatus {
