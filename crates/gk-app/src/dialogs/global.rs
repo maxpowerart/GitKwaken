@@ -531,7 +531,7 @@ impl AppDialog for About {
         if let Some(t) = task.take() {
             self.git_text = t;
         }
-        let (out, ()) = modal(ctx, "about", "About GitKwaken", 460.0, "OK", |ui, ctl| {
+        let (out, ()) = modal(ctx, "about", "About GitKwaken", 520.0, "OK", |ui, ctl| {
             ctl.show_ok = false;
             ctl.cancel_label = "Close";
             ui.label(
@@ -546,17 +546,20 @@ impl AppDialog for About {
                 .spacing([12.0, 4.0])
                 .show(ui, |ui| {
                     ui.label("Renderer:");
-                    ui.label(gk_dx11::backend_info());
+                    ui.add(egui::Label::new(gk_dx11::backend_info()).wrap());
                     ui.end_row();
                     ui.label("Git:");
                     if self.git_text.is_empty() {
                         ui.spinner();
                     } else {
-                        ui.label(&self.git_text);
+                        ui.add(egui::Label::new(&self.git_text).wrap());
                     }
                     ui.end_row();
                     ui.label("Settings:");
-                    ui.label(gk_settings::Settings::path().display().to_string());
+                    ui.add(
+                        egui::Label::new(gk_settings::Settings::path().display().to_string())
+                            .wrap(),
+                    );
                     ui.end_row();
                 });
         });

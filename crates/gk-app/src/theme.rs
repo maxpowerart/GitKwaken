@@ -168,6 +168,10 @@ pub fn apply(
         visuals.faint_bg_color = Color32::from_rgb(0x2A, 0x2C, 0x30);
     }
     visuals.striped = true;
+    if !dark {
+        // Light text fields otherwise blend into panels.
+        visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, Color32::from_gray(190));
+    }
     let theme = if dark {
         egui::Theme::Dark
     } else {

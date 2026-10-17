@@ -11,6 +11,33 @@ use std::sync::Arc;
 
 pub const DANGER: Color32 = Color32::from_rgb(0xD0, 0x3B, 0x3B);
 pub const WARN: Color32 = Color32::from_rgb(0xE0, 0x9A, 0x2A);
+/// Darker warning color, readable on light backgrounds.
+pub const WARN_LIGHT: Color32 = Color32::from_rgb(0xA8, 0x62, 0x00);
+
+/// Space kept free around a modal, and the height of its title and buttons.
+const MODAL_MARGIN: f32 = 24.0;
+const MODAL_CHROME: f32 = 110.0;
+
+/// Remembers which refs a dialog last saw, to refresh choice lists that
+/// were built from an older (possibly still loading) snapshot.
+#[derive(Default)]
+pub struct RefsWatch(Option<Arc<gk_core::Refs>>);
+
+impl RefsWatch {
+    /// True on the first call and whenever the snapshot's refs changed.
+    pub fn changed(&mut self, snap: &Snapshot) -> bool {
+        if self.0.as_ref().is_some_and(|r| Arc::ptr_eq(r, &snap.refs)) {
+            return false;
+        }
+        self.0 = Some(snap.refs.clone());
+        true
+    }
+}
+
+/// False while the session has not read the refs yet (empty snapshot).
+pub fn refs_loaded(snap: &Snapshot) -> bool {
+    !matches!(snap.refs.head, gk_core::Head::Unknown)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
@@ -87,37 +114,71 @@ pub fn modal<T>(
         close: false,
         ok: false,
     };
+    // Never wider or taller than the window: the body scrolls instead.
+    let screen = ctx.content_rect();
+    let width = width.min(screen.width() - 2.0 * MODAL_MARGIN).max(200.0);
+    let max_body = (screen.height() - 2.0 * MODAL_MARGIN - MODAL_CHROME).max(80.0);
     let resp = egui::Modal::new(id.with("modal")).show(ctx, |ui| {
         ui.set_width(width);
+        // Form grids are not tables (the app turns stripes on globally), and
+        // light mode needs outlines to tell text fields from the dialog.
+        ui.visuals_mut().striped = false;
+        if !ui.visuals().dark_mode {
+            ui.visuals_mut().widgets.inactive.bg_stroke =
+                egui::Stroke::new(1.0, Color32::from_gray(190));
+        }
         ui.heading(title);
         ui.separator();
-        let t = body(ui, &mut ctl);
+        let t = egui::ScrollArea::vertical()
+            .id_salt("gk-dialog-body")
+            .max_height(max_body)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                body(ui, &mut ctl)
+            })
+            .inner;
         ui.add_space(6.0);
         ui.separator();
         let mut ok = false;
         let mut cancel = false;
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button(ctl.cancel_label).clicked() {
+        // Top-aligned: a centered row would sit in the middle of whatever
+        // height the modal had last frame and keep it from shrinking.
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+            let min = egui::vec2(80.0, 0.0);
+            if ui
+                .add(egui::Button::new(ctl.cancel_label).min_size(min))
+                .clicked()
+            {
                 cancel = true;
             }
             if ctl.show_ok {
                 let text = RichText::new(&ctl.ok_label).strong();
                 let b = if ctl.danger {
-                    egui::Button::new(text.color(Color32::WHITE)).fill(DANGER)
+                    let fill = if ctl.ok_enabled {
+                        DANGER
+                    } else {
+                        DANGER.gamma_multiply(0.45)
+                    };
+                    egui::Button::new(text.color(Color32::WHITE)).fill(fill)
                 } else {
                     egui::Button::new(text)
                 };
-                if ui.add_enabled(ctl.ok_enabled, b).clicked() {
+                if ui.add_enabled(ctl.ok_enabled, b.min_size(min)).clicked() {
                     ok = true;
                 }
             }
         });
         (t, ok, cancel)
     });
+    #[cfg(test)]
+    ctx.data_mut(|d| d.insert_temp(id.with("rect"), resp.response.rect));
     let top = resp.is_top_modal && !resp.any_popup_open;
     let (t, ok, cancel) = resp.inner;
     let esc = top && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
+    // Not on the first frame: the Enter that opened the dialog must not confirm it.
     let enter = top
+        && !ctl.first
         && ctl.show_ok
         && ctl.ok_enabled
         && ctl.enter_ok
@@ -150,7 +211,17 @@ pub fn error(ui: &mut Ui, text: impl Into<String>) {
 }
 
 pub fn warning(ui: &mut Ui, text: impl Into<String>) {
-    ui.colored_label(WARN, format!("⚠ {}", text.into()));
+    let color = warn_color(ui);
+    ui.colored_label(color, format!("⚠ {}", text.into()));
+}
+
+/// [`WARN`], darkened in light mode for contrast.
+pub fn warn_color(ui: &Ui) -> Color32 {
+    if ui.visuals().dark_mode {
+        WARN
+    } else {
+        WARN_LIGHT
+    }
 }
 
 pub fn hint(ui: &mut Ui, text: impl Into<String>) {
@@ -687,6 +758,66 @@ pub fn autosquash_plan(ids: &[String], summaries: &[String]) -> Vec<(usize, Opti
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One headless frame of a small modal at 1000x650; returns the outcome
+    /// and the modal's rect.
+    fn frame(ctx: &Context, keys: &[Key], lines: usize) -> (Outcome, egui::Rect) {
+        let events = keys
+            .iter()
+            .map(|&key| egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            })
+            .collect();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1000.0, 650.0),
+            )),
+            events,
+            ..Default::default()
+        };
+        let mut out = Outcome::None;
+        let _ = ctx.run_ui(input, |ui| {
+            out = modal(ui.ctx(), "test", "Test", 2000.0, "OK", |ui, _| {
+                for i in 0..lines {
+                    ui.label(format!("line {i}"));
+                }
+            })
+            .0;
+        });
+        let id = Id::new(("gk-dialog", "test")).with("rect");
+        let rect = ctx.data(|d| d.get_temp::<egui::Rect>(id));
+        (out, rect.unwrap_or(egui::Rect::NOTHING))
+    }
+
+    #[test]
+    fn modal_keys() {
+        let ctx = Context::default();
+        // The Enter that opened the dialog does not confirm it.
+        assert_eq!(frame(&ctx, &[Key::Enter], 1).0, Outcome::None);
+        assert_eq!(frame(&ctx, &[], 1).0, Outcome::None);
+        assert_eq!(frame(&ctx, &[Key::Enter], 1).0, Outcome::Ok);
+
+        let ctx = Context::default();
+        frame(&ctx, &[], 1);
+        assert_eq!(frame(&ctx, &[Key::Escape], 1).0, Outcome::Cancel);
+    }
+
+    #[test]
+    fn modal_fits_the_window() {
+        let ctx = Context::default();
+        let mut rect = egui::Rect::NOTHING;
+        for _ in 0..3 {
+            rect = frame(&ctx, &[], 200).1;
+        }
+        assert!(rect.width() > 100.0 && rect.width() < 990.0, "{rect:?}");
+        assert!(rect.height() < 640.0, "{rect:?}");
+        assert!(rect.min.y > 0.0, "{rect:?}");
+    }
 
     #[test]
     fn branch_names() {

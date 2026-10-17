@@ -161,11 +161,8 @@ impl TabDialog for DeleteTag {
             460.0,
             "Delete",
             |ui, ctl| {
-                ui.horizontal(|ui| {
-                    ui.label("Delete tag");
-                    ui.label(RichText::new(&self.name).strong());
-                    ui.label("?");
-                });
+                ui.label("Delete this tag?");
+                ui.label(RichText::new(&self.name).strong());
                 ui.add_enabled_ui(!remotes.is_empty(), |ui| {
                     ui.horizontal(|ui| {
                         ui.checkbox(&mut self.remote_too, "Also delete it on");

@@ -203,8 +203,165 @@ impl Dialog {
         snap: &Snapshot,
         shared: &mut Shared,
     ) -> bool {
+        if let Some(d) = debug_swap(|spec| debug_open(spec, snap)) {
+            *self = d;
+        }
         self.0.show(ctx, tab, snap, shared)
     }
+}
+
+/// Env var naming a dialog to show for UI screenshots: `<name>[:<arg>]`
+/// (see [`debug_open`] / [`debug_open_global`]).
+pub const DEBUG_DIALOG_ENV: &str = "GITKWAKEN_DIALOG";
+
+/// Dev hook: the first dialog shown replaces itself (once per process) with
+/// the one named by `GITKWAKEN_DIALOG`, so dialogs without a palette entry
+/// can be screenshotted: `GITKWAKEN_PALETTE="Fetch…" GITKWAKEN_DIALOG=reset`.
+fn debug_swap<T>(open: impl FnOnce(&str) -> Option<T>) -> Option<T> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static DONE: AtomicBool = AtomicBool::new(false);
+    if DONE.load(Ordering::Relaxed) {
+        return None;
+    }
+    let spec = std::env::var(DEBUG_DIALOG_ENV).ok()?;
+    let d = open(spec.trim())?;
+    DONE.store(true, Ordering::Relaxed);
+    Some(d)
+}
+
+/// Builds a repository dialog by name for tests and screenshots
+/// (`GITKWAKEN_DIALOG=<name>[:<arg>]`). Without an argument, a fitting
+/// branch / commit / tag / stash of `snap` is used. Unknown names: None.
+pub fn debug_open(spec: &str, snap: &Snapshot) -> Option<Dialog> {
+    let (name, arg) = match spec.split_once(':') {
+        Some((n, a)) => (n, Some(a.to_string())),
+        None => (spec, None),
+    };
+    let refs = &snap.refs;
+    let commit = |n: usize| {
+        snap.history
+            .ids
+            .get(n)
+            .or(snap.history.ids.last())
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "HEAD".into())
+    };
+    let branch = || {
+        arg.clone().unwrap_or_else(|| {
+            refs.branches
+                .iter()
+                .find(|b| !b.is_head)
+                .or(refs.branches.first())
+                .map(|b| b.name.clone())
+                .unwrap_or_else(|| "main".into())
+        })
+    };
+    let remote_branch = || {
+        arg.clone().unwrap_or_else(|| {
+            refs.remote_branches
+                .first()
+                .map(|b| b.full())
+                .unwrap_or_else(|| "origin/main".into())
+        })
+    };
+    let remote = || {
+        arg.clone().unwrap_or_else(|| {
+            refs.remotes
+                .first()
+                .map(|r| r.name.clone())
+                .unwrap_or_else(|| "origin".into())
+        })
+    };
+    let tag = || {
+        arg.clone().unwrap_or_else(|| {
+            refs.tags
+                .first()
+                .map(|t| t.name.clone())
+                .unwrap_or_else(|| "v1.0".into())
+        })
+    };
+    let rev = || arg.clone().unwrap_or_else(|| commit(5));
+    let ids = || match &arg {
+        Some(a) => a.split(',').map(str::to_string).collect(),
+        None => vec![commit(1), commit(2), commit(3)],
+    };
+    let stash = || arg.as_deref().and_then(|a| a.parse().ok()).unwrap_or(0);
+    let paths = || match &arg {
+        Some(a) => a.split(',').map(str::to_string).collect(),
+        None => snap
+            .status
+            .unstaged
+            .iter()
+            .chain(&snap.status.staged)
+            .map(|e| e.path.to_string())
+            .collect(),
+    };
+    Some(match name {
+        "pull" => Dialog::pull(snap),
+        "push" => Dialog::push(snap),
+        "fetch" => Dialog::fetch(snap),
+        "add-remote" => Dialog::add_remote(),
+        "edit-remote" => Dialog::edit_remote(remote()),
+        "remove-remote" => Dialog::remove_remote(remote()),
+        "checkout-remote" => Dialog::checkout_remote(remote_branch()),
+        "delete-remote-branch" => {
+            let full = remote_branch();
+            let (r, b) = common::split_remote_ref(&common::remote_names(snap), &full)
+                .unwrap_or(("origin".into(), full));
+            Dialog::delete_remote_branch(r, b)
+        }
+        "branch" => Dialog::branch(snap, arg.clone()),
+        "delete-branch" => Dialog::delete_branch(branch()),
+        "rename-branch" => Dialog::rename_branch(branch()),
+        "checkout" => Dialog::checkout(branch()),
+        "checkout-detached" => Dialog::checkout(rev()),
+        "set-upstream" => Dialog::set_upstream(branch()),
+        "merge" => Dialog::merge(snap, arg.clone()),
+        "rebase" => Dialog::rebase(snap, arg.clone()),
+        "interactive-rebase" => Dialog::interactive_rebase(snap, rev()),
+        "cherry-pick" => Dialog::cherry_pick(ids()),
+        "revert" => Dialog::revert(ids()),
+        "reset" => Dialog::reset(rev()),
+        "discard-all" => Dialog::discard_all(),
+        "discard-paths" => Dialog::discard_paths(paths(), Vec::new()),
+        "stash" => Dialog::stash(),
+        "stash-paths" => Dialog::stash_paths(paths()),
+        "stash-apply" => Dialog::stash_apply(stash()),
+        "stash-drop" => Dialog::stash_drop(stash()),
+        "stash-branch" => Dialog::stash_branch(stash()),
+        "tag" => Dialog::tag(arg.clone()),
+        "delete-tag" => Dialog::delete_tag(tag()),
+        "push-tag" => Dialog::push_tag(tag()),
+        "create-patch" => Dialog::create_patch(ids()),
+        "apply-patch" => Dialog::apply_patch(),
+        "archive" => Dialog::archive(arg.clone().unwrap_or_else(|| "HEAD".into())),
+        "console" => Dialog::console(),
+        "bisect" => Dialog::bisect(snap),
+        "git-flow" => Dialog::git_flow(snap),
+        "lfs" => Dialog::lfs(snap),
+        "sparse" => Dialog::sparse_checkout(snap),
+        "clean" => Dialog::clean(),
+        "optimize" => Dialog::optimize(snap),
+        "submodule-add" => Dialog::submodule_add(),
+        _ => return None,
+    })
+}
+
+/// [`debug_open`] for application dialogs.
+pub fn debug_open_global(spec: &str) -> Option<GlobalDialog> {
+    let (name, arg) = spec.split_once(':').unwrap_or((spec, ""));
+    Some(match name {
+        "settings" => GlobalDialog(Box::new(settings::SettingsDialog::at(arg))),
+        "clone" => GlobalDialog::clone_repo(),
+        "init" => GlobalDialog::init_repo(),
+        "bookmark" => GlobalDialog::bookmark(if arg.is_empty() {
+            std::env::current_dir().unwrap_or_default()
+        } else {
+            PathBuf::from(arg)
+        }),
+        "about" => GlobalDialog::about(),
+        _ => return None,
+    })
 }
 
 pub struct GlobalDialog(Box<dyn AppDialog>);
@@ -232,6 +389,9 @@ impl GlobalDialog {
     }
 
     pub fn show(&mut self, ctx: &egui::Context, shared: &mut Shared) -> bool {
+        if let Some(d) = debug_swap(debug_open_global) {
+            *self = d;
+        }
         self.0.show(ctx, shared)
     }
 }

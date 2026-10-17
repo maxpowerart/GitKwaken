@@ -31,36 +31,74 @@ pub struct Pull {
     /// Remote branch name without the remote prefix; empty = git's default.
     branch: String,
     rebase: bool,
+    /// The user picked the remote or branch: keep it across refreshes.
+    touched: bool,
+    watch: RefsWatch,
 }
 
 impl Pull {
     pub fn new(s: &Snapshot) -> Self {
-        let remotes = remote_names(s);
-        let mut remote = String::new();
-        let mut branch = String::new();
-        if let Some(u) = s.refs.current_branch().and_then(|b| b.upstream.clone())
-            && let Some((r, b)) = split_remote_ref(&remotes, &u)
-        {
-            remote = r;
-            branch = b;
-        }
-        if remote.is_empty() {
-            remote = default_remote(&remotes);
-            if let Some(cur) = s.refs.head.branch()
-                && s.refs
-                    .remote_branches
-                    .iter()
-                    .any(|rb| rb.remote == remote && rb.name == cur)
-            {
-                branch = cur.to_string();
-            }
-        }
-        Self {
-            remote,
-            branch,
+        let mut p = Self {
+            remote: String::new(),
+            branch: String::new(),
             rebase: false,
-        }
+            touched: false,
+            watch: RefsWatch::default(),
+        };
+        p.sync(s);
+        p
     }
+
+    /// Defaults (current branch's upstream) until the user picks something;
+    /// afterwards only drops choices that no longer exist.
+    fn sync(&mut self, s: &Snapshot) {
+        if !self.watch.changed(s) || !refs_loaded(s) {
+            return;
+        }
+        let remotes = remote_names(s);
+        if self.touched {
+            if !remotes.contains(&self.remote) {
+                self.remote = default_remote(&remotes);
+                self.branch.clear();
+            }
+            if !s
+                .refs
+                .remote_branches
+                .iter()
+                .any(|rb| rb.remote == self.remote && rb.name == self.branch)
+            {
+                self.branch.clear();
+            }
+            return;
+        }
+        let (remote, branch) = pull_defaults(s, &remotes);
+        self.remote = remote;
+        self.branch = branch;
+    }
+}
+
+/// (remote, branch) to pull: the upstream of the current branch, else the
+/// default remote and a remote branch of the same name.
+fn pull_defaults(s: &Snapshot, remotes: &[String]) -> (String, String) {
+    if let Some(u) = s.refs.current_branch().and_then(|b| b.upstream.clone())
+        && let Some((r, b)) = split_remote_ref(remotes, &u)
+    {
+        return (r, b);
+    }
+    let remote = default_remote(remotes);
+    let branch = s
+        .refs
+        .head
+        .branch()
+        .filter(|cur| {
+            s.refs
+                .remote_branches
+                .iter()
+                .any(|rb| rb.remote == remote && rb.name == *cur)
+        })
+        .unwrap_or_default()
+        .to_string();
+    (remote, branch)
 }
 
 impl TabDialog for Pull {
@@ -71,15 +109,17 @@ impl TabDialog for Pull {
         snap: &Snapshot,
         _shared: &mut Shared,
     ) -> bool {
+        self.sync(snap);
         let remotes = remote_names(snap);
-        let (out, ()) = modal(ctx, "pull", "Pull", 460.0, "Pull", |ui, ctl| {
+        let (out, ()) = modal(ctx, "pull", "Pull", 520.0, "Pull", |ui, ctl| {
             egui::Grid::new("pull-grid")
                 .num_columns(2)
                 .spacing([12.0, 6.0])
                 .show(ui, |ui| {
                     ui.label("Pull from remote:");
-                    if combo(ui, "pull-remote", &mut self.remote, &remotes, None, 260.0) {
+                    if combo(ui, "pull-remote", &mut self.remote, &remotes, None, 320.0) {
                         self.branch.clear();
+                        self.touched = true;
                     }
                     ui.end_row();
                     ui.label("Remote branch to pull:");
@@ -90,14 +130,16 @@ impl TabDialog for Pull {
                         .filter(|b| b.remote == self.remote)
                         .map(|b| b.name.clone())
                         .collect();
-                    combo(
+                    if combo(
                         ui,
                         "pull-branch",
                         &mut self.branch,
                         &branches,
                         Some("(tracked branch)"),
-                        260.0,
-                    );
+                        320.0,
+                    ) {
+                        self.touched = true;
+                    }
                     ui.end_row();
                     ui.label("Pull into local branch:");
                     ui.label(RichText::new(head_text(snap)).strong());
@@ -156,57 +198,91 @@ pub struct Push {
     tags: bool,
     force: bool,
     force_confirmed: bool,
+    /// The user picked the remote: keep it across refreshes.
+    remote_touched: bool,
+    watch: RefsWatch,
 }
 
 impl Push {
     pub fn new(s: &Snapshot) -> Self {
-        let remotes = remote_names(s);
-        let remote = s
-            .refs
-            .current_branch()
-            .and_then(|b| b.upstream.as_deref())
-            .and_then(|u| split_remote_ref(&remotes, u))
-            .map(|(r, _)| r)
-            .unwrap_or_else(|| default_remote(&remotes));
-        let rows = s
-            .refs
-            .branches
-            .iter()
-            .map(|b| PushRow {
-                branch: b.name.clone(),
-                upstream: b.upstream.clone(),
-                push: b.is_head,
-                remote_name: String::new(),
-                track: false,
-            })
-            .collect();
         let mut p = Self {
-            remote,
-            rows,
+            remote: String::new(),
+            rows: Vec::new(),
             tags: false,
             force: false,
             force_confirmed: false,
+            remote_touched: false,
+            watch: RefsWatch::default(),
         };
-        p.update_names(&remotes);
+        p.sync(s);
         p
+    }
+
+    /// Rebuilds the branch rows from the current refs, keeping the user's
+    /// choices for branches that still exist.
+    fn sync(&mut self, s: &Snapshot) {
+        if !self.watch.changed(s) || !refs_loaded(s) {
+            return;
+        }
+        let remotes = remote_names(s);
+        let old_remote = self.remote.clone();
+        if !self.remote_touched || !remotes.contains(&self.remote) {
+            self.remote = s
+                .refs
+                .current_branch()
+                .and_then(|b| b.upstream.as_deref())
+                .and_then(|u| split_remote_ref(&remotes, u))
+                .map(|(r, _)| r)
+                .unwrap_or_else(|| default_remote(&remotes));
+        }
+        let mut old = std::mem::take(&mut self.rows);
+        for b in &s.refs.branches {
+            match old.iter().position(|r| r.branch == b.name) {
+                Some(i) => {
+                    let mut r = old.swap_remove(i);
+                    r.upstream = b.upstream.clone();
+                    self.rows.push(r);
+                }
+                None => {
+                    let mut r = PushRow {
+                        branch: b.name.clone(),
+                        upstream: b.upstream.clone(),
+                        push: b.is_head,
+                        remote_name: String::new(),
+                        track: false,
+                    };
+                    r.update_name(&remotes, &self.remote);
+                    self.rows.push(r);
+                }
+            }
+        }
+        if self.remote != old_remote {
+            self.update_names(&remotes);
+        }
     }
 
     /// Remote branch names: the upstream's name on the chosen remote, else the same name.
     fn update_names(&mut self, remotes: &[String]) {
         for r in &mut self.rows {
-            match r
-                .upstream
-                .as_deref()
-                .and_then(|u| split_remote_ref(remotes, u))
-            {
-                Some((rm, b)) if rm == self.remote => {
-                    r.remote_name = b;
-                    r.track = false;
-                }
-                _ => {
-                    r.remote_name = r.branch.clone();
-                    r.track = r.upstream.is_none();
-                }
+            r.update_name(remotes, &self.remote);
+        }
+    }
+}
+
+impl PushRow {
+    fn update_name(&mut self, remotes: &[String], remote: &str) {
+        match self
+            .upstream
+            .as_deref()
+            .and_then(|u| split_remote_ref(remotes, u))
+        {
+            Some((rm, b)) if rm == remote => {
+                self.remote_name = b;
+                self.track = false;
+            }
+            _ => {
+                self.remote_name = self.branch.clone();
+                self.track = self.upstream.is_none();
             }
         }
     }
@@ -220,26 +296,25 @@ impl TabDialog for Push {
         snap: &Snapshot,
         shared: &mut Shared,
     ) -> bool {
+        self.sync(snap);
         let remotes = remote_names(snap);
         let confirm_force = shared.settings.confirmations.force_push;
-        let (out, ()) = modal(ctx, "push", "Push", 600.0, "Push", |ui, ctl| {
+        let (out, ()) = modal(ctx, "push", "Push", 640.0, "Push", |ui, ctl| {
             ui.horizontal(|ui| {
                 ui.label("Push to repository:");
-                if combo(ui, "push-remote", &mut self.remote, &remotes, None, 240.0) {
+                if combo(ui, "push-remote", &mut self.remote, &remotes, None, 260.0) {
+                    self.remote_touched = true;
                     self.update_names(&remotes);
                 }
-                if let Some(r) = snap.refs.remotes.iter().find(|r| r.name == self.remote) {
-                    hint(
-                        ui,
-                        if r.push_url.is_empty() {
-                            &r.fetch_url
-                        } else {
-                            &r.push_url
-                        }
-                        .clone(),
-                    );
-                }
             });
+            if let Some(r) = snap.refs.remotes.iter().find(|r| r.name == self.remote) {
+                let url = if r.push_url.is_empty() {
+                    &r.fetch_url
+                } else {
+                    &r.push_url
+                };
+                ui.add(egui::Label::new(RichText::new(url).weak().small()).truncate());
+            }
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 ui.label("Branches to push:");
@@ -276,11 +351,15 @@ impl TabDialog for Push {
                                         label.push_str(&format!("  ↑{}", b.ahead));
                                     }
                                     ui.label(label);
-                                    ui.add_enabled(
-                                        r.push,
-                                        egui::TextEdit::singleline(&mut r.remote_name)
-                                            .desired_width(200.0),
-                                    );
+                                    // Grid cells only offer last frame's column
+                                    // width: size the field explicitly.
+                                    let h = ui.spacing().interact_size.y;
+                                    ui.add_enabled_ui(r.push, |ui| {
+                                        ui.add_sized(
+                                            [240.0, h],
+                                            egui::TextEdit::singleline(&mut r.remote_name),
+                                        );
+                                    });
                                     ui.add_enabled(
                                         r.push,
                                         egui::Checkbox::without_text(&mut r.track),
@@ -557,7 +636,7 @@ impl TabDialog for EditRemote {
         snap: &Snapshot,
         _shared: &mut Shared,
     ) -> bool {
-        if self.old_url.is_none() {
+        if self.old_url.is_none() && refs_loaded(snap) {
             let u = snap
                 .refs
                 .remotes
@@ -703,15 +782,18 @@ impl TabDialog for CheckoutRemote {
             460.0,
             "Checkout",
             |ui, ctl| {
-                ui.horizontal(|ui| {
-                    ui.label("Remote branch:");
-                    ui.label(RichText::new(&self.remote_branch).strong());
-                });
-                ui.horizontal(|ui| {
-                    ui.label("New local branch name:");
-                    let r = ui.add(egui::TextEdit::singleline(local).desired_width(260.0));
-                    ctl.focus(&r);
-                });
+                egui::Grid::new("checkout-remote-grid")
+                    .num_columns(2)
+                    .spacing([12.0, 6.0])
+                    .show(ui, |ui| {
+                        ui.label("Remote branch:");
+                        ui.label(RichText::new(&self.remote_branch).strong());
+                        ui.end_row();
+                        ui.label("New local branch:");
+                        let r = ui.add(egui::TextEdit::singleline(local).desired_width(300.0));
+                        ctl.focus(&r);
+                        ui.end_row();
+                    });
                 ui.checkbox(&mut self.track, "Track the remote branch (set upstream)");
                 let name = local.trim();
                 if let Err(e) = check_branch_name(name) {
@@ -801,5 +883,105 @@ impl TabDialog for DeleteRemoteBranch {
                 },
             );
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gk_core::refs::{Branch, Remote, RemoteBranch};
+    use std::sync::Arc;
+
+    fn branch(name: &str, upstream: Option<&str>, is_head: bool) -> Branch {
+        Branch {
+            name: name.into(),
+            target: "0".repeat(40),
+            upstream: upstream.map(Into::into),
+            ahead: 0,
+            behind: 0,
+            upstream_gone: false,
+            is_head,
+        }
+    }
+
+    fn loaded() -> Snapshot {
+        let mut refs = gk_core::Refs {
+            head: gk_core::Head::Branch("main".into()),
+            ..Default::default()
+        };
+        refs.branches = vec![
+            branch("main", Some("upstream/main"), true),
+            branch("topic", None, false),
+        ];
+        refs.remotes = ["origin", "upstream"]
+            .map(|n| Remote {
+                name: n.into(),
+                fetch_url: format!("https://example.com/{n}.git"),
+                push_url: String::new(),
+            })
+            .to_vec();
+        refs.remote_branches = ["origin", "upstream"]
+            .map(|r| RemoteBranch {
+                remote: r.into(),
+                name: "main".into(),
+                target: "0".repeat(40),
+            })
+            .to_vec();
+        Snapshot {
+            refs: Arc::new(refs),
+            ..Default::default()
+        }
+    }
+
+    /// A new snapshot with the same refs (as after a refresh).
+    fn refreshed(s: &Snapshot) -> Snapshot {
+        Snapshot {
+            refs: Arc::new((*s.refs).clone()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn push_fills_in_when_refs_arrive() {
+        let mut p = Push::new(&Snapshot::default());
+        assert!(p.remote.is_empty() && p.rows.is_empty());
+        let s = loaded();
+        p.sync(&s);
+        assert_eq!(p.remote, "upstream", "remote of the current upstream");
+        let rows: Vec<_> = p
+            .rows
+            .iter()
+            .map(|r| (r.branch.as_str(), r.push, r.remote_name.as_str(), r.track))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("main", true, "main", false),
+                ("topic", false, "topic", true)
+            ]
+        );
+        // User choices survive a refresh.
+        p.rows[1].push = true;
+        p.rows[1].remote_name = "topic-2".into();
+        p.remote_touched = true;
+        p.remote = "origin".into();
+        p.sync(&refreshed(&s));
+        assert_eq!(p.remote, "origin");
+        assert!(p.rows[1].push);
+        assert_eq!(p.rows[1].remote_name, "topic-2");
+    }
+
+    #[test]
+    fn pull_fills_in_when_refs_arrive() {
+        let mut p = Pull::new(&Snapshot::default());
+        assert!(p.remote.is_empty());
+        let s = loaded();
+        p.sync(&s);
+        assert_eq!((p.remote.as_str(), p.branch.as_str()), ("upstream", "main"));
+        p.remote = "origin".into();
+        p.branch.clear();
+        p.touched = true;
+        p.sync(&refreshed(&s));
+        assert_eq!((p.remote.as_str(), p.branch.as_str()), ("origin", ""));
     }
 }

@@ -71,6 +71,8 @@ pub struct Discard {
     plan: Option<DiscardPlan>,
     /// The plan was refreshed at OK because the working copy changed.
     changed: bool,
+    /// Status generation the plan was computed for (discard all).
+    status_gen: Option<u64>,
 }
 
 impl Discard {
@@ -79,6 +81,7 @@ impl Discard {
             all: true,
             plan: None,
             changed: false,
+            status_gen: None,
         }
     }
 
@@ -91,6 +94,7 @@ impl Discard {
                 untracked,
             }),
             changed: false,
+            status_gen: None,
         }
     }
 
@@ -121,7 +125,23 @@ impl TabDialog for Discard {
         snap: &Snapshot,
         shared: &mut Shared,
     ) -> bool {
+        if self.all && self.status_gen != Some(snap.status_gen) {
+            // Follow the working copy while the dialog is open (it may have
+            // been opened before the status was loaded).
+            self.status_gen = Some(snap.status_gen);
+            let fresh = discard_plan(snap);
+            if let Some(p) = &self.plan
+                && *p != fresh
+                && !(p.tracked.is_empty() && p.untracked.is_empty())
+            {
+                self.changed = true;
+            }
+            self.plan = Some(fresh);
+        }
         let plan = self.plan.get_or_insert_with(|| discard_plan(snap));
+        if self.all && snap.status_loading && plan.tracked.is_empty() && plan.untracked.is_empty() {
+            return true; // wait for the status
+        }
         if !shared.settings.confirmations.discard {
             Self::run(tab, std::mem::take(plan), self.all);
             return false;

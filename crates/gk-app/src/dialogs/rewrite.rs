@@ -78,21 +78,30 @@ impl TabDialog for Merge {
         snap: &Snapshot,
         _shared: &mut Shared,
     ) -> bool {
+        if self.rev.is_empty() && refs_loaded(snap) {
+            // Opened before the refs were loaded.
+            self.rev = default_rev(snap);
+        }
         let into = current_label(snap);
-        let (out, ()) = modal(ctx, "merge", "Merge", 540.0, "Merge", |ui, ctl| {
-            ui.horizontal(|ui| {
-                ui.label("Merge");
-                rev_combo(
-                    ui,
-                    "merge-rev",
-                    &mut self.rev,
-                    snap,
-                    self.given.as_deref(),
-                    300.0,
-                );
-                ui.label("into");
-                ui.label(RichText::new(&into).strong());
-            });
+        let (out, ()) = modal(ctx, "merge", "Merge", 560.0, "Merge", |ui, ctl| {
+            egui::Grid::new("merge-grid")
+                .num_columns(2)
+                .spacing([12.0, 6.0])
+                .show(ui, |ui| {
+                    ui.label("Merge from:");
+                    rev_combo(
+                        ui,
+                        "merge-rev",
+                        &mut self.rev,
+                        snap,
+                        self.given.as_deref(),
+                        360.0,
+                    );
+                    ui.end_row();
+                    ui.label("Into:");
+                    ui.label(RichText::new(&into).strong());
+                    ui.end_row();
+                });
             let label = self.label.get(tab, snap, &self.rev).to_string();
             if !label.is_empty() {
                 hint(ui, label);
@@ -196,21 +205,30 @@ impl TabDialog for Rebase {
         snap: &Snapshot,
         _shared: &mut Shared,
     ) -> bool {
+        if self.onto.is_empty() && refs_loaded(snap) {
+            // Opened before the refs were loaded.
+            self.onto = default_rev(snap);
+        }
         let cur = current_label(snap);
-        let (out, ()) = modal(ctx, "rebase", "Rebase", 520.0, "Rebase", |ui, ctl| {
-            ui.horizontal(|ui| {
-                ui.label("Rebase");
-                ui.label(RichText::new(&cur).strong());
-                ui.label("onto");
-                rev_combo(
-                    ui,
-                    "rebase-onto",
-                    &mut self.onto,
-                    snap,
-                    self.given.as_deref(),
-                    280.0,
-                );
-            });
+        let (out, ()) = modal(ctx, "rebase", "Rebase", 560.0, "Rebase", |ui, ctl| {
+            egui::Grid::new("rebase-grid")
+                .num_columns(2)
+                .spacing([12.0, 6.0])
+                .show(ui, |ui| {
+                    ui.label("Rebase:");
+                    ui.label(RichText::new(&cur).strong());
+                    ui.end_row();
+                    ui.label("Onto:");
+                    rev_combo(
+                        ui,
+                        "rebase-onto",
+                        &mut self.onto,
+                        snap,
+                        self.given.as_deref(),
+                        360.0,
+                    );
+                    ui.end_row();
+                });
             let label = self.label.get(tab, snap, &self.onto).to_string();
             if !label.is_empty() {
                 hint(ui, label);
@@ -322,12 +340,15 @@ impl InteractiveRebase {
     }
 }
 
-fn action_color(a: TodoAction) -> egui::Color32 {
+fn action_color(ui: &egui::Ui, a: TodoAction) -> egui::Color32 {
+    let dark = ui.visuals().dark_mode;
     match a {
-        TodoAction::Pick => egui::Color32::GRAY,
-        TodoAction::Reword => egui::Color32::from_rgb(0x4F, 0x9D, 0xF7),
-        TodoAction::Edit => egui::Color32::from_rgb(0xC3, 0x7B, 0xE8),
-        TodoAction::Squash | TodoAction::Fixup => WARN,
+        TodoAction::Pick => ui.visuals().text_color(),
+        TodoAction::Reword if dark => egui::Color32::from_rgb(0x4F, 0x9D, 0xF7),
+        TodoAction::Reword => egui::Color32::from_rgb(0x1F, 0x6F, 0xD0),
+        TodoAction::Edit if dark => egui::Color32::from_rgb(0xC3, 0x7B, 0xE8),
+        TodoAction::Edit => egui::Color32::from_rgb(0x8E, 0x3F, 0xB8),
+        TodoAction::Squash | TodoAction::Fixup => warn_color(ui),
         TodoAction::Drop => DANGER,
     }
 }
@@ -445,14 +466,15 @@ impl TabDialog for InteractiveRebase {
                                         .width(80.0)
                                         .selected_text(
                                             RichText::new(r.action.word())
-                                                .color(action_color(r.action)),
+                                                .color(action_color(ui, r.action)),
                                         )
                                         .show_ui(ui, |ui| {
                                             for a in ACTIONS {
                                                 ui.selectable_value(
                                                     &mut r.action,
                                                     a,
-                                                    RichText::new(a.word()).color(action_color(a)),
+                                                    RichText::new(a.word())
+                                                        .color(action_color(ui, a)),
                                                 );
                                             }
                                         });

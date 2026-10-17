@@ -66,23 +66,27 @@ impl TabDialog for Branch {
             ui.separator();
             match self.tab {
                 BranchTab::New => {
-                    ui.horizontal(|ui| {
-                        ui.label("Current branch:");
-                        ui.label(
-                            RichText::new(if current.is_empty() {
-                                "(detached HEAD)"
-                            } else {
-                                &current
-                            })
-                            .strong(),
-                        );
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("New branch:");
-                        let r =
-                            ui.add(egui::TextEdit::singleline(&mut self.name).desired_width(300.0));
-                        ctl.focus(&r);
-                    });
+                    egui::Grid::new("branch-new-grid")
+                        .num_columns(2)
+                        .spacing([12.0, 6.0])
+                        .show(ui, |ui| {
+                            ui.label("Current branch:");
+                            ui.label(
+                                RichText::new(if current.is_empty() {
+                                    "(detached HEAD)"
+                                } else {
+                                    &current
+                                })
+                                .strong(),
+                            );
+                            ui.end_row();
+                            ui.label("New branch:");
+                            let r = ui.add(
+                                egui::TextEdit::singleline(&mut self.name).desired_width(340.0),
+                            );
+                            ctl.focus(&r);
+                            ui.end_row();
+                        });
                     ui.label("Commit:");
                     ui.indent("branch-start", |ui| {
                         ui.radio_value(&mut self.use_start, false, "Working copy parent (HEAD)");
@@ -270,11 +274,8 @@ impl TabDialog for DeleteBranch {
             460.0,
             "Delete",
             |ui, ctl| {
-                ui.horizontal(|ui| {
-                    ui.label("Delete local branch");
-                    ui.label(RichText::new(&self.name).strong());
-                    ui.label("?");
-                });
+                ui.label("Delete this local branch?");
+                ui.label(RichText::new(&self.name).strong());
                 ui.checkbox(
                     &mut self.force,
                     "Force delete regardless of merge status (-D)",
@@ -426,6 +427,8 @@ impl TabDialog for Checkout {
         let dirty = worktree_dirty(snap);
         let target = match self.target {
             Some(t) => t,
+            // Decide once the refs are known (a branch would look detached).
+            None if !refs_loaded(snap) => return true,
             None => {
                 let refs = &snap.refs;
                 if refs.branch(&self.rev).is_some() {
@@ -461,7 +464,14 @@ impl TabDialog for Checkout {
         let (out, ()) = modal(ctx, "checkout", "Checkout", 500.0, ok, |ui, ctl| {
             ui.horizontal(|ui| {
                 ui.label("Checkout");
-                ui.label(RichText::new(&self.rev).strong());
+                let full_id =
+                    self.rev.len() == 40 && self.rev.bytes().all(|b| b.is_ascii_hexdigit());
+                let shown = if full_id {
+                    crate::util::short_id(&self.rev)
+                } else {
+                    self.rev.as_str()
+                };
+                ui.label(RichText::new(shown).strong());
             });
             let label = self.label.get(tab, snap, &self.rev).to_string();
             if target == Target::Other && !label.is_empty() {
@@ -540,6 +550,9 @@ impl TabDialog for SetUpstream {
             .branch(&self.branch)
             .and_then(|b| b.upstream.clone())
             .unwrap_or_default();
+        if !refs_loaded(snap) {
+            return true;
+        }
         let upstream = self.upstream.get_or_insert_with(|| current.clone());
         let options: Vec<String> = snap.refs.remote_branches.iter().map(|b| b.full()).collect();
         let (out, ()) = modal(

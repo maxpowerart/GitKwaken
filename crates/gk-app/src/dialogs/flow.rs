@@ -48,7 +48,6 @@ pub struct GitFlow {
     cfg: Option<Option<FlowConfig>>,
     /// Init/settings form, shown when not initialized or when editing.
     form: Option<FlowConfig>,
-    default_master: String,
     action: Action,
     name: String,
     base: String,
@@ -59,13 +58,11 @@ pub struct GitFlow {
 }
 
 impl GitFlow {
-    pub fn new(snap: &Snapshot) -> Self {
-        let names: Vec<&str> = snap.refs.branches.iter().map(|b| b.name.as_str()).collect();
+    pub fn new(_snap: &Snapshot) -> Self {
         Self {
             load: None,
             cfg: None,
             form: None,
-            default_master: default_master(&names, snap.refs.head.branch()),
             action: Action::Start(FlowKind::Feature),
             name: String::new(),
             base: String::new(),
@@ -332,8 +329,10 @@ impl TabDialog for GitFlow {
         {
             self.load = None;
             if c.is_none() {
+                let branch_names: Vec<&str> =
+                    snap.refs.branches.iter().map(|b| b.name.as_str()).collect();
                 self.form = Some(FlowConfig {
-                    master: self.default_master.clone(),
+                    master: default_master(&branch_names, snap.refs.head.branch()),
                     ..FlowConfig::default()
                 });
             } else if let Some(cfg) = &c {

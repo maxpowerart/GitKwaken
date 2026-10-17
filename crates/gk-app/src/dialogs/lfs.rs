@@ -92,7 +92,15 @@ impl Lfs {
     fn load_locks(&mut self, ctx: &Context, tab: &RepoTab) {
         let repo = tab.session.repo().clone();
         self.locks_task = Some(Task::spawn(ctx, move || {
-            repo.lfs_locks().map_err(|e| format!("{e:#}"))
+            repo.lfs_locks().map_err(|e| {
+                let e = format!("{e:#}");
+                if e.contains("missing protocol") || e.contains("No remote") {
+                    "File locking needs a remote with an LFS server (no remote is configured)."
+                        .to_string()
+                } else {
+                    e
+                }
+            })
         }));
     }
 

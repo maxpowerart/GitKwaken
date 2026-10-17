@@ -64,6 +64,19 @@ impl SettingsDialog {
         }
     }
 
+    /// Opens on the section whose name contains `section` (case-insensitive).
+    pub fn at(section: &str) -> Self {
+        let mut d = Self::new();
+        let want = section.trim().to_lowercase();
+        if let Some((s, _)) = SECTIONS
+            .iter()
+            .find(|(_, n)| !want.is_empty() && n.to_lowercase().contains(&want))
+        {
+            d.section = *s;
+        }
+        d
+    }
+
     fn init(&mut self, ctx: &Context, shared: &Shared) {
         let s = shared.settings.clone();
         self.diff_tool = s.external_diff_tool.clone().unwrap_or_default();
@@ -178,18 +191,32 @@ impl AppDialog for SettingsDialog {
             }
         }
         let saving = self.saving.is_some();
-        let (out, ()) = modal(ctx, "settings", "Settings", 760.0, "Save", |ui, ctl| {
+        // Fixed-height pane (scrolls inside) so switching sections does not
+        // resize the dialog; smaller on small windows.
+        let pane_h = (ctx.content_rect().height() - 220.0).clamp(160.0, 440.0);
+        let (out, ()) = modal(ctx, "settings", "Settings", 720.0, "Save", |ui, ctl| {
             let Some(d) = self.draft.as_mut() else { return };
             ui.horizontal_top(|ui| {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(150.0, pane_h),
+                    egui::Layout::top_down_justified(egui::Align::LEFT),
+                    |ui| {
+                        ui.set_min_size(egui::vec2(150.0, pane_h));
+                        for (s, name) in SECTIONS {
+                            ui.selectable_value(&mut self.section, s, name);
+                        }
+                    },
+                );
+                // A vertical separator would take the full available height.
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(9.0, pane_h), egui::Sense::hover());
+                ui.painter().vline(
+                    rect.center().x,
+                    rect.y_range(),
+                    ui.visuals().widgets.noninteractive.bg_stroke,
+                );
                 ui.vertical(|ui| {
-                    ui.set_width(140.0);
-                    for (s, name) in SECTIONS {
-                        ui.selectable_value(&mut self.section, s, name);
-                    }
-                });
-                ui.separator();
-                ui.vertical(|ui| {
-                    egui::ScrollArea::vertical().max_height(440.0).min_scrolled_height(440.0).auto_shrink([false, false]).show(ui, |ui| {
+                    egui::ScrollArea::vertical().id_salt("settings-pane").max_height(pane_h).min_scrolled_height(pane_h).auto_shrink([false, false]).show(ui, |ui| {
                         match self.section {
                             Section::General => {
                                 grid(ui, "set-general", |ui| {
