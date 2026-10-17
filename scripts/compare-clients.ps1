@@ -23,6 +23,11 @@
                checks its SHA-256 and unpacks it to bench-data\clients\sourcegit
                with a "data" folder so it runs in portable mode.
     Fork       -Fork <exe> (Fork.exe after a per-user install; not automated).
+    SourceTree -SourceTree <exe> (default: the newest %LOCALAPPDATA%\SourceTree\app-*\SourceTree.exe,
+               the real app, not the Squirrel launcher stub). Opened with "-f <repo>".
+               Finish its first-run setup (account, git choice) by hand first,
+               otherwise the wizard is what gets timed. Measuring adds the
+               benchmark repositories to its open tabs.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\compare-clients.ps1 -FetchSourceGit
@@ -35,6 +40,7 @@ param(
     [string]$GitKwaken,
     [string]$SourceGit,
     [string]$Fork,
+    [string]$SourceTree,
     [switch]$FetchSourceGit,
     # Each launch is observed this long (must cover the full load of the slowest client).
     [int]$ObserveSec = 15,
@@ -73,6 +79,11 @@ if (-not $GitKwaken) { $GitKwaken = Join-Path $Root 'target\release\gitkwaken.ex
 if (-not $SourceGit) {
     $c = Get-ChildItem (Join-Path $Root 'bench-data\clients\sourcegit') -Recurse -Filter 'SourceGit.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($c) { $SourceGit = $c.FullName }
+}
+if (-not $SourceTree) {
+    $c = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'SourceTree') -Directory -Filter 'app-*' -ErrorAction SilentlyContinue |
+        Sort-Object { [version]($_.Name -replace '^app-', '') } -Descending | Select-Object -First 1
+    if ($c -and (Test-Path (Join-Path $c.FullName 'SourceTree.exe'))) { $SourceTree = Join-Path $c.FullName 'SourceTree.exe' }
 }
 if (-not $Fork) {
     $c = Join-Path $env:LOCALAPPDATA 'Fork\Fork.exe'
@@ -204,6 +215,7 @@ if (Test-Path $GitKwaken) {
 }
 if ($SourceGit) { $clients['SourceGit'] = @{ exe = $SourceGit; env = @{} } }
 if ($Fork) { $clients['Fork'] = @{ exe = $Fork; env = @{} } }
+if ($SourceTree) { $clients['SourceTree'] = @{ exe = $SourceTree; env = @{}; args = @('-f') } }
 
 $rows = @()
 foreach ($repo in $Repos) {
@@ -217,7 +229,7 @@ foreach ($repo in $Repos) {
     foreach ($c in $clients.Keys) {
         $res = @()
         foreach ($i in 1..$Runs) {
-            try { $res += Measure-Launch $clients[$c].exe @($abs) $clients[$c].env (Join-Path $Root "bench-data\clients\shots\$c-$name-$i.png") }
+            try { $res += Measure-Launch $clients[$c].exe (@($clients[$c].args | Where-Object { $_ }) + $abs) $clients[$c].env (Join-Path $Root "bench-data\clients\shots\$c-$name-$i.png") }
             catch { Write-Warning "$c on ${name}: $_" }
         }
         if ($res.Count) {
