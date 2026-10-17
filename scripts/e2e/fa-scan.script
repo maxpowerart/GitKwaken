@@ -1,7 +1,7 @@
 # Welcome -> Scan folder… -> type the folder -> Enter (scan) -> Bookmark all
 # -> Close. Two repositories are found (not node_modules/, not one/inner).
 wait 1500
-click 800 156
+click 800 176.4
 wait 600
 type $WORK/scan-root
 key Enter

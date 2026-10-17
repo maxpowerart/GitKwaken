@@ -1,6 +1,6 @@
 # Sidebar REMOTES "+" -> name, URL, Add (fetches immediately).
 wait 2500
-click 219 263.3
+click 219 369.6
 wait 600
 type upstream
 key Tab

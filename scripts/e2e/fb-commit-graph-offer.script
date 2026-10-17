@@ -2,6 +2,6 @@
 # offers to write it -> Write (background operation).
 wait 6000
 shot $OUT/fb-commit-graph-offer.png
-click 464.8 88
+click 464.8 121.6
 wait 8000
 exit

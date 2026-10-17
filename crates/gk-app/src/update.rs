@@ -8,6 +8,10 @@ use std::sync::Arc;
 #[derive(Clone)]
 enum State {
     Idle,
+    /// Manual check running (Help › Check for updates).
+    Checking,
+    /// Manual check found nothing newer.
+    UpToDate,
     Available(Release),
     Downloading(u64, u64),
     Ready(String),
@@ -23,31 +27,66 @@ pub static RESTART: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBoo
 pub struct Updater {
     state: Arc<Mutex<State>>,
     staged: Staged,
+    url: Option<String>,
 }
 
 impl Updater {
     /// Channel URL: `GITKWAKEN_UPDATE_URL`, else Settings → Update channel,
     /// else the built-in release channel.
     pub fn new(ctx: &egui::Context, staged: Staged, settings: &gk_settings::Settings) -> Self {
-        let state = Arc::new(Mutex::new(State::Idle));
         let url = std::env::var("GITKWAKEN_UPDATE_URL")
             .ok()
             .or_else(|| (!settings.update_url.is_empty()).then(|| settings.update_url.clone()))
             .or_else(|| gk_update::DEFAULT_CHANNEL_URL.map(String::from));
+        let u = Self {
+            state: Arc::new(Mutex::new(State::Idle)),
+            staged,
+            url,
+        };
         // Local builds have no built-in channel; release builds get it at build time.
         let enabled =
             settings.check_updates && std::env::var_os("GITKWAKEN_NO_UPDATE_CHECK").is_none();
-        if let (true, Some(url)) = (enabled, url) {
-            let s = state.clone();
-            let c = ctx.clone();
-            std::thread::spawn(move || {
-                if let Ok(Some(rel)) = gk_update::check(env!("CARGO_PKG_VERSION"), &url) {
-                    *s.lock() = State::Available(rel);
-                    c.request_repaint();
-                }
-            });
+        if enabled {
+            u.spawn_check(ctx, false);
         }
-        Self { state, staged }
+        u
+    }
+
+    /// Help › Check for updates: checks now and reports "up to date" too.
+    pub fn check_now(&self, ctx: &egui::Context) {
+        let busy = matches!(
+            *self.state.lock(),
+            State::Checking | State::Downloading(..) | State::Ready(_)
+        );
+        if busy {
+            return;
+        }
+        if self.url.is_none() {
+            *self.state.lock() = State::Failed("This build has no update channel".into());
+            return;
+        }
+        *self.state.lock() = State::Checking;
+        self.spawn_check(ctx, true);
+    }
+
+    fn spawn_check(&self, ctx: &egui::Context, report: bool) {
+        let Some(url) = self.url.clone() else { return };
+        let s = self.state.clone();
+        let c = ctx.clone();
+        std::thread::spawn(move || {
+            let r = gk_update::check(env!("CARGO_PKG_VERSION"), &url);
+            let next = match r {
+                Ok(Some(rel)) => Some(State::Available(rel)),
+                Ok(None) if report => Some(State::UpToDate),
+                Err(e) if report => Some(State::Failed(format!("{e:#}"))),
+                _ if report => Some(State::Idle),
+                _ => None,
+            };
+            if let Some(n) = next {
+                *s.lock() = n;
+                c.request_repaint();
+            }
+        });
     }
 
     fn download(&self, rel: Release, ctx: &egui::Context) {
@@ -78,6 +117,19 @@ impl Updater {
         let state = self.state.lock().clone();
         match state {
             State::Idle => {}
+            State::Checking => {
+                ui.spinner();
+                ui.label("Checking for updates…");
+            }
+            State::UpToDate => {
+                if ui.small_button("✖").on_hover_text("Dismiss").clicked() {
+                    *self.state.lock() = State::Idle;
+                }
+                ui.label(format!(
+                    "GitKwaken {} is up to date",
+                    env!("CARGO_PKG_VERSION")
+                ));
+            }
             State::Available(rel) => {
                 let b = ui
                     .button(format!("⬆ Update to {}", rel.version))

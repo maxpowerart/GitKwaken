@@ -1,6 +1,6 @@
 # Drag README.md from the unstaged list onto the staged list.
 wait 2500
-drag 328 237 448 165
+drag 328 279.4 448 203
 wait 2500
 shot $OUT/drag.png
 exit

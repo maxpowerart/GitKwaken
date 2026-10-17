@@ -61,6 +61,9 @@ pub struct GkApp {
     git_warning_dismissed: bool,
 }
 
+/// Height of a repository tab in the tab strip.
+const TAB_H: f32 = 26.0;
+
 /// Download page linked from the git version banner.
 const GIT_DOWNLOAD_URL: &str = "https://git-scm.com/downloads/win";
 
@@ -254,19 +257,109 @@ impl GkApp {
         self.autosave.maybe_save(s, |s| s.save());
     }
 
+    /// File / Edit / View / Repository / Actions / Tools / Help.
+    fn menu_bar(&mut self, ui: &mut egui::Ui) {
+        let i = self.active.min(self.tabs.len().saturating_sub(1));
+        let tabs = self.tabs.len();
+        let km = self.keymap.clone();
+        let mc = views::menubar::MenuCtx {
+            km: &km,
+            tab: self.tabs.get_mut(i),
+            active: i,
+            tabs,
+        };
+        let mut shared = Shared {
+            settings: &mut self.settings,
+            palette: self.palette,
+            log: &self.log,
+            actions: &mut self.actions,
+            show_log: &mut self.show_log,
+        };
+        let out = views::menubar::show(ui, mc, &mut shared);
+        if out.toggle_palette && !self.tabs.get(i).is_some_and(|t| t.dialog.is_some()) {
+            self.command_palette.toggle();
+        }
+        if out.check_updates {
+            self.updater.check_now(ui.ctx());
+        }
+    }
+
+    /// SourceTree-style repository tabs: one per repository with a close
+    /// button, "+" (open, clone, create) and the bookmarks menu; the update
+    /// notice sits on the right.
     fn tab_bar(&mut self, ui: &mut egui::Ui) {
+        let p = self.palette;
+        let tab_fill = ui.visuals().panel_fill;
+        let text = ui.visuals().text_color();
+        let strong = ui.visuals().strong_text_color();
         ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            let font = egui::TextStyle::Body.resolve(ui.style());
             for (i, t) in self.tabs.iter().enumerate() {
                 let selected = i == self.active;
-                let r = ui
-                    .selectable_label(selected, &t.name)
-                    .on_hover_text(t.path.display().to_string());
-                if r.clicked() {
+                let color = if selected { strong } else { text };
+                let g = ui
+                    .painter()
+                    .layout_no_wrap(t.name.clone(), font.clone(), color);
+                let size = egui::vec2(12.0 + g.size().x + 8.0 + 16.0 + 6.0, TAB_H);
+                let (rect, r) = ui.allocate_exact_size(size, egui::Sense::click());
+                let close_rect = egui::Rect::from_center_size(
+                    egui::pos2(rect.right() - 6.0 - 8.0, rect.center().y),
+                    egui::vec2(16.0, 16.0),
+                );
+                let close = ui.interact(
+                    close_rect,
+                    ui.id().with(("tab-close", i)),
+                    egui::Sense::click(),
+                );
+                let fill = if selected {
+                    tab_fill
+                } else if r.hovered() || close.hovered() {
+                    tab_fill.gamma_multiply(0.5)
+                } else {
+                    egui::Color32::TRANSPARENT
+                };
+                let radius = egui::CornerRadius {
+                    nw: 4,
+                    ne: 4,
+                    sw: 0,
+                    se: 0,
+                };
+                ui.painter().rect_filled(rect, radius, fill);
+                if selected {
+                    ui.painter().line_segment(
+                        [
+                            rect.left_top() + egui::vec2(3.0, 0.5),
+                            rect.right_top() + egui::vec2(-3.0, 0.5),
+                        ],
+                        egui::Stroke::new(2.0, p.accent),
+                    );
+                }
+                ui.painter().galley(
+                    egui::pos2(rect.left() + 12.0, rect.center().y - g.size().y / 2.0),
+                    g,
+                    color,
+                );
+                if close.hovered() {
+                    ui.painter().rect_filled(
+                        close_rect,
+                        3.0,
+                        ui.visuals().widgets.hovered.weak_bg_fill,
+                    );
+                }
+                ui.painter().text(
+                    close_rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "×",
+                    font.clone(),
+                    if close.hovered() { strong } else { p.muted },
+                );
+                if close.on_hover_text("Close tab").clicked() || r.middle_clicked() {
+                    self.actions.push(Action::CloseTab(i));
+                } else if r.clicked() {
                     self.actions.push(Action::SelectTab(i));
                 }
-                if r.middle_clicked() {
-                    self.actions.push(Action::CloseTab(i));
-                }
+                let r = r.on_hover_text(t.path.display().to_string());
                 r.context_menu(|ui| {
                     if ui.button("Close").clicked() {
                         self.actions.push(Action::CloseTab(i));
@@ -277,21 +370,35 @@ impl GkApp {
                         ui.close();
                     }
                 });
-                if ui.small_button("×").on_hover_text("Close tab").clicked() {
-                    self.actions.push(Action::CloseTab(i));
-                }
-                ui.separator();
             }
-            if ui
-                .button("+")
-                .on_hover_text(format!(
-                    "Open repository ({})",
-                    self.keymap.text(Act::OpenRepo)
-                ))
-                .clicked()
-            {
-                self.actions.push(Action::OpenRepoDialog);
-            }
+            ui.add_space(4.0);
+            let plus = egui::Button::new(egui::RichText::new("+").size(18.0))
+                .frame(false)
+                .min_size(egui::vec2(TAB_H, TAB_H));
+            let open_key = self.keymap.text(Act::OpenRepo);
+            egui::containers::menu::MenuButton::from_button(plus)
+                .ui(ui, |ui| {
+                    let mut b = egui::Button::new("Open repository…");
+                    if !open_key.is_empty() {
+                        b = b.shortcut_text(egui::RichText::new(&open_key).weak());
+                    }
+                    if ui.add(b).clicked() {
+                        self.actions.push(Action::OpenRepoDialog);
+                        ui.close();
+                    }
+                    if ui.button("Clone repository…").clicked() {
+                        self.actions
+                            .push(Action::Global(dialogs::GlobalDialog::clone_repo()));
+                        ui.close();
+                    }
+                    if ui.button("Create repository…").clicked() {
+                        self.actions
+                            .push(Action::Global(dialogs::GlobalDialog::init_repo()));
+                        ui.close();
+                    }
+                })
+                .0
+                .on_hover_text("New tab: open, clone or create a repository");
             if !self.tabs.is_empty() {
                 // Bookmarks and recent repositories while tabs are open.
                 let current = self.tabs.get(self.active).map(|t| t.path.clone());
@@ -302,21 +409,16 @@ impl GkApp {
                     actions: &mut self.actions,
                     show_log: &mut self.show_log,
                 };
-                views::welcome::repositories_menu(ui, &mut shared, current.as_deref());
+                views::welcome::repositories_menu(
+                    ui,
+                    &mut shared,
+                    current.as_deref(),
+                    "Repositories ▾",
+                );
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_space(4.0);
                 self.updater.ui(ui);
-                if ui.button("⚙").on_hover_text("Settings").clicked() {
-                    self.actions
-                        .push(Action::Global(dialogs::GlobalDialog::settings()));
-                }
-                if ui.selectable_label(self.show_log, "Output").clicked() {
-                    self.show_log = !self.show_log;
-                }
-                if ui.button("Clone…").clicked() {
-                    self.actions
-                        .push(Action::Global(dialogs::GlobalDialog::clone_repo()));
-                }
             });
         });
     }
@@ -564,7 +666,23 @@ impl gk_dx11::App for GkApp {
         let ctx = ui.ctx().clone();
         self.publish_keymap(&ctx);
         self.shortcuts(&ctx);
-        egui::Panel::top("tabs").show(ui, |ui| self.tab_bar(ui));
+        let chrome = egui::Frame::new().fill(self.palette.chrome);
+        egui::Panel::top("menubar")
+            .frame(chrome.inner_margin(egui::Margin {
+                left: 6,
+                right: 6,
+                top: 2,
+                bottom: 0,
+            }))
+            .show(ui, |ui| self.menu_bar(ui));
+        egui::Panel::top("tabs")
+            .frame(chrome.inner_margin(egui::Margin {
+                left: 6,
+                right: 6,
+                top: 2,
+                bottom: 0,
+            }))
+            .show(ui, |ui| self.tab_bar(ui));
         self.git_banner(ui);
         if self.show_log {
             egui::Panel::bottom("output")

@@ -22,12 +22,12 @@ trap 'kill $SRV 2>/dev/null || true' EXIT
 bash "$ROOT/scripts/make-demo-repo.sh" "$W/repo" >/dev/null
 cat > "$W/update.script" <<'EOF'
 wait 4000
-click 1336 14
+click 1334 36
 wait 15000
-click 1094 14
+click 1092 36
 wait 3000
 # second attempt in case the download was slow (no-op once closed)
-click 1094 14
+click 1092 36
 wait 3000
 EOF
 GK_DX11_INPUT_SCRIPT="$(cygpath -m "$W/update.script")" GITKWAKEN_NO_RELAUNCH=1 \

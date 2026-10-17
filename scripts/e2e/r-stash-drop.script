@@ -1,8 +1,8 @@
 # Sidebar stash row: right-click -> Drop… -> Delete.
 wait 2500
-rclick 120 412.3
+rclick 120 455.1
 wait 500
-click 148 451.3
+click 148 494.1
 wait 600
 shot $OUT/stash-drop-dialog.png
 key Enter

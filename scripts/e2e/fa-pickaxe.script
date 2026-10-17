@@ -1,16 +1,16 @@
 # Pickaxe in regex mode: -G "f[67]".
 wait 2500
-click 1369 92
+click 1104 124.8
 wait 300
-click 914 118.4
+click 914 151.2
 wait 300
-click 980 180
+click 980 212.8
 wait 300
-click 1008 118.4
+click 1008 151.2
 type f[67]
 wait 2000
 shot $OUT/fa-pickaxe.png
-click 480 172
+click 480 204.8
 wait 300
 key End shift
 wait 300

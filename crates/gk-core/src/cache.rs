@@ -636,6 +636,7 @@ fn encode_history(scope: &Scope, tips: &[ObjectId], h: &History) -> Vec<u8> {
     match scope {
         Scope::All => w.u8(0),
         Scope::Current => w.u8(1),
+        Scope::Local => w.u8(3),
         Scope::Revs(revs) => {
             w.u8(2);
             w.u32(revs.len() as u32);
@@ -670,6 +671,7 @@ fn decode_history(b: &[u8]) -> Option<CachedHistory> {
     let scope = match r.u8()? {
         0 => Scope::All,
         1 => Scope::Current,
+        3 => Scope::Local,
         2 => {
             let n = r.len()?;
             let mut v = Vec::with_capacity(n);

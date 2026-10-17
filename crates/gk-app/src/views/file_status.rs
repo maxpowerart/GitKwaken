@@ -260,6 +260,16 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
     if snap.refs.state != RepoState::Clean {
         egui::Panel::top(Id::new(("fs-banner", &key))).show(ui, |ui| banner(ui, tab, snap, shared));
     }
+    egui::Panel::top(Id::new(("fs-top", &key)))
+        .frame(egui::Frame::new().inner_margin(egui::Margin {
+            left: 0,
+            right: 0,
+            top: 2,
+            bottom: 4,
+        }))
+        .show(ui, |ui| top_row(ui, tab, shared.palette));
+    // Rebuild immediately so the filter / mode change shows this frame.
+    tab.status.sync(snap, tab.state.file_view_tree);
     egui::Panel::bottom(Id::new(("fs-commit", &key)))
         .resizable(true)
         .default_size(170.0)
@@ -312,26 +322,6 @@ fn lists(
     events: &mut Vec<(Side, Ev)>,
 ) {
     let p = shared.palette;
-    ui.horizontal(|ui| {
-        let tree = &mut tab.state.file_view_tree;
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.toggle_value(tree, "Tree")
-                .on_hover_text("Group files by folder");
-            kind_chips(ui, &mut tab.status.kinds, &tab.status.paths.kind_counts, p);
-            if !tab.status.filter.is_empty()
-                && ui.small_button("×").on_hover_text("Clear filter").clicked()
-            {
-                tab.status.filter.clear();
-            }
-            ui.add(
-                egui::TextEdit::singleline(&mut tab.status.filter)
-                    .hint_text("Filter files (fuzzy)")
-                    .desired_width(ui.available_width()),
-            );
-        });
-    });
-    // Rebuild immediately so the filter / mode change shows this frame.
-    tab.status.sync(snap, tab.state.file_view_tree);
 
     let tree_mode = tab.state.file_view_tree;
     let has_tool = shared
@@ -369,40 +359,48 @@ fn lists(
         let checking = side == Side::Unstaged && st.guard.is_busy();
         let pending_here = index_op || checking;
         let mut evs: Vec<Ev> = Vec::new();
-        ui.horizontal(|ui| {
-            let title = match side {
-                Side::Staged => "Staged files",
-                Side::Unstaged => "Unstaged files",
-            };
-            ui.label(RichText::new(title).strong());
-            let count = if filtered {
-                format!("({shown} of {total})")
-            } else {
-                format!("({total})")
-            };
-            ui.label(RichText::new(count).color(p.muted));
-            if pending_here {
-                ui.spinner();
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let (all, some) = match side {
-                    Side::Staged => ("Unstage all", "Unstage selected"),
-                    Side::Unstaged => ("Stage all", "Stage selected"),
-                };
-                if ui
-                    .add_enabled(total > 0, egui::Button::new(all).small())
-                    .clicked()
-                {
-                    evs.push(Ev::All);
-                }
-                if ui
-                    .add_enabled(sel > 0, egui::Button::new(some).small())
-                    .clicked()
-                {
-                    evs.push(Ev::Toggle(st.list(side).targets()));
-                }
+        // SourceTree header band: "Staged files (N)", then "Unstage All"
+        // and "Unstage Selected" on the right.
+        egui::Frame::new()
+            .fill(ui.visuals().faint_bg_color)
+            .inner_margin(egui::Margin::symmetric(4, 2))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let title = match side {
+                        Side::Staged => "Staged files",
+                        Side::Unstaged => "Unstaged files",
+                    };
+                    ui.label(RichText::new(title).strong());
+                    let count = if filtered {
+                        format!("({shown} of {total})")
+                    } else {
+                        format!("({total})")
+                    };
+                    ui.label(RichText::new(count).color(p.muted));
+                    if pending_here {
+                        ui.spinner();
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let (all, some) = match side {
+                            Side::Staged => ("Unstage All", "Unstage Selected"),
+                            Side::Unstaged => ("Stage All", "Stage Selected"),
+                        };
+                        // Right to left: "… Selected" ends up rightmost.
+                        if ui
+                            .add_enabled(sel > 0, egui::Button::new(some).small())
+                            .clicked()
+                        {
+                            evs.push(Ev::Toggle(st.list(side).targets()));
+                        }
+                        if ui
+                            .add_enabled(total > 0, egui::Button::new(all).small())
+                            .clicked()
+                        {
+                            evs.push(Ev::All);
+                        }
+                    });
+                });
             });
-        });
         let paths: &[String] = match side {
             Side::Staged => &st.paths.staged,
             Side::Unstaged => &st.paths.unstaged,
@@ -485,10 +483,65 @@ fn lists(
     }
 }
 
-/// Status filter chips (M A D R ? U), combinable; laid out right to left.
+/// "Pending files, sorted by path ▾" label for a [`list::KIND_FILTERS`] mask.
+fn show_label(kinds: u8) -> String {
+    let what = match list::KIND_FILTERS.iter().find(|(bit, ..)| *bit == kinds) {
+        _ if kinds == 0 => "Pending",
+        Some((_, _, label)) => label,
+        None => "Filtered",
+    };
+    format!("{what} files, sorted by path")
+}
+
+/// SourceTree's File Status header row: the "Pending files ▾" combo and the
+/// list-mode button on the left, then the fuzzy filter and status chips.
+fn top_row(ui: &mut Ui, tab: &mut RepoTab, p: crate::theme::Palette) {
+    ui.horizontal(|ui| {
+        let kinds = &mut tab.status.kinds;
+        egui::ComboBox::from_id_salt(("fs-show", &tab.path))
+            .selected_text(show_label(*kinds))
+            .width(230.0)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(kinds, 0, "Pending files");
+                for &(bit, _, label) in list::KIND_FILTERS.iter() {
+                    ui.selectable_value(kinds, bit, format!("{label} files"));
+                }
+            })
+            .response
+            .on_hover_text("Which changed files to list (combine with the chips on the right)");
+        let tree = &mut tab.state.file_view_tree;
+        let icon = if *tree { "🌲 ▾" } else { "☰ ▾" };
+        ui.menu_button(icon, |ui| {
+            if ui.selectable_label(!*tree, "☰ Flat list").clicked() {
+                *tree = false;
+                ui.close();
+            }
+            if ui.selectable_label(*tree, "🌲 Tree view").clicked() {
+                *tree = true;
+                ui.close();
+            }
+        })
+        .response
+        .on_hover_text("List mode: flat list or folder tree");
+        ui.add_space(8.0);
+        ui.add(
+            egui::TextEdit::singleline(&mut tab.status.filter)
+                .hint_text("Filter files (fuzzy)")
+                .desired_width(220.0),
+        );
+        if !tab.status.filter.is_empty()
+            && ui.small_button("×").on_hover_text("Clear filter").clicked()
+        {
+            tab.status.filter.clear();
+        }
+        kind_chips(ui, &mut tab.status.kinds, &tab.status.paths.kind_counts, p);
+    });
+}
+
+/// Status filter chips (M A D R ? U), combinable; laid out left to right.
 fn kind_chips(ui: &mut Ui, kinds: &mut u8, counts: &[usize; 8], p: crate::theme::Palette) {
     ui.spacing_mut().item_spacing.x = 2.0;
-    for &(bit, code, label) in list::KIND_FILTERS.iter().rev() {
+    for &(bit, code, label) in list::KIND_FILTERS.iter() {
         let n = counts[bit.trailing_zeros() as usize];
         let on = *kinds & bit != 0;
         let text = RichText::new(code).monospace().color(if n == 0 && !on {

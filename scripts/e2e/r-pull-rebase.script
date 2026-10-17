@@ -1,6 +1,6 @@
 # Toolbar Pull -> tick "Rebase instead of merge" -> Pull.
 wait 2500
-click 95 50
+click 96 80
 wait 800
 click 446 490
 wait 300

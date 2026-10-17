@@ -4,11 +4,11 @@ wait 3000
 move 1100 600
 wait 300
 shot $OUT/fb-large.png
-click 701 189
+click 701 251
 wait 1500
 move 1100 600
 wait 300
 shot $OUT/fb-large-shown.png
-click 1254 136
+click 1254 198
 wait 2000
 exit

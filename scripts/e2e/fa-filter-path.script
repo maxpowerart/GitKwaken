@@ -1,15 +1,15 @@
 # Filters row: Path "src/lib.rs" + Since "2026-01-08" -> flat list of the
 # matching commits; select all (click the first, Shift+End) and Ctrl+C.
 wait 2500
-click 1369 92
+click 1104 124.8
 wait 300
-click 808 118.4
+click 808 151.2
 type src/lib.rs
-click 516 118.4
+click 516 151.2
 type 2026-01-08
 wait 2000
 shot $OUT/fa-filter-path.png
-click 480 172
+click 480 204.8
 wait 300
 key End shift
 wait 300

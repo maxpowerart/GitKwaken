@@ -1,8 +1,8 @@
 # Sidebar stash row: right-click -> Apply… -> tick "pop" -> Apply.
 wait 2500
-rclick 120 412.3
+rclick 120 455.1
 wait 500
-click 150 429.3
+click 150 472.1
 wait 600
 click 466 446
 wait 300

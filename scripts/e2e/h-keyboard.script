@@ -3,7 +3,7 @@
 # Click + Ctrl+click: compare two distant commits. Then Ctrl+Shift+P
 # "View: File status".
 wait 2500
-click 480 163.6
+click 480 195.6
 wait 300
 key ArrowDown
 key ArrowDown
@@ -17,9 +17,9 @@ wait 300
 key ArrowDown shift
 wait 1500
 shot $OUT/h-compare-adjacent.png
-click 480 163.6
+click 480 195.6
 wait 300
-click 480 273.6 ctrl
+click 480 305.6 ctrl
 wait 2000
 shot $OUT/h-compare.png
 key P ctrl shift

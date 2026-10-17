@@ -1,6 +1,6 @@
 # Reflog view: select HEAD@{1}, Enter -> checkout dialog (detached) -> Enter.
 wait 2500
-click 600 141.6
+click 600 174.4
 wait 300
 key Enter
 wait 1000

@@ -1,15 +1,15 @@
 # Branch picker: tick feature/login only (Scope::Revs), close the menu, then
 # select every row (Shift+End) and copy.
 wait 2500
-click 296 92
+click 293.6 124.8
 wait 400
-click 310 217.6
+click 310 250.4
 wait 300
 shot $OUT/fa-branch-filter-menu.png
 key Escape
 wait 2500
 shot $OUT/fa-branch-filter.png
-click 480 141.6
+click 480 173.6
 wait 300
 key End shift
 wait 300

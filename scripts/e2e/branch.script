@@ -1,6 +1,6 @@
 # Toolbar Branch -> type a name -> Create branch.
 wait 2500
-click 287 50
+click 293.6 80
 wait 800
 click 710 444
 type e2e-branch

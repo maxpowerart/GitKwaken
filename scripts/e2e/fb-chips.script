@@ -1,9 +1,9 @@
 # Status chip "?" (untracked only), then select all visible rows and stage them.
 wait 2500
-click 568 91
+click 855.2 123.2
 wait 400
 shot $OUT/fb-chips.png
-click 320 237
+click 320 279.4
 wait 200
 key A ctrl
 wait 200

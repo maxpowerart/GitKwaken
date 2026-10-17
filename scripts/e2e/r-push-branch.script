@@ -1,6 +1,6 @@
 # Push a new branch: it is preselected with "Track" ticked (git push -u).
 wait 2500
-click 155 50
+click 156 80
 wait 800
 shot $OUT/push-branch-dialog.png
 key Enter

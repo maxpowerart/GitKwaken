@@ -48,6 +48,8 @@ pub struct HistoryState {
     auto_selected: bool,
     /// Text (e.g. a full commit message) to put on the clipboard once loaded.
     pub(crate) clipboard: Oneshot<String>,
+    /// "Jump to:" field (SHA prefix, branch, tag or HEAD).
+    jump: String,
 }
 
 impl Default for HistoryState {
@@ -64,6 +66,7 @@ impl Default for HistoryState {
             history_ptr: 0,
             auto_selected: false,
             clipboard: Oneshot::default(),
+            jump: String::new(),
         }
     }
 }
@@ -264,6 +267,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared
 pub fn scope_from_state(s: &str) -> Scope {
     match s.strip_prefix("revs:") {
         _ if s == "current" => Scope::Current,
+        _ if s == "local" => Scope::Local,
         Some(list) => {
             let v: Vec<String> = list.split_whitespace().map(str::to_string).collect();
             if v.is_empty() {
@@ -280,6 +284,7 @@ pub fn scope_from_state(s: &str) -> Scope {
 pub fn scope_to_state(s: &Scope) -> String {
     match s {
         Scope::All => "all".into(),
+        Scope::Local => "local".into(),
         Scope::Current => "current".into(),
         Scope::Revs(v) => format!("revs:{}", v.join(" ")),
     }
@@ -288,10 +293,12 @@ pub fn scope_to_state(s: &Scope) -> String {
 /// `git log` revision arguments for the commits a scope shows.
 pub fn scope_revs(scope: &Scope, snap: &Snapshot) -> Vec<String> {
     match scope {
-        Scope::All => {
-            let mut v: Vec<String> = ["--branches", "--remotes", "--tags"]
-                .map(String::from)
-                .to_vec();
+        Scope::All | Scope::Local => {
+            let mut v: Vec<String> = if *scope == Scope::All {
+                vec!["--branches".into(), "--remotes".into(), "--tags".into()]
+            } else {
+                vec!["--branches".into(), "--tags".into()]
+            };
             if snap.refs.head_id.is_some() {
                 v.push("HEAD".into());
             }
@@ -312,7 +319,7 @@ fn set_scope(tab: &mut RepoTab, scope: Scope) {
 /// Text of the branch picker button.
 pub fn scope_label(s: &Scope) -> String {
     match s {
-        Scope::All => "All branches".into(),
+        Scope::All | Scope::Local => "All branches".into(),
         Scope::Current => "Current branch".into(),
         Scope::Revs(v) if v.len() == 1 => v[0].clone(),
         Scope::Revs(v) => format!("{} branches", v.len()),
@@ -324,11 +331,14 @@ fn branch_picker(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot) {
     let scope = tab.session.options().scope;
     let mut new: Option<Scope> = None;
     ui.menu_button(format!("{} ▾", scope_label(&scope)), |ui| {
-        if ui
-            .selectable_label(scope == Scope::All, "All branches")
-            .clicked()
-        {
-            new = Some(Scope::All);
+        let all = matches!(scope, Scope::All | Scope::Local);
+        if ui.selectable_label(all, "All branches").clicked() {
+            // Keeps the "Show remote branches" choice.
+            new = Some(if scope == Scope::Local {
+                Scope::Local
+            } else {
+                Scope::All
+            });
             ui.close();
         }
         if ui
@@ -390,19 +400,65 @@ fn branch_picker(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot) {
     }
 }
 
+/// "Jump to:" target: empty or `HEAD`, a branch / remote branch / tag name,
+/// or a commit id prefix (4+ hex digits) of a loaded commit.
+pub fn resolve_jump(snap: &Snapshot, text: &str) -> Option<ObjectId> {
+    let t = text.trim();
+    if t.is_empty() || t.eq_ignore_ascii_case("HEAD") {
+        return head_oid(snap);
+    }
+    let r = &snap.refs;
+    let target = r
+        .branches
+        .iter()
+        .find(|b| b.name == t)
+        .map(|b| b.target.as_str())
+        .or_else(|| {
+            r.tags
+                .iter()
+                .find(|x| x.name == t)
+                .map(|x| x.target.as_str())
+        })
+        .or_else(|| {
+            r.remote_branches
+                .iter()
+                .find(|b| b.full() == t)
+                .map(|b| b.target.as_str())
+        });
+    if let Some(hex) = target {
+        return ObjectId::from_hex(hex.as_bytes()).ok();
+    }
+    let lower = t.to_ascii_lowercase();
+    if lower.len() < 4 || !lower.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    snap.history
+        .ids
+        .iter()
+        .find(|id| id.to_hex().to_string().starts_with(&lower))
+        .copied()
+}
+
+/// SourceTree's history header: "All branches ▾", "Show remote branches",
+/// Undo on the left; message filter, Filters and "Jump to:" on the right.
 fn toolbar(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot) {
     ui.horizontal(|ui| {
         branch_picker(ui, tab, snap);
+        let scope = tab.session.options().scope;
+        let mut remotes = scope != Scope::Local;
+        let toggles = matches!(scope, Scope::All | Scope::Local);
+        if ui
+            .add_enabled(
+                toggles,
+                egui::Checkbox::new(&mut remotes, "Show remote branches"),
+            )
+            .on_hover_text("Include remote branches in All branches")
+            .changed()
+        {
+            set_scope(tab, if remotes { Scope::All } else { Scope::Local });
+        }
         ui.separator();
         let head = head_oid(snap);
-        if ui
-            .add_enabled(head.is_some(), egui::Button::new("Jump to HEAD"))
-            .clicked()
-            && let Some(h) = head
-        {
-            tab.history.select_commit(h);
-            ui.memory_mut(|m| m.request_focus(list_id(tab)));
-        }
         if ui
             .add_enabled(head.is_some(), egui::Button::new("↶ Undo…"))
             .on_hover_text("Undo the last operation (commit, merge, rebase, reset, pull, checkout)")
@@ -414,6 +470,35 @@ fn toolbar(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot) {
             ui.spinner();
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // Right to left: HEAD button, "Jump to:" field and label.
+            let mut jump: Option<ObjectId> = None;
+            if ui
+                .add_enabled(head.is_some(), egui::Button::new("HEAD"))
+                .on_hover_text("Jump to HEAD")
+                .clicked()
+            {
+                jump = head;
+            }
+            let r = ui.add(
+                egui::TextEdit::singleline(&mut tab.history.jump)
+                    .hint_text("SHA, branch or tag")
+                    .desired_width(140.0),
+            );
+            if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                jump = resolve_jump(snap, &tab.history.jump);
+                if jump.is_none() {
+                    tab.session.push_message(
+                        gk_core::MessageKind::Info,
+                        format!("No loaded commit matches \"{}\"", tab.history.jump.trim()),
+                    );
+                }
+            }
+            ui.label("Jump to:");
+            if let Some(h) = jump {
+                tab.history.select_commit(h);
+                ui.memory_mut(|m| m.request_focus(list_id(tab)));
+            }
+            ui.separator();
             let f = &mut tab.history.filter;
             let n = f.edit.extra_count();
             let label = if n > 0 {

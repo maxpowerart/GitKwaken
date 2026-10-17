@@ -1,8 +1,8 @@
 # Tab bar "Repositories ▾" -> "Bookmark this repository…" -> Enter (Add).
 wait 2000
-click 176 14.4
+click 156.8 36
 wait 600
-click 213.6 42.4
+click 194.4 64.4
 wait 800
 shot $OUT/fb-bookmark-current.png
 key Enter

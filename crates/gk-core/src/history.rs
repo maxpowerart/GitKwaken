@@ -12,6 +12,9 @@ use std::time::{Duration, Instant};
 pub enum Scope {
     #[default]
     All,
+    /// Like [`Scope::All`] without remote branches (SourceTree's "Show
+    /// Remote Branches" unchecked): local branches, tags and HEAD.
+    Local,
     /// HEAD only.
     Current,
     /// Specific tips (branch names, tags or ids).
@@ -193,6 +196,7 @@ pub fn resolve_tips(repo: &Repo, scope: &Scope, all_tips: &[String]) -> Vec<Obje
                 }
             }
         }
+        Scope::Local => return tip_ids(repo, scope),
         Scope::Current => {
             if let Ok(id) = g.head_id() {
                 out.push(id.detach());
@@ -218,17 +222,20 @@ pub fn resolve_tips(repo: &Repo, scope: &Scope, all_tips: &[String]) -> Vec<Obje
 pub fn tip_ids(repo: &Repo, scope: &Scope) -> Vec<ObjectId> {
     let _span = tracing::info_span!("history.tips").entered();
     let mut out = match scope {
-        Scope::All => {
+        Scope::All | Scope::Local => {
             let g = repo.gix();
             let mut v = Vec::new();
+            let prefixes: &[&[u8]] = if *scope == Scope::Local {
+                &[b"refs/heads/", b"refs/tags/"]
+            } else {
+                &[b"refs/heads/", b"refs/remotes/", b"refs/tags/"]
+            };
             if let Ok(platform) = g.references()
                 && let Ok(iter) = platform.all()
             {
                 for mut r in iter.flatten() {
                     let name = r.name().as_bstr();
-                    let wanted = [&b"refs/heads/"[..], b"refs/remotes/", b"refs/tags/"]
-                        .iter()
-                        .any(|p| name.starts_with(p));
+                    let wanted = prefixes.iter().any(|p| name.starts_with(p));
                     if wanted && let Ok(id) = r.peel_to_id() {
                         v.push(id.detach());
                     }

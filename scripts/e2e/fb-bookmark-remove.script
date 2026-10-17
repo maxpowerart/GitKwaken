@@ -1,8 +1,8 @@
 # The open repository is bookmarked: "Repositories ▾" -> "Remove bookmark".
 wait 2000
-click 176 14.4
+click 156.8 36
 wait 600
 shot $OUT/fb-bookmark-remove.png
-click 213.6 42.4
+click 194.4 64.4
 wait 800
 exit

@@ -1,6 +1,6 @@
 # Toolbar Pull -> Pull (merge).
 wait 2500
-click 95 50
+click 96 80
 wait 800
 shot $OUT/pull-merge-dialog.png
 key Enter

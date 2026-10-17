@@ -1,6 +1,9 @@
 # Settings: theme Light, Diff > Context lines 6, Save; then show a diff.
 wait 2500
-click 1379 13
+# Tools > Options…
+click 245 12
+wait 400
+click 264 36.8
 wait 600
 click 706 236
 wait 300
@@ -15,7 +18,7 @@ wait 300
 shot $OUT/settings-dialog.png
 click 934 699
 wait 1000
-click 328 217
+click 328 255.2
 wait 1500
 shot $OUT/settings.png
 exit

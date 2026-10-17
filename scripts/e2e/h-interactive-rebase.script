@@ -2,9 +2,9 @@
 # main's tip (row 4; the menu starts with "Checkout main") -> Interactive
 # rebase children of this commit. Rows (oldest first): a, b, c.
 wait 2500
-rclick 480 229.6
+rclick 480 261.6
 wait 500
-click 520 398.6
+click 520 430.6
 wait 1200
 # c up -> a, c, b
 click 439.2 495.2

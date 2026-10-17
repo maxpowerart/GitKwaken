@@ -1,7 +1,7 @@
 # Drag main onto feature/login (not current) -> Checkout feature/login and
 # merge main.
 wait 2500
-drag 80 348.8 100 306.4
+drag 80 391.2 100 348.8
 wait 600
 shot $OUT/fa-drag-checkout-popup.png
 click 700 453.6

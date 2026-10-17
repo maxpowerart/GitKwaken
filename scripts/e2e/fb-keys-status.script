@@ -4,14 +4,14 @@
 # second hunk, S stages only that hunk. Click the row again, Down selects
 # README.md, Delete asks to discard it and Enter confirms.
 wait 4000
-click 320 217
+click 320 255.2
 wait 1500
 key F10 shift
 wait 500
 shot $OUT/fb-keys-menu.png
 key Escape
 wait 300
-click 320 217
+click 320 255.2
 wait 800
 key Enter
 wait 800
@@ -21,7 +21,7 @@ shot $OUT/fb-keys-hunk.png
 key S
 wait 2500
 # A-long.txt is now also staged: the unstaged list moved down one row.
-click 320 237
+click 320 279.4
 wait 800
 key ArrowDown
 wait 500

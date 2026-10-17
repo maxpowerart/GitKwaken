@@ -1,7 +1,7 @@
 # Context menu on "Add f6 to lib" -> Copy SHA.
 wait 2500
-rclick 480 185.6
+rclick 480 217.6
 wait 500
-click 520 494.6
+click 520 526.6
 wait 800
 exit

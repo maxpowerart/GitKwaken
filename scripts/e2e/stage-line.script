@@ -1,11 +1,11 @@
 # Select README.md, select only the "More docs." line, stage the selection.
 wait 2500
-click 328 237
+click 328 279.4
 wait 1500
-click 744 233
+click 744 295
 wait 500
 shot $OUT/stage-line-selected.png
-click 1254 136
+click 1254 198
 wait 2500
 shot $OUT/stage-line.png
 exit
