@@ -40,6 +40,9 @@ pub struct Settings {
     /// 0 = off.
     pub auto_fetch_minutes: u32,
     pub git_path: Option<PathBuf>,
+    /// Update manifest URL; empty means the built-in release channel.
+    pub update_url: String,
+    pub check_updates: bool,
     pub external_diff_tool: Option<ExternalTool>,
     pub external_merge_tool: Option<ExternalTool>,
     pub terminal: Option<ExternalTool>,
@@ -70,6 +73,8 @@ impl Default for Settings {
             show_untracked: true,
             auto_fetch_minutes: 10,
             git_path: None,
+            update_url: String::new(),
+            check_updates: true,
             external_diff_tool: None,
             external_merge_tool: None,
             terminal: None,

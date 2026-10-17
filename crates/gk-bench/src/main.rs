@@ -25,12 +25,60 @@ fn main() -> Result<()> {
             let runs: usize = args.get(3).map(|s| s.parse()).transpose()?.unwrap_or(3);
             bench_status(&dir, runs)
         }
+        Some("serve") => {
+            let dir = PathBuf::from(args.get(2).context("dir")?);
+            let port: u16 = args.get(3).context("port")?.parse()?;
+            serve(&dir, port)
+        }
         Some("history") => {
             let dir = PathBuf::from(args.get(2).context("dir")?);
             bench_history(&dir)
         }
         _ => bail!("usage: gk-bench gen <dir> <files> | status <dir> [runs] | history <dir>"),
     }
+}
+
+/// Minimal static file server on 127.0.0.1 (GET only), used by the
+/// self-update end-to-end test.
+fn serve(dir: &Path, port: u16) -> Result<()> {
+    use std::io::{BufRead, BufReader, Write};
+    let listener = std::net::TcpListener::bind(("127.0.0.1", port))?;
+    println!("serving {} on http://127.0.0.1:{port}/", dir.display());
+    for stream in listener.incoming() {
+        let Ok(mut s) = stream else { continue };
+        let mut line = String::new();
+        let mut reader = BufReader::new(s.try_clone()?);
+        if reader.read_line(&mut line).is_err() {
+            continue;
+        }
+        // drain headers
+        let mut h = String::new();
+        while reader.read_line(&mut h).is_ok_and(|n| n > 2) {
+            h.clear();
+        }
+        let path = line
+            .split_whitespace()
+            .nth(1)
+            .unwrap_or("/")
+            .trim_start_matches('/');
+        let file = dir.join(path.split('?').next().unwrap_or(""));
+        match std::fs::read(&file) {
+            Ok(body) if file.is_file() => {
+                let _ = write!(
+                    s,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = s.write_all(&body);
+            }
+            _ => {
+                let _ = s.write_all(
+                    b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Files spread over a three-level tree with 100 files per leaf directory.

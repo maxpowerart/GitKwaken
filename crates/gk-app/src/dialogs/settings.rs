@@ -114,6 +114,8 @@ impl SettingsDialog {
         dst.mono_font_size = src.mono_font_size;
         dst.language = src.language.clone();
         dst.auto_fetch_minutes = src.auto_fetch_minutes;
+        dst.update_url = src.update_url.trim().to_string();
+        dst.check_updates = src.check_updates;
         dst.show_untracked = src.show_untracked;
         dst.status_engine = src.status_engine;
         dst.commit = src.commit.clone();
@@ -265,6 +267,12 @@ impl AppDialog for SettingsDialog {
                                             self.git_path = p.display().to_string();
                                         }
                                     });
+                                    ui.end_row();
+                                    ui.label("Updates:");
+                                    ui.checkbox(&mut d.check_updates, "Check for updates on startup");
+                                    ui.end_row();
+                                    ui.label("Update channel:");
+                                    ui.add(egui::TextEdit::singleline(&mut d.update_url).desired_width(260.0).hint_text("default (GitHub releases)"));
                                     ui.end_row();
                                 });
                                 hint(ui, "Status settings apply to newly opened tabs; the git executable after a restart.");

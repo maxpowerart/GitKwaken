@@ -17,19 +17,28 @@ enum State {
 /// Shared with `main`, which swaps the executable after the window closes.
 pub type Staged = Arc<Mutex<Option<PathBuf>>>;
 
+/// Set by "Restart now": `main` starts the updated executable after swapping it.
+pub static RESTART: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 pub struct Updater {
     state: Arc<Mutex<State>>,
     staged: Staged,
 }
 
 impl Updater {
-    pub fn new(ctx: &egui::Context, staged: Staged) -> Self {
+    /// Channel URL: `GITKWAKEN_UPDATE_URL`, else Settings → Update channel,
+    /// else the built-in release channel.
+    pub fn new(ctx: &egui::Context, staged: Staged, settings: &gk_settings::Settings) -> Self {
         let state = Arc::new(Mutex::new(State::Idle));
         let url = std::env::var("GITKWAKEN_UPDATE_URL")
-            .unwrap_or_else(|_| gk_update::DEFAULT_CHANNEL_URL.to_string());
-        // No release channel configured yet (placeholder owner) or opted out.
-        let enabled =
-            !url.contains("/OWNER/") && std::env::var_os("GITKWAKEN_NO_UPDATE_CHECK").is_none();
+            .ok()
+            .or_else(|| (!settings.update_url.is_empty()).then(|| settings.update_url.clone()))
+            .unwrap_or_else(|| gk_update::DEFAULT_CHANNEL_URL.to_string());
+        // The built-in channel needs the publishing account filled in at release
+        // time; until then (or when opted out) nothing is requested.
+        let enabled = settings.check_updates
+            && !url.contains("/OWNER/")
+            && std::env::var_os("GITKWAKEN_NO_UPDATE_CHECK").is_none();
         if enabled {
             let s = state.clone();
             let c = ctx.clone();
@@ -94,6 +103,7 @@ impl Updater {
             State::Ready(v) => {
                 ui.label(format!("Update {v} installs when GitKwaken closes"));
                 if ui.button("Restart now").clicked() {
+                    RESTART.store(true, std::sync::atomic::Ordering::SeqCst);
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             }

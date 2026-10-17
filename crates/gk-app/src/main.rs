@@ -48,8 +48,21 @@ fn main() {
             .set_level(rfd::MessageLevel::Error)
             .show();
     }
-    if let Some(p) = staged.lock().take() {
-        let _ = gk_update::apply_on_exit(&p);
+    if let Some(p) = staged.lock().take()
+        && gk_update::apply_on_exit(&p).is_ok()
+        && update::RESTART.load(std::sync::atomic::Ordering::SeqCst)
+        && std::env::var_os("GITKWAKEN_NO_RELAUNCH").is_none()
+        && let Ok(exe) = std::env::current_exe()
+    {
+        // Start the new version with the same arguments; test-only hooks are not inherited.
+        let mut cmd = std::process::Command::new(exe);
+        cmd.args(std::env::args_os().skip(1));
+        for (k, _) in std::env::vars_os() {
+            if k.to_string_lossy().starts_with("GK_DX11_") {
+                cmd.env_remove(k);
+            }
+        }
+        let _ = cmd.spawn();
     }
 }
 

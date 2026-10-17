@@ -59,6 +59,7 @@ impl GkApp {
         let askpass = gk_askpass::Server::start(Box::new(move || c.request_repaint()))
             .ok()
             .map(Arc::new);
+        let updater = crate::update::Updater::new(ctx, staged, &settings);
         let mut app = Self {
             autosave: Autosave::new(&settings),
             settings,
@@ -75,7 +76,7 @@ impl GkApp {
             command_palette: std::env::var("GITKWAKEN_PALETTE")
                 .map(views::palette::PaletteState::run_on_start)
                 .unwrap_or_default(),
-            updater: crate::update::Updater::new(ctx, staged),
+            updater,
         };
         let mut to_open: Vec<PathBuf> = initial;
         if to_open.is_empty() {
