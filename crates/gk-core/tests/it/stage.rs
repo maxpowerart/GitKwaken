@@ -78,13 +78,15 @@ fn changed_paths(t: &TestRepo) -> Vec<String> {
         .collect()
 }
 
-fn has_pack(t: &TestRepo) -> bool {
+/// Number of packs (git may already have packed the fixture on some platforms).
+fn packs(t: &TestRepo) -> usize {
     std::fs::read_dir(t.repo.git_dir().join("objects/pack"))
         .map(|d| {
             d.flatten()
-                .any(|e| e.file_name().to_string_lossy().ends_with(".pack"))
+                .filter(|e| e.file_name().to_string_lossy().ends_with(".pack"))
+                .count()
         })
-        .unwrap_or(false)
+        .unwrap_or(0)
 }
 
 fn compare(autocrlf: bool) {
@@ -98,6 +100,7 @@ fn compare(autocrlf: bool) {
     );
     assert_eq!(paths, changed_paths(&theirs));
 
+    let packs_before = (packs(&ours), packs(&theirs));
     ours.repo.stage(&paths).unwrap();
     theirs.git(&["add", "-A"]);
 
@@ -116,12 +119,14 @@ fn compare(autocrlf: bool) {
     assert_eq!(ours.status(), theirs.status());
     // Stat data is valid: nothing shows as modified in the worktree.
     assert_eq!(ours.git(&["diff", "--name-only"]), "");
-    // The in-process path ran (it writes a pack; git add writes loose objects).
+    // The in-process path ran: it writes exactly one new pack.
     assert!(
-        has_pack(&ours) && !has_pack(&theirs),
-        "in-process staging was not used (ours pack: {}, theirs pack: {}); a direct run returns: {:?}",
-        has_pack(&ours),
-        has_pack(&theirs),
+        packs(&ours) == packs_before.0 + 1,
+        "in-process staging was not used (packs ours {} -> {}, theirs {} -> {}); a direct run returns: {:?}",
+        packs_before.0,
+        packs(&ours),
+        packs_before.1,
+        packs(&theirs),
         ours.repo
             .stage_in_process_checked(&paths)
             .map(|rest| format!("{} of {} paths left to git", rest.len(), paths.len()))

@@ -76,9 +76,12 @@ jobs:
         if: steps.base.outputs.sha != ''
         shell: bash
         run: |
-          git worktree add --detach target/bench-base-src "${{ steps.base.outputs.sha }}"
+          # Outside target/: rust-cache restores target/, including an old checkout.
+          SRC="$RUNNER_TEMP/bench-base-src"
+          rm -rf "$SRC"; git worktree prune
+          git worktree add --detach "$SRC" "${{ steps.base.outputs.sha }}"
           cargo build --release --locked -p gk-bench \
-            --manifest-path target/bench-base-src/Cargo.toml \
+            --manifest-path "$SRC/Cargo.toml" \
             --target-dir target/bench-base
 
       # Generated data is deterministic; caching it saves ~1 min per run.

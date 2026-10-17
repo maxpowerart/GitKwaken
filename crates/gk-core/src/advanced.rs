@@ -28,6 +28,15 @@ pub struct Worktree {
     pub prunable: bool,
 }
 
+/// The commit id from `git bisect log`'s final "# first bad commit: [<id>] …" line.
+pub fn first_bad_from_log(log: &str) -> Option<String> {
+    log.lines().rev().find_map(|l| {
+        let rest = l.strip_prefix("# first bad commit: [")?;
+        let id = rest.split(']').next()?;
+        (id.len() >= 7 && id.bytes().all(|b| b.is_ascii_hexdigit())).then(|| id.to_string())
+    })
+}
+
 pub fn parse_worktrees(data: &str) -> Vec<Worktree> {
     let mut out = Vec::new();
     for block in data.split("\n\n") {
@@ -299,7 +308,17 @@ impl Repo {
         if let Some(r) = rev {
             args.push(r);
         }
-        Ok(self.git().run(&args)?.stdout_str())
+        let out = self.git().run(&args)?.stdout_str();
+        if out.contains("is the first bad commit") {
+            return Ok(out);
+        }
+        // Some git builds (seen on Linux and macOS) print nothing when the
+        // search ends; the bisect log always records the result.
+        let log = self.git().run(&["bisect", "log"])?.stdout_str();
+        Ok(match first_bad_from_log(&log) {
+            Some(id) => format!("{id} is the first bad commit\n{out}"),
+            None => out,
+        })
     }
 
     pub fn bisect_reset(&self) -> Result<()> {
@@ -603,6 +622,21 @@ impl Repo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn first_bad_commit_from_bisect_log() {
+        let log = "git bisect start 'abc' 'def'\n# good: [1111111] c5\ngit bisect good 1111111\n\
+                   # bad: [b58f6457dfe79580a4d5d9e66464e67dd28c9feb] c7\ngit bisect bad b58f645\n\
+                   # first bad commit: [b58f6457dfe79580a4d5d9e66464e67dd28c9feb] c7\n";
+        assert_eq!(
+            first_bad_from_log(log).as_deref(),
+            Some("b58f6457dfe79580a4d5d9e66464e67dd28c9feb")
+        );
+        assert_eq!(
+            first_bad_from_log("git bisect start\n# bad: [abcdef1] x\n"),
+            None
+        );
+    }
 
     #[test]
     fn worktree_porcelain() {

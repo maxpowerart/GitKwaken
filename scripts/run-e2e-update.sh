@@ -21,13 +21,21 @@ printf '{"version":"99.0.0","notes":"e2e","url":"http://127.0.0.1:8799/GitKwaken
 trap 'kill $SRV 2>/dev/null || true' EXIT
 bash "$ROOT/scripts/make-demo-repo.sh" "$W/repo" >/dev/null
 cat > "$W/update.script" <<'EOF'
+# Through Help (left-aligned, so the clicks do not depend on the window width):
+# "Install update 99.0.0", then "Restart to finish update 99.0.0" in the same slot.
 wait 4000
-click 1334 36
+click 282 12
+wait 500
+click 333 81
 wait 15000
-click 1092 36
+click 282 12
+wait 500
+click 333 81
 wait 3000
 # second attempt in case the download was slow (no-op once closed)
-click 1092 36
+click 282 12
+wait 500
+click 333 81
 wait 3000
 EOF
 GK_DX11_INPUT_SCRIPT="$(cygpath -m "$W/update.script")" GITKWAKEN_NO_RELAUNCH=1 \

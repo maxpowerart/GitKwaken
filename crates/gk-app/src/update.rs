@@ -24,6 +24,13 @@ pub type Staged = Arc<Mutex<Option<PathBuf>>>;
 /// Set by "Restart now": `main` starts the updated executable after swapping it.
 pub static RESTART: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// What a Help-menu update entry does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateAction {
+    Install,
+    Restart,
+}
+
 pub struct Updater {
     state: Arc<Mutex<State>>,
     staged: Staged,
@@ -110,6 +117,41 @@ impl Updater {
             };
             c.request_repaint();
         });
+    }
+
+    /// The Help-menu entry for the current state: install an available
+    /// update, or restart to finish a downloaded one.
+    pub fn menu_entry(&self) -> Option<(String, UpdateAction)> {
+        match &*self.state.lock() {
+            State::Available(rel) => Some((
+                format!("Install update {}", rel.version),
+                UpdateAction::Install,
+            )),
+            State::Ready(v) => Some((
+                format!("Restart to finish update {v}"),
+                UpdateAction::Restart,
+            )),
+            _ => None,
+        }
+    }
+
+    /// Runs a Help-menu entry (same as the tab-bar buttons).
+    pub fn act(&self, action: UpdateAction, ctx: &egui::Context) {
+        match action {
+            UpdateAction::Install => {
+                let rel = match &*self.state.lock() {
+                    State::Available(rel) => rel.clone(),
+                    _ => return,
+                };
+                self.download(rel, ctx);
+            }
+            UpdateAction::Restart => {
+                if matches!(*self.state.lock(), State::Ready(_)) {
+                    RESTART.store(true, std::sync::atomic::Ordering::SeqCst);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
     }
 
     /// Small control for the tab bar; nothing is shown while there is no update.

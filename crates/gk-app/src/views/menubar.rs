@@ -16,6 +16,7 @@ use egui::Ui;
 pub struct MenuOut {
     pub toggle_palette: bool,
     pub check_updates: bool,
+    pub update: Option<crate::update::UpdateAction>,
 }
 
 /// One menu entry with its shortcut; closes the menu when clicked.
@@ -41,6 +42,8 @@ pub struct MenuCtx<'a> {
     pub tab: Option<&'a mut RepoTab>,
     pub active: usize,
     pub tabs: usize,
+    /// Help-menu entry for an available or downloaded update.
+    pub update: Option<(String, crate::update::UpdateAction)>,
 }
 
 pub fn show(ui: &mut Ui, mc: MenuCtx, shared: &mut Shared) -> MenuOut {
@@ -49,6 +52,7 @@ pub fn show(ui: &mut Ui, mc: MenuCtx, shared: &mut Shared) -> MenuOut {
         tab,
         active,
         tabs,
+        update,
     } = mc;
     let k = |a: Act| km.text(a);
     let none = String::new;
@@ -325,6 +329,11 @@ pub fn show(ui: &mut Ui, mc: MenuCtx, shared: &mut Shared) -> MenuOut {
             }
             if item(ui, "Check for updates", none(), true) {
                 out.check_updates = true;
+            }
+            if let Some((label, action)) = &update
+                && item(ui, label, none(), true)
+            {
+                out.update = Some(*action);
             }
             ui.separator();
             if item(ui, "About GitKwaken", none(), true) {
