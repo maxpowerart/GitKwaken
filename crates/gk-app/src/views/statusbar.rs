@@ -33,7 +33,7 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
                             let t = if br.upstream_gone {
                                 format!("{u} (gone)")
                             } else {
-                                format!("↑{} ↓{}  {u}", br.ahead, br.behind)
+                                format!("↑ {}  ↓ {}   {u}", br.ahead, br.behind)
                             };
                             ui.label(egui::RichText::new(t).color(shared.palette.muted));
                         }

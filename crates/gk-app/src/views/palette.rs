@@ -12,9 +12,17 @@ pub struct PaletteState {
     query: String,
     selected: usize,
     focus: bool,
+    /// Runs the best match automatically (GITKWAKEN_PALETTE, for UI tests).
+    auto_run: bool,
 }
 
 impl PaletteState {
+    /// Opens the palette with `query` and runs the best match on the next
+    /// frame. Used by `GITKWAKEN_PALETTE=<text>` to script screenshots.
+    pub fn run_on_start(query: String) -> Self {
+        Self { open: true, query, selected: 0, focus: false, auto_run: true }
+    }
+
     pub fn toggle(&mut self) {
         self.open = !self.open;
         self.query.clear();
@@ -135,6 +143,11 @@ pub fn show(ctx: &egui::Context, st: &mut PaletteState, tab: Option<&mut RepoTab
         return;
     }
     let snap = tab.as_ref().map(|t| t.session.snapshot());
+    // Scripted runs wait until the repository is loaded, like a user would.
+    if st.auto_run && snap.as_ref().is_some_and(|s| s.refs.head == gk_core::Head::Unknown || s.history_loading) {
+        ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        return;
+    }
     let all = items(snap.as_ref());
     let mut ranked: Vec<(i32, &Item)> =
         all.iter().filter_map(|it| score(&it.label, &st.query).map(|s| (s, it))).collect();
@@ -175,7 +188,7 @@ pub fn show(ctx: &egui::Context, st: &mut PaletteState, tab: Option<&mut RepoTab
         if esc {
             close = true;
         }
-        if enter {
+        if enter || std::mem::take(&mut st.auto_run) {
             run = ranked.get(st.selected).map(|(_, it)| it.cmd.clone());
         }
         egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {

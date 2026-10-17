@@ -65,7 +65,9 @@ impl GkApp {
             actions: Vec::new(),
             show_log: false,
             errors: Vec::new(),
-            command_palette: Default::default(),
+            command_palette: std::env::var("GITKWAKEN_PALETTE")
+                .map(views::palette::PaletteState::run_on_start)
+                .unwrap_or_default(),
             updater: crate::update::Updater::new(ctx, staged),
         };
         let mut to_open: Vec<PathBuf> = initial;
