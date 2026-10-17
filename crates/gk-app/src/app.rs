@@ -43,10 +43,11 @@ pub struct GkApp {
     show_log: bool,
     errors: Vec<String>,
     command_palette: views::palette::PaletteState,
+    updater: crate::update::Updater,
 }
 
 impl GkApp {
-    pub fn new(ctx: &egui::Context, settings: Settings, initial: Vec<PathBuf>) -> Self {
+    pub fn new(ctx: &egui::Context, settings: Settings, initial: Vec<PathBuf>, staged: crate::update::Staged) -> Self {
         theme::install_fonts(ctx);
         let palette = theme::apply(ctx, settings.theme, settings.ui_scale, settings.font_size);
         let c = ctx.clone();
@@ -65,6 +66,7 @@ impl GkApp {
             show_log: false,
             errors: Vec::new(),
             command_palette: Default::default(),
+            updater: crate::update::Updater::new(ctx, staged),
         };
         let mut to_open: Vec<PathBuf> = initial;
         if to_open.is_empty() {
@@ -180,6 +182,7 @@ impl GkApp {
                 self.actions.push(Action::OpenRepoDialog);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                self.updater.ui(ui);
                 if ui.button("⚙").on_hover_text("Settings").clicked() {
                     self.actions.push(Action::Global(dialogs::GlobalDialog::settings()));
                 }

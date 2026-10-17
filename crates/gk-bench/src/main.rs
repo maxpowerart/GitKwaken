@@ -41,7 +41,8 @@ fn generate(dir: &Path, n: usize) -> Result<()> {
     (0..n.div_ceil(100)).into_par_iter().try_for_each(|l| std::fs::create_dir_all(leaf_dir(l)))?;
     (0..n).into_par_iter().try_for_each(|i| -> Result<()> {
         let p = leaf_dir(i / 100);
-        std::fs::write(p.join(format!("file{i}.txt")), format!("content of file {i}\n"))?;
+        // Few distinct contents keep object writes cheap; status cost is per file anyway.
+        std::fs::write(p.join(format!("file{i}.txt")), format!("content of file {}\n", i % 1000))?;
         Ok(())
     })?;
     println!("wrote {n} files in {:.1}s", t.elapsed().as_secs_f32());

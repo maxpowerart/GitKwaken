@@ -1,0 +1,20 @@
+[package]
+name = "gk-update"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Self-update checker / stager / applier for GitKwaken."
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+semver = "1"
+sha2 = "0.10"
+# rustls + ring + webpki-roots; no native-tls/openssl.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+# Deflate only, pure-Rust zlib-rs backend (no bzip2/lzma/zstd/aes).
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+[dev-dependencies]
+tempfile = "3"

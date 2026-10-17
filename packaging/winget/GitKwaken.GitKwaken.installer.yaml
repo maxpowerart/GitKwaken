@@ -1,0 +1,41 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+# Template. {{VERSION}}, {{SETUP_SHA256}} (installer, UPPERCASE hex), {{ZIP_SHA256}} come from
+# dist/SHA256SUMS.txt produced by packaging/build-release.ps1.
+PackageIdentifier: GitKwaken.GitKwaken
+PackageVersion: "{{VERSION}}"
+MinimumOSVersion: 10.0.17763.0
+Platform:
+  - Windows.Desktop
+InstallModes:
+  - interactive
+  - silent
+  - silentWithProgress
+UpgradeBehavior: install
+ReleaseDate: "{{RELEASE_DATE}}"
+Installers:
+  # Inno Setup installer, per-user by default (no UAC).
+  - Architecture: x64
+    InstallerType: inno
+    Scope: user
+    InstallerUrl: https://github.com/OWNER/gitkwaken/releases/download/v{{VERSION}}/GitKwaken-{{VERSION}}-x64-setup.exe
+    InstallerSha256: "{{SETUP_SHA256}}"
+    InstallerSwitches:
+      Custom: /CURRENTUSER
+  - Architecture: x64
+    InstallerType: inno
+    Scope: machine
+    InstallerUrl: https://github.com/OWNER/gitkwaken/releases/download/v{{VERSION}}/GitKwaken-{{VERSION}}-x64-setup.exe
+    InstallerSha256: "{{SETUP_SHA256}}"
+    InstallerSwitches:
+      Custom: /ALLUSERS
+  # Portable zip (no installer).
+  - Architecture: x64
+    InstallerType: zip
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: GitKwaken-{{VERSION}}-x64\gitkwaken.exe
+        PortableCommandAlias: gitkwaken
+    InstallerUrl: https://github.com/OWNER/gitkwaken/releases/download/v{{VERSION}}/GitKwaken-{{VERSION}}-x64.zip
+    InstallerSha256: "{{ZIP_SHA256}}"
+ManifestType: installer
+ManifestVersion: 1.6.0

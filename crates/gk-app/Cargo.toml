@@ -23,3 +23,8 @@ gk-status = { path = "../gk-status" }
 gk-settings = { path = "../gk-settings" }
 gk-askpass = { path = "../gk-askpass" }
 gk-dx11 = { path = "../gk-dx11" }
+gk-update = { path = "../gk-update" }
+png = "0.18"
+
+[build-dependencies]
+winresource = "0.1"

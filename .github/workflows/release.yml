@@ -1,0 +1,82 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to (re)build, e.g. v1.0.0'
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  windows:
+    name: Windows x64 release
+    runs-on: windows-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+
+      - name: Check tag matches Cargo version
+        shell: pwsh
+        run: |
+          $meta = cargo metadata --format-version 1 --no-deps | ConvertFrom-Json
+          $ver = ($meta.packages | Where-Object name -eq 'gk-app').version
+          if ("v$ver" -ne $env:TAG) { throw "tag $env:TAG does not match gk-app version $ver" }
+          "VERSION=$ver" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Ensure Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+          }
+
+      - name: Build zip, installer and update.json
+        shell: pwsh
+        run: |
+          ./packaging/build-release.ps1 `
+            -Version $env:VERSION `
+            -DownloadBaseUrl "https://github.com/${{ github.repository }}/releases/download/$env:TAG" `
+            -Notes "GitKwaken $env:VERSION. Release notes: https://github.com/${{ github.repository }}/releases/tag/$env:TAG"
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: GitKwaken-${{ env.VERSION }}-x64
+          path: |
+            dist/*.zip
+            dist/*-setup.exe
+            dist/update.json
+            dist/SHA256SUMS.txt
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: GitKwaken ${{ env.VERSION }}
+          draft: false
+          prerelease: ${{ contains(env.TAG, '-') }}
+          generate_release_notes: true
+          fail_on_unmatched_files: false
+          files: |
+            dist/GitKwaken-${{ env.VERSION }}-x64.zip
+            dist/GitKwaken-${{ env.VERSION }}-x64-setup.exe
+            dist/update.json
+            dist/SHA256SUMS.txt

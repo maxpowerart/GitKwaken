@@ -1,0 +1,9 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.6.0.schema.json
+# Template. Replace {{VERSION}} and copy the three files to
+#   manifests/g/GitKwaken/GitKwaken/{{VERSION}}/ in a fork of microsoft/winget-pkgs,
+# or generate them with: wingetcreate update GitKwaken.GitKwaken -v {{VERSION}} -u <installer-url>
+PackageIdentifier: GitKwaken.GitKwaken
+PackageVersion: "{{VERSION}}"
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: 1.6.0

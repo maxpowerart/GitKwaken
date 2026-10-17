@@ -8,6 +8,7 @@ mod app;
 mod dialogs;
 mod tab;
 mod theme;
+mod update;
 mod util;
 mod views;
 
@@ -15,6 +16,8 @@ fn main() {
     if let Some(code) = gk_askpass::client_main() {
         std::process::exit(code);
     }
+    // Removes the previous executable left behind by a self-update.
+    gk_update::cleanup_old();
     let settings = gk_settings::Settings::load();
     if let Some(git) = &settings.git_path {
         // gk-cli honors this override for every git invocation.
@@ -26,17 +29,38 @@ fn main() {
         size: w.size,
         min_size: [800.0, 500.0],
         vsync: true,
-        icon_rgba: None,
+        icon_rgba: window_icon(),
         maximized: w.maximized,
         position: w.position,
     };
     let initial_paths: Vec<std::path::PathBuf> =
         std::env::args_os().skip(1).map(std::path::PathBuf::from).collect();
-    if let Err(e) = gk_dx11::run(options, move |ctx| Box::new(app::GkApp::new(ctx, settings, initial_paths))) {
+    let staged: update::Staged = Default::default();
+    let staged_app = staged.clone();
+    if let Err(e) =
+        gk_dx11::run(options, move |ctx| Box::new(app::GkApp::new(ctx, settings, initial_paths, staged_app)))
+    {
         let _ = rfd::MessageDialog::new()
             .set_title("GitKwaken")
             .set_description(format!("Failed to start: {e:#}"))
             .set_level(rfd::MessageLevel::Error)
             .show();
     }
+    if let Some(p) = staged.lock().take() {
+        let _ = gk_update::apply_on_exit(&p);
+    }
+}
+
+fn window_icon() -> Option<(Vec<u8>, u32, u32)> {
+    let bytes: &[u8] = include_bytes!("../../../assets/icon-256.png");
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    decoder.set_transformations(png::Transformations::normalize_to_color8() | png::Transformations::ALPHA);
+    let mut reader = decoder.read_info().ok()?;
+    let mut buf = vec![0; reader.output_buffer_size()?];
+    let info = reader.next_frame(&mut buf).ok()?;
+    if info.color_type != png::ColorType::Rgba {
+        return None;
+    }
+    buf.truncate(info.buffer_size());
+    Some((buf, info.width, info.height))
 }

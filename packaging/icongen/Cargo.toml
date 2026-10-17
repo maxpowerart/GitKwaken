@@ -1,0 +1,14 @@
+[package]
+name = "icongen"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Rasterizes assets/icon.svg into assets/icon.ico and assets/icon-256.png."
+
+# Standalone: not part of the main GitKwaken workspace.
+[workspace]
+
+[dependencies]
+resvg = { version = "0.45", default-features = false }
+ico = "0.4"
+anyhow = "1"

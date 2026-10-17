@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+PackageIdentifier: GitKwaken.GitKwaken
+PackageVersion: "{{VERSION}}"
+PackageLocale: en-US
+Publisher: GitKwaken contributors
+PublisherUrl: https://github.com/OWNER/gitkwaken
+PublisherSupportUrl: https://github.com/OWNER/gitkwaken/issues
+PackageName: GitKwaken
+PackageUrl: https://github.com/OWNER/gitkwaken
+License: MIT OR Apache-2.0
+LicenseUrl: https://github.com/OWNER/gitkwaken/blob/main/LICENSE-MIT
+ShortDescription: A fast, lightweight SourceTree-like git client.
+Description: |-
+  GitKwaken is a native Windows git client written in Rust: commit graph, staging with hunk/line
+  selection, diffs, branches, stashes, remotes, tags and multi-repo tabs, rendered with Direct3D 11
+  and fast enough for very large repositories.
+Moniker: gitkwaken
+Tags:
+  - git
+  - git-client
+  - git-gui
+  - vcs
+  - sourcetree
+ReleaseNotesUrl: https://github.com/OWNER/gitkwaken/releases/tag/v{{VERSION}}
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0
