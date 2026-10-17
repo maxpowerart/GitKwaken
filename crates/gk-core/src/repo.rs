@@ -28,7 +28,12 @@ impl Repo {
         // tab paths, recent repositories and worktree matching need it absolute.
         let abs = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
         let path = abs.as_path();
-        let ts = gix::ThreadSafeRepository::discover(path)
+        // A missing folder must not be resolved to a repository further up the tree.
+        if !path.exists() {
+            anyhow::bail!("folder does not exist: {}", path.display());
+        }
+        // Honors GIT_CEILING_DIRECTORIES like git does.
+        let ts = gix::ThreadSafeRepository::discover_with_environment_overrides(path)
             .map_err(gix_err)
             .with_context(|| format!("not a git repository: {}", path.display()))?;
         let local = ts.to_thread_local();

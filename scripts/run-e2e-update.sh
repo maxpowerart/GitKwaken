@@ -7,6 +7,7 @@ set -euo pipefail
 EXE="$1"; BENCH="$2"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 W="$ROOT/bench-data/e2e-update"
+export GIT_CEILING_DIRECTORIES="$(cygpath -m "$ROOT/bench-data")"
 rm -rf "$W"; mkdir -p "$W/install" "$W/srv" "$W/pkg"
 cp "$EXE" "$W/install/gitkwaken.exe"
 cp "$EXE" "$W/pkg/gitkwaken.exe"

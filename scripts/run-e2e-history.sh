@@ -12,6 +12,12 @@ EXE="$1"; shift
 ONLY=" $* "
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="$ROOT/bench-data/e2e-history"
+# Safety: git and the app must never climb out of the test area into a real
+# repository (a missing test repo once made them reset the project repo).
+export GIT_CEILING_DIRECTORIES="$(cygpath -m "$(dirname "$WORK")")"
+mkdir -p "$(dirname "$WORK")"
+if ! mkdir "$WORK.lock" 2>/dev/null; then echo "another run of this suite is active ($WORK.lock)"; exit 3; fi
+trap 'rmdir "$WORK.lock" 2>/dev/null' EXIT
 OUT="$WORK/shots"
 rm -rf "$WORK"; mkdir -p "$OUT"
 pass=0; fail=0
@@ -38,6 +44,7 @@ repo() {
 
 run() { # name repo view [VAR=value...]
   local name="$1" repo="$2" view="$3"; shift 3
+  if [ ! -e "$repo/.git" ]; then echo "ABORT $name: $repo is not a repository"; exit 2; fi
   sed "s#\$OUT#$(cygpath -m "$OUT")#g" "$ROOT/scripts/e2e/$name.script" > "$WORK/$name.script"
   env "$@" GK_DX11_INPUT_SCRIPT="$(cygpath -m "$WORK/$name.script")" \
     GITKWAKEN_CONFIG_DIR="$(cygpath -w "$WORK/cfg-$name")" \

@@ -10,6 +10,12 @@ EXE="$1"
 FILTER="${2:-}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="$ROOT/bench-data/e2e-remote"
+# Safety: git and the app must never climb out of the test area into a real
+# repository (a missing test repo once made them reset the project repo).
+export GIT_CEILING_DIRECTORIES="$(cygpath -m "$(dirname "$WORK")")"
+mkdir -p "$(dirname "$WORK")"
+if ! mkdir "$WORK.lock" 2>/dev/null; then echo "another run of this suite is active ($WORK.lock)"; exit 3; fi
+trap 'rmdir "$WORK.lock" 2>/dev/null' EXIT
 OUT="$WORK/shots"
 rm -rf "$WORK"; mkdir -p "$OUT"
 pass=0; fail=0
@@ -27,6 +33,7 @@ mkcfg() { # dir
 # run <script name> <repo> <view> [config dir]
 run() {
   local name="$1" repo="$2" view="$3" cfg="${4:-$WORK/cfg-$1}"
+  if [ ! -e "$repo/.git" ]; then echo "ABORT $name: $repo is not a repository"; exit 2; fi
   mkcfg "$cfg"
   sed -e "s#\$OUT#$(cygpath -m "$OUT")#g" -e "s#\$WORK#$(cygpath -m "$WORK")#g" \
     "$ROOT/scripts/e2e/$name.script" > "$WORK/$name.script"
