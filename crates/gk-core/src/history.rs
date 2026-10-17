@@ -375,16 +375,13 @@ pub struct CommitMeta {
     pub offset: i32,
 }
 
+/// Row metadata of commit `id`, read with gitoxide only.
 pub fn commit_meta(g: &gix::Repository, id: ObjectId) -> Result<CommitMeta> {
-    commit_meta_with(g, id, &mut |s| IStr::from(s))
+    let c = g.find_commit(id).map_err(gix_err)?;
+    meta_of(&c, &mut |s| IStr::from(s))
 }
 
-fn commit_meta_with(
-    g: &gix::Repository,
-    id: ObjectId,
-    intern: &mut dyn FnMut(&str) -> IStr,
-) -> Result<CommitMeta> {
-    let c = g.find_commit(id).map_err(gix_err)?;
+fn meta_of(c: &gix::Commit<'_>, intern: &mut dyn FnMut(&str) -> IStr) -> Result<CommitMeta> {
     let author = c.author().map_err(gix_err)?;
     let t = author.time().unwrap_or_default();
     let msg = c.message_raw_sloppy();
@@ -418,8 +415,10 @@ impl MetaCache {
         }
     }
 
+    /// Reads through [`Repo::find_commit`]: gitoxide, `git cat-file` on failure.
     fn load(&self, g: &gix::Repository, id: ObjectId) -> Result<CommitMeta> {
-        commit_meta_with(g, id, &mut |s| self.interner.lock().intern(s))
+        let c = self.repo.find_commit(g, id)?;
+        meta_of(&c, &mut |s| self.interner.lock().intern(s))
     }
 
     /// Distinct author names and emails currently interned.
@@ -516,7 +515,7 @@ pub fn search(repo: &Repo, history: &History, needle: &str, interrupt: &AtomicBo
             for (i, id) in ids.iter().enumerate() {
                 let hex = id.to_string();
                 let found = hex.starts_with(&needle)
-                    || g.find_commit(*id).ok().is_some_and(|c| {
+                    || repo.find_commit(&g, *id).ok().is_some_and(|c| {
                         let msg = c.message_raw_sloppy().to_string().to_lowercase();
                         msg.contains(&needle)
                             || c.author().ok().is_some_and(|a| {

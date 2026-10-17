@@ -631,8 +631,9 @@ fn open_blob(session: &Session, id: ObjectId, path: String, rev: &str) {
     let rev = rev.to_string();
     std::thread::spawn(move || {
         let r = (|| -> anyhow::Result<()> {
-            let g = session.repo().gix();
-            let data = gk_core::content::blob(&g, id)?;
+            let repo = session.repo();
+            let g = repo.gix();
+            let data = gk_core::content::blob(repo, &g, id)?;
             let dir = std::env::temp_dir().join("gitkwaken");
             std::fs::create_dir_all(&dir)?;
             let file = dir.join(temp_name(&path, &rev));

@@ -123,7 +123,7 @@ pub fn open_merge(tab: &mut RepoTab, path: String) {
 
 fn load(repo: &Repo, path: &str, head: Option<String>) -> anyhow::Result<Loaded> {
     let g = repo.gix();
-    let stage = |n| gk_core::content::index_blob(&g, path, n);
+    let stage = |n| gk_core::content::index_blob(repo, &g, path, n);
     let (base, ours, theirs) = (stage(1)?, stage(2)?, stage(3)?);
     if ours.is_none() && theirs.is_none() {
         anyhow::bail!("{path} has no conflict in the index (already resolved?)");

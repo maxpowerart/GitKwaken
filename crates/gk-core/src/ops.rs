@@ -191,8 +191,8 @@ impl Repo {
         pick: &dyn Fn(&DLine) -> bool,
     ) -> Result<()> {
         let g = self.gix();
-        if content::index_blob(&g, path, 2)?.is_some()
-            || content::index_blob(&g, path, 3)?.is_some()
+        if content::index_blob(self, &g, path, 2)?.is_some()
+            || content::index_blob(self, &g, path, 3)?.is_some()
         {
             bail!("{path} has conflicts; resolve them first");
         }
@@ -322,7 +322,8 @@ impl Repo {
     /// Message of HEAD, for amending.
     pub fn head_message(&self) -> Result<String> {
         let g = self.gix();
-        let c = g.head_commit().map_err(gix_err)?;
+        let head = g.head_id().map_err(gix_err)?.detach();
+        let c = self.find_commit(&g, head)?;
         Ok(c.message_raw_sloppy().to_string())
     }
 

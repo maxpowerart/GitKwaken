@@ -12,12 +12,17 @@ pub struct Repo {
     ts: gix::ThreadSafeRepository,
     workdir: PathBuf,
     git_dir: PathBuf,
-    git: Git,
+    pub(crate) git: Git,
+    pub(crate) reader: crate::objects::ObjectReader,
+    pub(crate) objects: std::sync::Arc<crate::objects::Objects>,
 }
 
 impl Repo {
     /// Opens the repository containing `path`. The git executable is found via
-    /// `GITKWAKEN_GIT`, then PATH (see [`gk_cli::find_git`]).
+    /// `GITKWAKEN_GIT`, then PATH (see [`gk_cli::find_git`]). Objects are read
+    /// with gitoxide, falling back to `git cat-file` per failed read, or only
+    /// with `git cat-file` when `GITKWAKEN_OBJECT_READER=cli` (see
+    /// [`ObjectReader`](crate::ObjectReader)).
     pub fn open(path: &Path, log: CommandLog) -> Result<Self> {
         Self::open_with_git(path, log, None)
     }
@@ -51,11 +56,15 @@ impl Repo {
             workdir,
             git_dir,
             git,
+            reader: crate::objects::ObjectReader::from_env(),
+            objects: Default::default(),
         })
     }
 
     /// Adds environment variables (e.g. `GIT_ASKPASS`) to every git call.
     pub fn with_env(mut self, vars: impl IntoIterator<Item = (String, String)>) -> Repo {
+        // cat-file processes are started with the new environment.
+        self.objects = Default::default();
         for (k, v) in vars {
             self.git = self.git.env(k, v);
         }

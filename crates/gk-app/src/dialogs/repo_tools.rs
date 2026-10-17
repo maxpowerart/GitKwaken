@@ -438,6 +438,7 @@ impl TabDialog for Optimize {
         }
         let workdir = tab.path.clone();
         let git_dir = tab.session.repo().git_dir().to_path_buf();
+        let repo = tab.session.repo().clone();
         let log = shared.log.clone();
         if let Some(t) = &mut self.task
             && let Some(s) = t.take()
@@ -513,7 +514,14 @@ impl TabDialog for Optimize {
                     Some(Err(e)) => error(ui, e.clone()),
                     None => {}
                 }
-                if diagnostics_ui(ui, &self.diag, &self.diag_result, &workdir, &mut open_auth) {
+                if diagnostics_ui(
+                    ui,
+                    &self.diag,
+                    &self.diag_result,
+                    &workdir,
+                    &mut open_auth,
+                    &repo,
+                ) {
                     let (w, g, log) = (workdir.clone(), git_dir.clone(), log.clone());
                     self.diag_result = None;
                     self.diag = Some(Task::spawn(ctx, move || {
@@ -549,6 +557,7 @@ fn diagnostics_ui(
     result: &Option<Result<super::diagnostics::WriteSpeed, String>>,
     workdir: &std::path::Path,
     open_auth: &mut bool,
+    repo: &gk_core::Repo,
 ) -> bool {
     use super::diagnostics as diag;
     let mut start = false;
@@ -582,6 +591,17 @@ fn diagnostics_ui(
         {
             *open_auth = true;
         }
+        // Appended to the same row (keeps the dialog height): active object reader.
+        let short = match (repo.object_reader(), repo.object_fallbacks()) {
+            (gk_core::ObjectReader::Cli, _) => "Objects: git cat-file".to_string(),
+            (_, 0) => "Objects: gitoxide".to_string(),
+            (_, n) => format!("Objects: gitoxide + cat-file ({n})"),
+        };
+        ui.label(RichText::new(short).weak().small())
+            .on_hover_text(format!(
+                "{}\nSet GITKWAKEN_OBJECT_READER=cli to read every object through git cat-file --batch.",
+                repo.object_reader_status()
+            ));
     });
     match result {
         Some(Ok(s)) => {

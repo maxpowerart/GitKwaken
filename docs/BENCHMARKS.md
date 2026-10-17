@@ -146,6 +146,7 @@ gk-bench gen-dag <dir> <commits>         synthetic history via git fast-import
 gk-bench status <dir> [runs]             status engines vs git status
 gk-bench status-mem <dir> [entries]      heap retained by a status snapshot (scan + synthetic N entries)
 gk-bench history <dir>                   refs, history build, metadata, search
+gk-bench objects <dir> [n]               object reads: gitoxide vs long-lived git cat-file
 gk-bench regress [--record] [--runs N]   regression gate (see above)
 gk-bench stage <repo> [files]            Repo::stage / unstage of N modified files
 gk-bench discard <repo>                  discard of one file with and without the backup
@@ -155,3 +156,22 @@ gk-bench file-history <repo> [paths]     git log --follow -n 50
 scripts/compare-clients.ps1              GitKwaken vs SourceGit/Fork vs git CLI
 scripts/fetch-corpus.sh [linux|chromium|lfs]
 ```
+
+## Object reader: gitoxide vs `git cat-file --batch`
+
+`gk-bench objects <dir> [n]` reads the first `n` objects of `git rev-list --objects --all`
+with gitoxide and with the long-lived `git cat-file --batch-command` reader
+(`gk_cli::CatFile`, the fallback and the `GITKWAKEN_OBJECT_READER=cli` path), checks that
+both return the same bytes, and times `content::commit_details` for 300 commits with each
+reader. Best of 3 passes, release build, Windows 11, 2026-10-17:
+
+| Repository | Objects | gitoxide | cat-file, 1 process | process per object |
+|---|---|---|---|---|
+| `gen-dag` 20,000 commits (packed, 23.5 MB read) | 50,000 | 174 ms, 3.5 µs each | 823 ms, 16.5 µs each | 26 ms each |
+| this repository (packed, 10.4 MB read) | 1,284 | 75 ms, 59 µs each | 193 ms, 150 µs each | 25 ms each |
+| `gen` 20,000 files (loose objects) | 1,205 | 0.05 ms (object cache) | 102 ms, 85 µs each | 21 ms each |
+
+`commit_details` (commit, parent, tree diff with rename detection), `gen-dag`: 506 µs per
+commit through gitoxide, 711 µs through cat-file. gitoxide stays the primary reader
+(4.7x faster on packed objects); the pipe protocol costs one round trip per object but is
+~1,600x cheaper than a process per object.

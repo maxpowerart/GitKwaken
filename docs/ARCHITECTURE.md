@@ -30,11 +30,20 @@ gk-bench ──► gk-core / gk-status / gk-graph   (measurements on real repos)
 
 ### Deviations from the design document
 
-- **Object reads in process, not a long-lived `git cat-file --batch`.** Blobs, trees and
-  commits are read through gitoxide (`gix`, one handle per thread). It needs no pipe protocol
-  or child process to keep alive, reads packs and the commit-graph directly, and was faster
-  in every measurement. The git CLI stays the tool for writes, network and anything with
-  filters git must run (LFS, `ident`, `working-tree-encoding`).
+- **Object reads in process first; the long-lived `git cat-file --batch` is the fallback.**
+  Blobs, trees and commits are read through gitoxide (`gix`, one handle per thread): it
+  reads packs and the commit-graph directly and is 4.7x faster per object than the pipe
+  (`gk-bench objects`, `docs/BENCHMARKS.md`). The design's reader exists as
+  `gk_cli::CatFile` (one `git cat-file --batch-command` process: `--batch` and
+  `--batch-check` replies, restarted when it dies, killed on drop) behind a per-repository
+  pool of up to 4. `Repo::find_object` / `find_commit` / `find_tree` and the `content`
+  readers (blobs, `<tree>:<path>`, tree diffs with rename detection, commit details,
+  history row metadata) fall back to it whenever gitoxide fails to read an object, and
+  `GITKWAKEN_OBJECT_READER=cli` (or `Repo::with_object_reader(ObjectReader::Cli)`) routes
+  every such read through it; Optimize › Diagnostics shows the active reader. A repository
+  gitoxide cannot open at all (SHA-256 object format: gix 0.89 is built SHA-1-only) fails in
+  `Repo::open`, before any fallback. The git CLI stays the tool for writes, network and
+  anything with filters git must run (LFS, `ident`, `working-tree-encoding`).
 - **Status engine.** The default full scan is `git status --porcelain=v2` (faster on Windows
   with `core.fscache`, and it talks to the fsmonitor daemon); the gitoxide engine is an
   option. The watcher fast path always works in process on the gix index.

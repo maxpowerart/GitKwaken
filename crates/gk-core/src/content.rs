@@ -69,19 +69,50 @@ impl DiffTarget {
     }
 }
 
-pub fn blob(g: &gix::Repository, id: ObjectId) -> Result<Vec<u8>> {
-    let obj = g.find_object(id).map_err(gix_err)?;
-    if obj.data.len() as u64 > MAX_DIFF_BYTES {
-        bail!(
-            "file too large to diff ({} MB)",
-            obj.data.len() / (1024 * 1024)
-        );
+fn too_large(size: u64) -> anyhow::Error {
+    anyhow!("file too large to diff ({} MB)", size / (1024 * 1024))
+}
+
+/// Content of blob `id`, read with gitoxide or, when that fails (or the CLI
+/// reader is forced, see [`crate::ObjectReader`]), `git cat-file`.
+pub fn blob(repo: &Repo, g: &gix::Repository, id: ObjectId) -> Result<Vec<u8>> {
+    if !repo.cli_objects() {
+        match g.find_object(id) {
+            Ok(obj) => {
+                if obj.data.len() as u64 > MAX_DIFF_BYTES {
+                    return Err(too_large(obj.data.len() as u64));
+                }
+                return Ok(obj.detach().data);
+            }
+            Err(e) => match cli_blob(repo, &id.to_string()) {
+                Ok(Some(r)) => {
+                    repo.note_fallback(&format!("blob {id}"), &e);
+                    return r;
+                }
+                _ => return Err(gix_err(e)),
+            },
+        }
     }
-    Ok(obj.detach().data)
+    cli_blob(repo, &id.to_string())?.unwrap_or_else(|| Err(anyhow!("object {id} not found")))
+}
+
+/// Blob `name` (an id or `<tree>:<path>`) through `git cat-file`: `None`
+/// when missing or not a blob, an error when larger than [`MAX_DIFF_BYTES`].
+fn cli_blob(repo: &Repo, name: &str) -> Result<Option<Result<Vec<u8>>>> {
+    Ok(repo
+        .cat_file()
+        .read_limited(name, MAX_DIFF_BYTES)?
+        .filter(|o| o.info.kind == gk_cli::ObjectKind::Blob)
+        .map(|o| o.data.ok_or_else(|| too_large(o.info.size))))
 }
 
 /// Blob of `path` in the index at `stage` (0 = normal, 2 = ours, 3 = theirs).
-pub fn index_blob(g: &gix::Repository, path: &str, stage: u32) -> Result<Option<Vec<u8>>> {
+pub fn index_blob(
+    repo: &Repo,
+    g: &gix::Repository,
+    path: &str,
+    stage: u32,
+) -> Result<Option<Vec<u8>>> {
     let index = g.index_or_empty().map_err(gix_err)?;
     let stage = match stage {
         1 => gix::index::entry::Stage::Base,
@@ -90,24 +121,46 @@ pub fn index_blob(g: &gix::Repository, path: &str, stage: u32) -> Result<Option<
         _ => gix::index::entry::Stage::Unconflicted,
     };
     match index.entry_by_path_and_stage(path.as_bytes().as_bstr(), stage) {
-        Some(e) => Ok(Some(blob(g, e.id)?)),
+        Some(e) => Ok(Some(blob(repo, g, e.id)?)),
         None => Ok(None),
     }
 }
 
-pub fn head_blob(g: &gix::Repository, path: &str) -> Result<Option<Vec<u8>>> {
-    let Ok(commit) = g.head_commit() else {
+/// Blob of `path` in HEAD's tree; `None` when HEAD is unborn or has no such file.
+pub fn head_blob(repo: &Repo, g: &gix::Repository, path: &str) -> Result<Option<Vec<u8>>> {
+    let Ok(head) = g.head_id() else {
         return Ok(None);
     };
-    tree_blob(g, commit.tree_id().map_err(gix_err)?.detach(), path)
+    let tree = repo
+        .find_commit(g, head.detach())?
+        .tree_id()
+        .map_err(gix_err)?
+        .detach();
+    tree_blob(repo, g, tree, path)
 }
 
-pub fn tree_blob(g: &gix::Repository, tree: ObjectId, path: &str) -> Result<Option<Vec<u8>>> {
-    let tree = g.find_tree(tree).map_err(gix_err)?;
-    match tree.lookup_entry_by_path(path).map_err(gix_err)? {
-        Some(e) if e.mode().is_blob() || e.mode().is_link() => Ok(Some(blob(g, e.object_id())?)),
-        _ => Ok(None),
+/// Blob (or symlink) at `path` in `tree`; `None` for a missing path, a
+/// directory or a submodule.
+pub fn tree_blob(
+    repo: &Repo,
+    g: &gix::Repository,
+    tree: ObjectId,
+    path: &str,
+) -> Result<Option<Vec<u8>>> {
+    if !repo.cli_objects() {
+        let entry = g.find_tree(tree).map_err(gix_err).and_then(|t| {
+            t.lookup_entry_by_path(path)
+                .map_err(gix_err)
+                .map(|e| e.filter(|e| e.mode().is_blob() || e.mode().is_link()))
+        });
+        match entry {
+            Ok(Some(e)) => return Ok(Some(blob(repo, g, e.object_id())?)),
+            Ok(None) => return Ok(None),
+            Err(e) => repo.note_fallback(&format!("{tree}:{path}"), &e),
+        }
     }
+    // `<tree>:<path>` resolves the path inside git; submodules (commits) are skipped.
+    cli_blob(repo, &format!("{tree}:{path}"))?.transpose()
 }
 
 /// Worktree file converted to its git representation (CRLF and clean filters applied).
@@ -171,22 +224,22 @@ pub fn load_sides(repo: &Repo, target: &DiffTarget) -> Result<Sides> {
     let g = repo.gix();
     match target {
         DiffTarget::Unstaged { path } => {
-            let mut old = index_blob(&g, path, 0)?;
+            let mut old = index_blob(repo, &g, path, 0)?;
             if old.is_none() {
                 // conflicted: compare against "ours"
-                old = index_blob(&g, path, 2)?;
+                old = index_blob(repo, &g, path, 2)?;
             }
             let new = worktree_clean(repo, &g, path)?;
             Ok((old, new))
         }
         DiffTarget::Staged { path, old_path } => {
-            let old = head_blob(&g, old_path.as_deref().unwrap_or(path))?;
-            let new = index_blob(&g, path, 0)?;
+            let old = head_blob(repo, &g, old_path.as_deref().unwrap_or(path))?;
+            let new = index_blob(repo, &g, path, 0)?;
             Ok((old, new))
         }
         DiffTarget::Blobs { old, new, .. } => {
-            let o = old.map(|id| blob(&g, id)).transpose()?;
-            let n = new.map(|id| blob(&g, id)).transpose()?;
+            let o = old.map(|id| blob(repo, &g, id)).transpose()?;
+            let n = new.map(|id| blob(repo, &g, id)).transpose()?;
             Ok((o, n))
         }
     }
@@ -226,16 +279,67 @@ fn diff_options(g: &gix::Repository) -> gix::diff::Options {
 }
 
 /// Files changed between two trees (`old` = None means the empty tree).
+/// gitoxide's tree diff with rename detection; when it fails to read an
+/// object (or the CLI reader is forced) the same diff runs again over
+/// objects read by `git cat-file`.
 pub fn tree_changes(
+    repo: &Repo,
     g: &gix::Repository,
     old: Option<ObjectId>,
     new: ObjectId,
 ) -> Result<Vec<ChangedFile>> {
+    if !repo.cli_objects() {
+        match tree_changes_gix(g, old, new) {
+            Ok(changes) => return Ok(convert_changes(changes)),
+            Err(e) => repo.note_fallback(&format!("diff {new}"), &e),
+        }
+    }
+    Ok(convert_changes(tree_changes_fallback(repo, g, old, new)?))
+}
+
+type Changes = Vec<gix::object::tree::diff::ChangeDetached>;
+
+fn tree_changes_gix(g: &gix::Repository, old: Option<ObjectId>, new: ObjectId) -> Result<Changes> {
     let new_tree = g.find_tree(new).map_err(gix_err)?;
     let old_tree = old.map(|o| g.find_tree(o)).transpose().map_err(gix_err)?;
-    let changes = g
-        .diff_tree_to_tree(old_tree.as_ref(), Some(&new_tree), diff_options(g))
-        .map_err(gix_err)?;
+    g.diff_tree_to_tree(old_tree.as_ref(), Some(&new_tree), diff_options(g))
+        .map_err(gix_err)
+}
+
+/// [`gix::Repository::diff_tree_to_tree`] over [`crate::objects::FallbackOdb`].
+fn tree_changes_fallback(
+    repo: &Repo,
+    g: &gix::Repository,
+    old: Option<ObjectId>,
+    new: ObjectId,
+) -> Result<Changes> {
+    let tree_data = |id: ObjectId| -> Result<Vec<u8>> {
+        let t = repo.find_tree(g, id)?;
+        Ok(t.detach().data)
+    };
+    let new_data = tree_data(new)?;
+    let old_data = old.map(tree_data).transpose()?.unwrap_or_default();
+    let odb = crate::objects::FallbackOdb { repo, g };
+    let mut cache = g.diff_resource_cache_for_tree_diff().map_err(gix_err)?;
+    let hash = g.object_hash();
+    let mut out = Vec::new();
+    gix::diff::tree_with_rewrites(
+        gix::objs::TreeRefIter::from_bytes(&old_data, hash),
+        gix::objs::TreeRefIter::from_bytes(&new_data, hash),
+        &mut cache,
+        &mut Default::default(),
+        &odb,
+        |change| -> gix::Result<_> {
+            out.push(change.into_owned());
+            Ok(std::ops::ControlFlow::Continue(()))
+        },
+        diff_options(g).into(),
+    )
+    .map_err(gix_err)?;
+    Ok(out)
+}
+
+fn convert_changes(changes: Changes) -> Vec<ChangedFile> {
     use gix::object::tree::diff::ChangeDetached as C;
     let mut out = Vec::new();
     for c in changes {
@@ -326,11 +430,11 @@ pub fn tree_changes(
         out.push(f);
     }
     out.sort_by(|a, b| a.path.cmp(&b.path));
-    Ok(out)
+    out
 }
 
 /// Full commit information for the details panel.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitDetails {
     pub id: ObjectId,
     pub parents: Vec<ObjectId>,
@@ -349,7 +453,7 @@ pub struct CommitDetails {
 
 pub fn commit_details(repo: &Repo, id: ObjectId) -> Result<CommitDetails> {
     let g = repo.gix();
-    let c = g.find_commit(id).map_err(gix_err)?;
+    let c = repo.find_commit(&g, id)?;
     let author = c.author().map_err(gix_err)?;
     let committer = c.committer().map_err(gix_err)?;
     let at = author.time().unwrap_or_default();
@@ -358,15 +462,14 @@ pub fn commit_details(repo: &Repo, id: ObjectId) -> Result<CommitDetails> {
     let tree = c.tree_id().map_err(gix_err)?.detach();
     let parent_tree = match parents.first() {
         Some(p) => Some(
-            g.find_commit(*p)
-                .map_err(gix_err)?
+            repo.find_commit(&g, *p)?
                 .tree_id()
                 .map_err(gix_err)?
                 .detach(),
         ),
         None => None,
     };
-    let files = tree_changes(&g, parent_tree, tree)?;
+    let files = tree_changes(repo, &g, parent_tree, tree)?;
     Ok(CommitDetails {
         id,
         parents,
@@ -386,17 +489,12 @@ pub fn commit_details(repo: &Repo, id: ObjectId) -> Result<CommitDetails> {
 /// Changes between two arbitrary commits (`a` older, `b` newer).
 pub fn compare_commits(repo: &Repo, a: ObjectId, b: ObjectId) -> Result<Vec<ChangedFile>> {
     let g = repo.gix();
-    let ta = g
-        .find_commit(a)
-        .map_err(gix_err)?
-        .tree_id()
-        .map_err(gix_err)?
-        .detach();
-    let tb = g
-        .find_commit(b)
-        .map_err(gix_err)?
-        .tree_id()
-        .map_err(gix_err)?
-        .detach();
-    tree_changes(&g, Some(ta), tb)
+    let tree = |id| -> Result<ObjectId> {
+        Ok(repo
+            .find_commit(&g, id)?
+            .tree_id()
+            .map_err(gix_err)?
+            .detach())
+    };
+    tree_changes(repo, &g, Some(tree(a)?), tree(b)?)
 }
