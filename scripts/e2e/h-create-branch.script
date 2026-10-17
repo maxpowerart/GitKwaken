@@ -1,0 +1,14 @@
+# Context menu on "Add f6 to lib" -> Create branch here... -> name -> Create.
+wait 2500
+rclick 480 185.6
+wait 500
+click 520 234.6
+wait 800
+click 710 424
+type e2e-at-f6
+wait 300
+shot $OUT/h-create-branch-dialog.png
+click 826 573
+wait 3000
+shot $OUT/h-create-branch.png
+exit

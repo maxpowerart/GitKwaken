@@ -27,6 +27,15 @@ impl DetailsState {
     pub fn preselect(&mut self, path: String) {
         self.selected_file = Some(path);
     }
+
+    /// Paths changed between the two compared commits, once loaded.
+    #[cfg(test)]
+    pub(crate) fn compared_paths(&self) -> Option<Vec<String>> {
+        match self.compare.state() {
+            TaskState::Done(f) => Some(f.iter().map(|f| f.path.clone()).collect()),
+            _ => None,
+        }
+    }
 }
 
 /// Something the user asked for inside the panel, applied after rendering.

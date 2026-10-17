@@ -1,0 +1,12 @@
+# On feature/search. Context menu on main's tip (row 1, menu starts with
+# "Checkout main") -> Rebase current onto... -> Rebase.
+wait 2500
+rclick 480 163.6
+wait 500
+click 520 309.6
+wait 800
+shot $OUT/h-rebase-dialog.png
+click 852.8 535.2
+wait 3000
+shot $OUT/h-rebase.png
+exit

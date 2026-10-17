@@ -365,7 +365,21 @@ impl TabDialog for InteractiveRebase {
             let task = self.task.get_or_insert_with(|| {
                 let repo = tab.session.repo().clone();
                 let range = format!("{}..HEAD", self.base);
+                let base = self.base.clone();
                 Task::spawn(ctx, move || {
+                    // A commit off HEAD's line would make this a plain rebase
+                    // of the current branch onto it: refuse instead.
+                    let anc = repo
+                        .git()
+                        .run_raw(&["merge-base", "--is-ancestor", &base, "HEAD"], None)
+                        .map_err(|e| format!("{e:#}"))?;
+                    if !anc.success() {
+                        return Err(format!(
+                            "{} is not an ancestor of the current branch: only commits below HEAD \
+                             can be the base of an interactive rebase.",
+                            crate::util::short_id(&base)
+                        ));
+                    }
                     // Our todo replaces git's, so commits missing from it would
                     // vanish: merges are refused rather than skipped.
                     let out = repo
@@ -804,6 +818,69 @@ impl TabDialog for Reset {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Enter in a focused multi-line editor inside a modal inserts a newline
+    /// instead of confirming (the reword editor of the interactive rebase).
+    #[test]
+    fn enter_in_multiline_editor_does_not_confirm() {
+        use egui::{Event, Key, Modifiers};
+        let ctx = egui::Context::default();
+        let mut text = String::from("Subject");
+        let mut run = |events: Vec<Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1000.0, 650.0),
+                )),
+                events,
+                ..Default::default()
+            };
+            let mut out = Outcome::None;
+            let _ = ctx.run_ui(input, |ui| {
+                out = modal(ui.ctx(), "ml", "Test", 600.0, "OK", |ui, ctl| {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        ui.indent("i", |ui| {
+                            let r = ui.add(egui::TextEdit::multiline(&mut text).id_salt("ed"));
+                            if ctl.first {
+                                r.request_focus();
+                            }
+                            ctl.multiline(&r);
+                        });
+                    });
+                })
+                .0;
+            });
+            out
+        };
+        let key = |key, pressed| Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        assert_eq!(run(vec![]), Outcome::None);
+        assert_eq!(run(vec![]), Outcome::None);
+        let ctrl_a = |pressed| Event::Key {
+            key: Key::A,
+            physical_key: Some(Key::A),
+            pressed,
+            repeat: false,
+            modifiers: Modifiers::CTRL | Modifiers::COMMAND,
+        };
+        assert_eq!(run(vec![ctrl_a(true)]), Outcome::None);
+        assert_eq!(run(vec![ctrl_a(false)]), Outcome::None);
+        assert_eq!(run(vec![Event::Text("Subject".into())]), Outcome::None);
+        assert_eq!(
+            run(vec![key(Key::End, true), key(Key::End, false)]),
+            Outcome::None
+        );
+        assert_eq!(run(vec![key(Key::Enter, true)]), Outcome::None);
+        assert_eq!(run(vec![key(Key::Enter, false)]), Outcome::None);
+        assert_eq!(run(vec![Event::Text("Body".into())]), Outcome::None);
+        drop(run);
+        assert_eq!(text, "Subject\nBody");
+    }
 
     #[test]
     fn merges_refused() {

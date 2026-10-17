@@ -1,0 +1,14 @@
+# History with a dirty worktree (row 0 = uncommitted changes): select
+# "Fix greeting crash" (details shown), then double-click the feature/search
+# tip -> checkout dialog (uncommitted changes warning) -> Checkout.
+wait 2500
+click 480 295.6
+wait 1500
+shot $OUT/h-select.png
+dblclick 480 163.6
+wait 1000
+shot $OUT/h-checkout-dialog.png
+click 823.2 523.2
+wait 3000
+shot $OUT/h-checkout.png
+exit

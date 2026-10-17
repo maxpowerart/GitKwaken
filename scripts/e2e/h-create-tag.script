@@ -1,0 +1,17 @@
+# Context menu on "Add f5 to lib" -> Create tag here... -> name + message
+# (annotated) -> Add tag.
+wait 2500
+rclick 480 207.6
+wait 500
+click 520 277.6
+wait 800
+click 664 347
+type v-e2e
+click 700 477
+type E2E annotated tag
+wait 300
+shot $OUT/h-create-tag-dialog.png
+click 834 588
+wait 3000
+shot $OUT/h-create-tag.png
+exit

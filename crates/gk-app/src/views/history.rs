@@ -548,11 +548,14 @@ pub fn commit_menu(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, ids: &[Objec
             dialog = Some(Dialog::tag(Some(hex.clone())));
         }
         ui.separator();
+        // A branch tip merges / rebases by name (nicer merge message, and
+        // the dialog shows what the user clicked on).
+        let rev = checkout_rev(snap, &first);
         if item(ui, true, "Merge into current…") {
-            dialog = Some(Dialog::merge(snap, Some(hex.clone())));
+            dialog = Some(Dialog::merge(snap, Some(rev.clone())));
         }
         if item(ui, true, "Rebase current onto…") {
-            dialog = Some(Dialog::rebase(snap, Some(hex.clone())));
+            dialog = Some(Dialog::rebase(snap, Some(rev)));
         }
         if item(ui, true, "Interactive rebase children of this commit…") {
             dialog = Some(Dialog::interactive_rebase(snap, hex.clone()));

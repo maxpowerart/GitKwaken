@@ -1,0 +1,32 @@
+# History keyboard: select main's tip (row 1), Down Down -> f5, Up -> f6,
+# Ctrl+C copies the selected SHA. Shift+Down: two commits -> compare.
+# Click + Ctrl+click: compare two distant commits. Then Ctrl+Shift+P
+# "View: File status".
+wait 2500
+click 480 163.6
+wait 300
+key ArrowDown
+key ArrowDown
+wait 800
+shot $OUT/h-keyboard-down.png
+key ArrowUp
+wait 800
+shot $OUT/h-keyboard-up.png
+key C ctrl
+wait 300
+key ArrowDown shift
+wait 1500
+shot $OUT/h-compare-adjacent.png
+click 480 163.6
+wait 300
+click 480 273.6 ctrl
+wait 2000
+shot $OUT/h-compare.png
+key P ctrl shift
+wait 500
+type View: File status
+wait 300
+key Enter
+wait 1500
+shot $OUT/h-palette-file-status.png
+exit

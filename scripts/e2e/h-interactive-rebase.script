@@ -1,0 +1,38 @@
+# Branch topic3 = main + "Add a", "Add b", "Add c" (rows 0-2). Context menu on
+# main's tip (row 4; the menu starts with "Checkout main") -> Interactive
+# rebase children of this commit. Rows (oldest first): a, b, c.
+wait 2500
+rclick 480 229.6
+wait 500
+click 520 398.6
+wait 1200
+# c up -> a, c, b
+click 439.2 495.2
+wait 300
+# b (now last): squash into c
+click 384 495.2
+wait 400
+click 384 608
+wait 300
+# a: reword with a multi-line message
+click 384 440
+wait 400
+click 384 497.6
+wait 400
+click 620 440
+wait 400
+click 708 453
+wait 200
+key A ctrl
+type Reworded A
+key Enter
+key Enter
+type Second line of the body.
+key Enter
+type Third line.
+wait 300
+shot $OUT/h-interactive-rebase-dialog.png
+click 953 601
+wait 3500
+shot $OUT/h-interactive-rebase.png
+exit

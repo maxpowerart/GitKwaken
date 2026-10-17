@@ -35,6 +35,9 @@ fn make_repo() -> PathBuf {
     git(&dir, &["init", "-q", "-b", "main"]);
     for i in 0..4 {
         std::fs::write(dir.join("f.txt"), format!("v{i}\n")).unwrap();
+        if i == 1 {
+            std::fs::write(dir.join("g.txt"), "g\n").unwrap();
+        }
         git(&dir, &["add", "."]);
         git(&dir, &["commit", "-q", "-m", &format!("c{i}")]);
     }
@@ -178,8 +181,20 @@ fn history_view_selection_keyboard_and_worktree_row() {
 
     h.click(4, Modifiers::COMMAND);
     assert_eq!(h.selected(), vec![ids[0], ids[3]]);
-    // Two selected: the details pane compares them in the background.
-    h.idle(2);
+    // Two selected: the details pane lists the files changed between them.
+    let start = Instant::now();
+    let paths = loop {
+        h.idle(1);
+        if let Some(p) = h.tab.details.compared_paths() {
+            break p;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(20),
+            "compare did not load"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(paths, vec!["f.txt".to_string(), "g.txt".to_string()]);
 
     h.click(2, Modifiers::SHIFT);
     assert_eq!(h.selected(), vec![ids[1], ids[2], ids[3]]);

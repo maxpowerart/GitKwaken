@@ -6,7 +6,7 @@
 //! ```text
 //! wait 500              # milliseconds
 //! move 100 200
-//! click 100 200         # also: dblclick, rclick
+//! click 100 200         # also: dblclick, rclick; optional: ctrl shift alt
 //! drag 10 20 300 400
 //! scroll 0 -120 400 300 # dx dy at x y
 //! key Enter             # egui key name, optional: ctrl shift alt
@@ -39,13 +39,30 @@ static PLAYER: Mutex<Option<Player>> = Mutex::new(None);
 static PENDING_SHOT: Mutex<Option<std::path::PathBuf>> = Mutex::new(None);
 static EXIT_AFTER_FRAME: Mutex<bool> = Mutex::new(false);
 
-fn button(pos: Pos2, button: PointerButton, pressed: bool) -> Event {
+fn button(pos: Pos2, button: PointerButton, pressed: bool, modifiers: Modifiers) -> Event {
     Event::PointerButton {
         pos,
         button,
         pressed,
-        modifiers: Modifiers::NONE,
+        modifiers,
     }
+}
+
+/// Modifier flags (`ctrl`, `shift`, `alt`) following a command's arguments.
+fn modifiers<'a>(flags: impl Iterator<Item = &'a str>) -> Modifiers {
+    let mut m = Modifiers::NONE;
+    for flag in flags {
+        match flag {
+            "ctrl" => {
+                m.ctrl = true;
+                m.command = true;
+            }
+            "shift" => m.shift = true,
+            "alt" => m.alt = true,
+            _ => {}
+        }
+    }
+    m
 }
 
 fn parse(text: &str) -> Vec<Step> {
@@ -73,22 +90,33 @@ fn parse(text: &str) -> Vec<Step> {
                     PointerButton::Primary
                 };
                 let times = if cmd == "dblclick" { 2 } else { 1 };
-                steps.push(frame(vec![Event::PointerMoved(p)]));
+                let m = modifiers(it);
+                steps.push(Step::Frame(vec![Event::PointerMoved(p)], m));
                 for _ in 0..times {
-                    steps.push(frame(vec![button(p, b, true)]));
-                    steps.push(frame(vec![button(p, b, false)]));
+                    steps.push(Step::Frame(vec![button(p, b, true, m)], m));
+                    steps.push(Step::Frame(vec![button(p, b, false, m)], m));
                 }
             }
             "drag" => {
                 let a = pos2(f(it.next()), f(it.next()));
                 let b = pos2(f(it.next()), f(it.next()));
                 steps.push(frame(vec![Event::PointerMoved(a)]));
-                steps.push(frame(vec![button(a, PointerButton::Primary, true)]));
+                steps.push(frame(vec![button(
+                    a,
+                    PointerButton::Primary,
+                    true,
+                    Modifiers::NONE,
+                )]));
                 for i in 1..=12 {
                     let t = i as f32 / 12.0;
                     steps.push(frame(vec![Event::PointerMoved(a + (b - a) * t)]));
                 }
-                steps.push(frame(vec![button(b, PointerButton::Primary, false)]));
+                steps.push(frame(vec![button(
+                    b,
+                    PointerButton::Primary,
+                    false,
+                    Modifiers::NONE,
+                )]));
             }
             "scroll" => {
                 let d = vec2(f(it.next()), f(it.next()));
@@ -105,18 +133,7 @@ fn parse(text: &str) -> Vec<Step> {
                 let Some(key) = it.next().and_then(Key::from_name) else {
                     continue;
                 };
-                let mut m = Modifiers::NONE;
-                for flag in it {
-                    match flag {
-                        "ctrl" => {
-                            m.ctrl = true;
-                            m.command = true;
-                        }
-                        "shift" => m.shift = true,
-                        "alt" => m.alt = true,
-                        _ => {}
-                    }
-                }
+                let m = modifiers(it);
                 let ev = |pressed| Event::Key {
                     key,
                     physical_key: Some(key),
@@ -154,6 +171,10 @@ pub fn inject(input: &mut RawInput) -> bool {
         });
     }
     let p = guard.as_mut().expect("player");
+    // Scripted input stands in for the user, so the window counts as focused
+    // even when the OS never activated it (e.g. started by a test runner);
+    // otherwise `Response::has_focus` is false for every widget.
+    input.focused = true;
     if *EXIT_AFTER_FRAME.lock().unwrap_or_else(|e| e.into_inner()) {
         std::process::exit(0);
     }
@@ -173,7 +194,10 @@ pub fn inject(input: &mut RawInput) -> bool {
                 break;
             }
             Step::Shot(path) => {
-                *PENDING_SHOT.lock().unwrap_or_else(|e| e.into_inner()) = Some(path.clone())
+                *PENDING_SHOT.lock().unwrap_or_else(|e| e.into_inner()) = Some(path.clone());
+                // The shot is of the next frame: it must not carry the
+                // input of the steps after `shot` yet.
+                break;
             }
             Step::Log(text) => {
                 if let Some(log) = std::env::var_os("GK_DX11_INPUT_LOG") {
@@ -255,5 +279,9 @@ mod tests {
         assert!(matches!(s[7], Step::Shot(_)));
         assert!(matches!(s[8], Step::Exit));
         assert_eq!(s.len(), 9);
+        let c = parse("click 1 2 ctrl shift");
+        assert!(matches!(&c[1], Step::Frame(e, m)
+            if m.ctrl && m.shift
+                && matches!(e[0], Event::PointerButton { modifiers, .. } if modifiers.command)));
     }
 }

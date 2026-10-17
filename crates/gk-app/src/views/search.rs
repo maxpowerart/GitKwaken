@@ -227,7 +227,9 @@ fn top_bar(ui: &mut Ui, tab: &mut RepoTab) -> Option<Source> {
             });
             match state {
                 TaskState::Done(f) => {
-                    ui.label(egui::RichText::new(format!("{} commits", f.entries.len())).weak());
+                    let n = f.entries.len();
+                    let s = if n == 1 { "" } else { "s" };
+                    ui.label(egui::RichText::new(format!("{n} commit{s}")).weak());
                     out = Some(Source::File(f));
                 }
                 TaskState::Failed(e) => {
@@ -276,7 +278,9 @@ fn top_bar(ui: &mut Ui, tab: &mut RepoTab) -> Option<Source> {
         }
         match tab.session.search(&s.applied) {
             Load::Ready(rows) => {
-                ui.label(egui::RichText::new(format!("{} results", rows.len())).weak());
+                let n = rows.len();
+                let s = if n == 1 { "" } else { "s" };
+                ui.label(egui::RichText::new(format!("{n} result{s}")).weak());
                 out = Some(Source::Rows(rows));
             }
             Load::Failed(e) => {

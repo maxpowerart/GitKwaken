@@ -1,0 +1,15 @@
+# Sidebar: context menu on bugfix/crash -> Rename... -> bugfix/renamed.
+wait 2500
+rclick 80 242.4
+wait 500
+click 130 433.6
+wait 800
+click 700 446.4
+key A ctrl
+type bugfix/renamed
+wait 300
+shot $OUT/h-sidebar-rename-dialog.png
+click 792.8 489.6
+wait 3000
+shot $OUT/h-sidebar-rename.png
+exit

@@ -1,0 +1,11 @@
+# Context menu on "Add f5 to lib" -> Reset current branch to here... -> Mixed.
+wait 2500
+rclick 480 207.6
+wait 500
+click 520 429.6
+wait 800
+shot $OUT/h-reset-mixed-dialog.png
+click 843 560
+wait 3000
+shot $OUT/h-reset-mixed.png
+exit

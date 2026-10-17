@@ -1,0 +1,16 @@
+# Dirty worktree (row 0 = uncommitted changes). Reset to "Add f5 to lib",
+# Hard, tick the "discard my changes" confirmation, Reset.
+wait 2500
+rclick 480 229.6
+wait 500
+click 520 451.6
+wait 800
+click 437 501
+wait 400
+click 437.6 540.8
+wait 300
+shot $OUT/h-reset-hard-dialog.png
+click 843.2 582.4
+wait 3000
+shot $OUT/h-reset-hard.png
+exit

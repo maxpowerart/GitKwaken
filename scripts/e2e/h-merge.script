@@ -1,0 +1,15 @@
+# feature/e2e-merge = main + 2 commits (rows 0-1). Context menu on its tip
+# (menu starts with "Checkout feature/e2e-merge") -> Merge into current... ->
+# "Always create a merge commit" -> Merge.
+wait 2500
+rclick 480 141.6
+wait 500
+click 520 266.6
+wait 800
+click 534.4 462.4
+wait 300
+shot $OUT/h-merge-dialog.png
+click 852.8 568.8
+wait 3000
+shot $OUT/h-merge.png
+exit

@@ -1,0 +1,12 @@
+# Context menu on "Fix greeting crash" (bugfix/crash tip: the menu starts
+# with "Checkout bugfix/crash") -> Revert... -> Revert.
+wait 2500
+rclick 480 273.6
+wait 500
+click 520 495.6
+wait 800
+shot $OUT/h-revert-dialog.png
+click 853 515
+wait 3000
+shot $OUT/h-revert.png
+exit

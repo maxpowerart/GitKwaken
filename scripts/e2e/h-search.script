@@ -1,0 +1,21 @@
+# Search view: type a query, select the result, context menu (search results
+# share the history menu) -> Create tag here... -> search-tag.
+wait 2500
+click 408 90.4
+type greeting
+wait 1500
+click 480 140
+wait 1500
+shot $OUT/h-search.png
+rclick 480 140
+wait 500
+shot $OUT/h-search-menu.png
+click 520 233
+wait 800
+click 664 347
+type search-tag
+wait 300
+click 834 588
+wait 3000
+shot $OUT/h-search-tag.png
+exit
