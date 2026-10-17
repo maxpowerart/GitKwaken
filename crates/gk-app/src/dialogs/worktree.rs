@@ -69,15 +69,17 @@ pub fn discard_plan(snap: &Snapshot) -> DiscardPlan {
 pub struct Discard {
     all: bool,
     plan: Option<DiscardPlan>,
+    /// The plan was refreshed at OK because the working copy changed.
+    changed: bool,
 }
 
 impl Discard {
     pub fn all() -> Self {
-        Self { all: true, plan: None }
+        Self { all: true, plan: None, changed: false }
     }
 
     pub fn paths(tracked: Vec<String>, untracked: Vec<String>) -> Self {
-        Self { all: false, plan: Some(DiscardPlan { unstage: Vec::new(), tracked, untracked }) }
+        Self { all: false, plan: Some(DiscardPlan { unstage: Vec::new(), tracked, untracked }), changed: false }
     }
 
     fn run(tab: &RepoTab, plan: DiscardPlan, all: bool) {
@@ -102,6 +104,7 @@ impl TabDialog for Discard {
             return false;
         }
         let palette = shared.palette;
+        let changed = self.changed;
         let (out, ()) = modal(ctx, "discard", "Discard changes", 560.0, "Discard", |ui, ctl| {
             ui.label("The following changes will be permanently discarded:");
             egui::Frame::group(ui.style()).show(ui, |ui| {
@@ -121,6 +124,9 @@ impl TabDialog for Discard {
                     }
                 });
             });
+            if changed {
+                warning(ui, "The working copy changed: review the updated list.");
+            }
             ui.colored_label(DANGER, "This cannot be undone.");
             ctl.danger = true;
             if plan.tracked.is_empty() && plan.untracked.is_empty() {
@@ -129,6 +135,16 @@ impl TabDialog for Discard {
             }
         });
         let all = self.all;
+        if out == Outcome::Ok && all {
+            // The working copy may have changed while the dialog was open:
+            // never discard anything the user has not seen.
+            let fresh = discard_plan(snap);
+            if fresh != *plan {
+                *plan = fresh;
+                self.changed = true;
+                return true;
+            }
+        }
         finish(out, || Self::run(tab, std::mem::take(plan), all))
     }
 }
@@ -201,25 +217,60 @@ impl TabDialog for Stash {
     }
 }
 
-fn stash_label(snap: &Snapshot, index: usize) -> Option<String> {
-    snap.refs.stashes.iter().find(|s| s.index == index).map(|s| format!("stash@{{{index}}}: {}", s.message))
+/// A stash picked by index, pinned to its commit id on first show: queued
+/// operations can shift indices, so the index is resolved again at run time.
+struct StashRef {
+    index: usize,
+    id: Option<String>,
+}
+
+impl StashRef {
+    fn new(index: usize) -> Self {
+        Self { index, id: None }
+    }
+
+    /// "stash@{n}: message" of the pinned stash (by id), None when gone.
+    fn label(&mut self, snap: &Snapshot) -> Option<String> {
+        if self.id.is_none() {
+            self.id = snap.refs.stashes.iter().find(|s| s.index == self.index).map(|s| s.id.clone());
+        }
+        let id = self.id.as_deref()?;
+        snap.refs.stashes.iter().find(|s| s.id == id).map(|s| format!("stash@{{{}}}: {}", s.index, s.message))
+    }
+
+    fn id(&self) -> String {
+        self.id.clone().unwrap_or_default()
+    }
+}
+
+/// Current index of the stash commit `id` (`git stash list`), at run time.
+fn stash_index(repo: &gk_core::Repo, id: &str) -> anyhow::Result<usize> {
+    let out = repo.git().run(&["stash", "list", "--format=%H"])?.stdout_str();
+    find_stash(&out, id).ok_or_else(|| anyhow::anyhow!("the stash no longer exists (it was applied or deleted)"))
+}
+
+pub fn find_stash(list: &str, id: &str) -> Option<usize> {
+    if id.is_empty() {
+        return None;
+    }
+    list.lines().position(|l| l.trim() == id)
 }
 
 pub struct StashApply {
-    index: usize,
+    stash: StashRef,
     pop: bool,
     restore_index: bool,
 }
 
 impl StashApply {
     pub fn new(index: usize) -> Self {
-        Self { index, pop: false, restore_index: false }
+        Self { stash: StashRef::new(index), pop: false, restore_index: false }
     }
 }
 
 impl TabDialog for StashApply {
     fn show(&mut self, ctx: &Context, tab: &mut RepoTab, snap: &Snapshot, _shared: &mut Shared) -> bool {
-        let label = stash_label(snap, self.index);
+        let label = self.stash.label(snap);
         let (out, ()) = modal(ctx, "stash-apply", "Apply stash", 480.0, "Apply", |ui, ctl| {
             match &label {
                 Some(l) => {
@@ -237,20 +288,26 @@ impl TabDialog for StashApply {
             }
         });
         finish(out, || {
-            let (index, pop, restore) = (self.index, self.pop, self.restore_index);
+            let (id, pop, restore) = (self.stash.id(), self.pop, self.restore_index);
             let l = if pop { "Pop stash" } else { "Apply stash" };
-            tab.session.run_op(l, move |repo, _, _| repo.stash_apply(index, pop, restore));
+            tab.session.run_op(l, move |repo, _, _| repo.stash_apply(stash_index(repo, &id)?, pop, restore));
         })
     }
 }
 
 pub struct StashDrop {
-    pub index: usize,
+    stash: StashRef,
+}
+
+impl StashDrop {
+    pub fn new(index: usize) -> Self {
+        Self { stash: StashRef::new(index) }
+    }
 }
 
 impl TabDialog for StashDrop {
     fn show(&mut self, ctx: &Context, tab: &mut RepoTab, snap: &Snapshot, _shared: &mut Shared) -> bool {
-        let label = stash_label(snap, self.index);
+        let label = self.stash.label(snap);
         let (out, ()) = modal(ctx, "stash-drop", "Delete stash", 460.0, "Delete", |ui, ctl| {
             match &label {
                 Some(l) => {
@@ -265,9 +322,9 @@ impl TabDialog for StashDrop {
             ctl.danger = true;
         });
         finish(out, || {
-            let index = self.index;
+            let id = self.stash.id();
             tab.session.run_op("Delete stash", move |repo, _, _| {
-                repo.stash_drop(index)?;
+                repo.stash_drop(stash_index(repo, &id)?)?;
                 Ok(String::new())
             });
         })
@@ -275,19 +332,19 @@ impl TabDialog for StashDrop {
 }
 
 pub struct StashBranch {
-    index: usize,
+    stash: StashRef,
     name: String,
 }
 
 impl StashBranch {
     pub fn new(index: usize) -> Self {
-        Self { index, name: String::new() }
+        Self { stash: StashRef::new(index), name: String::new() }
     }
 }
 
 impl TabDialog for StashBranch {
     fn show(&mut self, ctx: &Context, tab: &mut RepoTab, snap: &Snapshot, _shared: &mut Shared) -> bool {
-        let label = stash_label(snap, self.index);
+        let label = self.stash.label(snap);
         let (out, ()) = modal(ctx, "stash-branch", "Branch from stash", 480.0, "Create branch", |ui, ctl| {
             match &label {
                 Some(l) => {
@@ -318,11 +375,24 @@ impl TabDialog for StashBranch {
             }
         });
         finish(out, || {
-            let (index, name) = (self.index, self.name.trim().to_string());
+            let (id, name) = (self.stash.id(), self.name.trim().to_string());
             tab.session.run_op(format!("Branch {name} from stash"), move |repo, _, _| {
-                repo.stash_branch(index, &name)?;
+                repo.stash_branch(stash_index(repo, &id)?, &name)?;
                 Ok(String::new())
             });
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stash_lookup() {
+        let list = "aaa\nbbb\nccc\n";
+        assert_eq!(find_stash(list, "bbb"), Some(1));
+        assert_eq!(find_stash(list, "zzz"), None);
+        assert_eq!(find_stash(list, ""), None);
     }
 }

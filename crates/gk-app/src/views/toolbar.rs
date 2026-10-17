@@ -3,11 +3,45 @@
 use crate::app::Shared;
 use crate::dialogs::Dialog;
 use crate::tab::{RepoTab, View};
-use gk_core::Snapshot;
+use gk_core::{RepoState, Snapshot};
 
 fn tool(ui: &mut egui::Ui, icon: &str, label: &str, hint: &str) -> bool {
     let b = egui::Button::new(egui::RichText::new(format!("{icon}\n{label}")).size(12.0)).min_size(egui::vec2(54.0, 40.0));
     ui.add(b).on_hover_text(hint).clicked()
+}
+
+const BISECT_FILL: egui::Color32 = egui::Color32::from_rgb(0xE0, 0x9A, 0x2A);
+
+type MakeDialog = fn(&Snapshot) -> Dialog;
+
+/// The "More" menu of less frequent tools; returns the dialog to open.
+fn more_menu(ui: &mut egui::Ui, snap: &Snapshot) -> Option<Dialog> {
+    let button = egui::Button::new(egui::RichText::new("⋯\nMore").size(12.0)).min_size(egui::vec2(54.0, 40.0));
+    let (resp, inner) = egui::containers::menu::MenuButton::from_button(button).ui(ui, |ui| {
+        let items: [(&str, MakeDialog); 8] = [
+            ("Bisect…", Dialog::bisect),
+            ("LFS…", Dialog::lfs),
+            ("Sparse checkout…", Dialog::sparse_checkout),
+            ("Clean…", |_| Dialog::clean()),
+            ("Optimize repository…", Dialog::optimize),
+            ("Add submodule…", |_| Dialog::submodule_add()),
+            ("Git console…", |_| Dialog::console()),
+            ("Apply patch…", |_| Dialog::apply_patch()),
+        ];
+        let mut chosen = None;
+        for (i, (label, make)) in items.iter().enumerate() {
+            if matches!(i, 5 | 6) {
+                ui.separator();
+            }
+            if ui.button(*label).clicked() {
+                chosen = Some(make(snap));
+                ui.close();
+            }
+        }
+        chosen
+    });
+    resp.on_hover_text("More tools");
+    inner.and_then(|r| r.inner)
 }
 
 pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared) {
@@ -41,6 +75,20 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
             }
             if tool(ui, "🏷", "Tag", "Create a tag") {
                 tab.dialog = Some(Dialog::tag(None));
+            }
+            if tool(ui, "⚑", "Git Flow", "Git Flow: start or finish features, releases and hotfixes") {
+                tab.dialog = Some(Dialog::git_flow(snap));
+            }
+            if snap.refs.state == RepoState::Bisecting {
+                let b = egui::Button::new(egui::RichText::new("🔍\nBisect").size(12.0).strong().color(egui::Color32::BLACK))
+                    .fill(BISECT_FILL)
+                    .min_size(egui::vec2(54.0, 40.0));
+                if ui.add(b).on_hover_text("A bisect is in progress: mark commits good or bad").clicked() {
+                    tab.dialog = Some(Dialog::bisect(snap));
+                }
+            }
+            if let Some(d) = more_menu(ui, snap) {
+                tab.dialog = Some(d);
             }
             ui.separator();
             if tool(ui, ">_", "Terminal", "Open a terminal in the repository") {

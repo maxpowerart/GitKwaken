@@ -255,31 +255,73 @@ pub fn resolve_rev(snap: &Snapshot, rev: &str) -> Option<String> {
     None
 }
 
-/// "abcd1234  Summary" for a rev, or "" when unknown. Reads one commit.
-pub fn describe_rev(tab: &RepoTab, snap: &Snapshot, rev: &str) -> String {
-    let Some(id) = resolve_rev(snap, rev) else { return String::new() };
-    let summary = gk_core::ObjectId::from_hex(id.as_bytes())
-        .ok()
-        .and_then(|oid| tab.session.meta().get_sync(oid))
-        .map(|m| m.summary.clone())
-        .unwrap_or_default();
-    format!("{}  {summary}", crate::util::short_id(&id))
+/// "abcd1234  Summary" for each rev ("" when unknown), plus whether all
+/// summaries were available. Never blocks: missing commit metadata loads in
+/// the background (the UI repaints when it arrives) and shows as "abcd1234".
+pub fn describe_revs(tab: &RepoTab, snap: &Snapshot, revs: &[&str]) -> (Vec<String>, bool) {
+    let ids: Vec<Option<(String, gk_core::ObjectId)>> = revs
+        .iter()
+        .map(|r| resolve_rev(snap, r).and_then(|id| gk_core::ObjectId::from_hex(id.as_bytes()).ok().map(|o| (id, o))))
+        .collect();
+    let oids: Vec<gk_core::ObjectId> = ids.iter().flatten().map(|(_, o)| *o).collect();
+    let mut metas = tab.session.metas(&oids).into_iter();
+    let mut complete = true;
+    let out = ids
+        .iter()
+        .map(|i| match i {
+            None => String::new(),
+            Some((id, _)) => match metas.next().flatten() {
+                Some(m) => format!("{}  {}", crate::util::short_id(id), m.summary),
+                None => {
+                    complete = false;
+                    crate::util::short_id(id).to_string()
+                }
+            },
+        })
+        .collect();
+    (out, complete)
 }
 
-/// Cached [`describe_rev`]: recomputed only when the rev changes.
+/// [`describe_revs`] for one rev.
+pub fn describe_rev(tab: &RepoTab, snap: &Snapshot, rev: &str) -> String {
+    describe_revs(tab, snap, &[rev]).0.pop().unwrap_or_default()
+}
+
+/// Cached [`describe_rev`]: recomputed when the rev changes or while the
+/// commit summary is still loading.
 #[derive(Default)]
 pub struct RevLabel {
     rev: Option<String>,
     text: String,
+    complete: bool,
 }
 
 impl RevLabel {
     pub fn get(&mut self, tab: &RepoTab, snap: &Snapshot, rev: &str) -> &str {
-        if self.rev.as_deref() != Some(rev) {
-            self.text = describe_rev(tab, snap, rev);
+        if self.rev.as_deref() != Some(rev) || !self.complete {
+            let (mut v, complete) = describe_revs(tab, snap, &[rev]);
+            self.text = v.pop().unwrap_or_default();
+            self.complete = complete;
             self.rev = Some(rev.to_string());
         }
         &self.text
+    }
+}
+
+/// Cached labels for a fixed list of commits (see [`describe_revs`]).
+#[derive(Default)]
+pub struct RevLabels {
+    labels: Vec<String>,
+    complete: bool,
+}
+
+impl RevLabels {
+    pub fn get(&mut self, tab: &RepoTab, snap: &Snapshot, ids: &[String]) -> &[String] {
+        if !self.complete || self.labels.len() != ids.len() {
+            let revs: Vec<&str> = ids.iter().map(String::as_str).collect();
+            (self.labels, self.complete) = describe_revs(tab, snap, &revs);
+        }
+        &self.labels
     }
 }
 
@@ -327,6 +369,53 @@ impl<T: Send + 'static> Task<T> {
         self.poll();
         self.done.take()
     }
+}
+
+/// An operation on the session's op queue (progress in the status bar, full
+/// refresh afterwards) whose result a dialog waits for. When the dialog is
+/// gone before the operation ends, errors go to the status bar as usual.
+pub struct TrackedOp<T> {
+    slot: Arc<Mutex<Option<Result<T, String>>>>,
+}
+
+pub type OpRun<'a> = &'a mut (dyn FnMut(gk_cli::Line) + Send);
+
+impl<T: Send + 'static> TrackedOp<T> {
+    pub fn queue(
+        tab: &RepoTab,
+        label: impl Into<String>,
+        f: impl FnOnce(&gk_core::Repo, &gk_cli::CancelToken, OpRun) -> anyhow::Result<T> + Send + 'static,
+    ) -> Self {
+        let slot = Arc::new(Mutex::new(None));
+        let s2 = slot.clone();
+        tab.session.run_op(label, move |repo, cancel, p| {
+            let r = f(repo, cancel, p);
+            if Arc::strong_count(&s2) == 1 {
+                // Nobody is waiting: let the session report errors.
+                return r.map(|_| String::new());
+            }
+            *s2.lock() = Some(r.map_err(|e| format!("{e:#}")));
+            Ok(String::new())
+        });
+        Self { slot }
+    }
+
+    /// The result, once the operation has finished.
+    pub fn take(&mut self) -> Option<Result<T, String>> {
+        self.slot.lock().take()
+    }
+}
+
+/// Last progress line of the running operation, for "busy" rows in dialogs.
+pub fn op_progress(ui: &mut Ui, snap: &Snapshot) {
+    ui.horizontal(|ui| {
+        ui.spinner();
+        let text = snap.op.as_ref().map(|o| {
+            let line = o.last_line.trim();
+            if line.is_empty() { o.label.clone() } else { format!("{}: {line}", o.label) }
+        });
+        ui.label(RichText::new(text.unwrap_or_else(|| "Waiting…".into())).weak());
+    });
 }
 
 // ---------------------------------------------------------------- validation

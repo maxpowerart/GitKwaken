@@ -362,6 +362,9 @@ impl TabDialog for AddRemote {
             }
             if self.url.trim().is_empty() {
                 ctl.invalid();
+            } else if self.url.trim().starts_with('-') {
+                error(ui, "URL cannot start with '-'");
+                ctl.invalid();
             }
         });
         finish(out, || {
@@ -418,6 +421,9 @@ impl TabDialog for EditRemote {
             }
             if self.url.trim().is_empty() {
                 error(ui, "URL is empty");
+                ctl.invalid();
+            } else if self.url.trim().starts_with('-') {
+                error(ui, "URL cannot start with '-'");
                 ctl.invalid();
             }
             if name != self.old {

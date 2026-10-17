@@ -190,6 +190,24 @@ const ACTIONS: [TodoAction; 6] =
 /// (commit id, full message), oldest first.
 type Commits = Result<Vec<(String, String)>, String>;
 
+/// Splits "parents\0message" records (`--format=%H%x00%P%x00%B`), refusing
+/// ranges that contain merge commits.
+pub fn split_parents(records: Vec<(String, String)>) -> Commits {
+    records
+        .into_iter()
+        .map(|(id, rest)| {
+            let (parents, msg) = rest.split_once('\0').unwrap_or(("", rest.as_str()));
+            if parents.split_whitespace().count() > 1 {
+                return Err(format!(
+                    "The range contains merge commits ({}); interactive rebase of merges is not supported.",
+                    crate::util::short_id(&id)
+                ));
+            }
+            Ok((id, msg.trim_start_matches(['\n', '\r']).to_string()))
+        })
+        .collect()
+}
+
 pub struct InteractiveRebase {
     base: String,
     task: Option<Task<Commits>>,
@@ -236,10 +254,13 @@ impl TabDialog for InteractiveRebase {
                 let repo = tab.session.repo().clone();
                 let range = format!("{}..HEAD", self.base);
                 Task::spawn(ctx, move || {
-                    repo.git()
-                        .run(&["log", "--reverse", "--topo-order", "--no-merges", "--format=%H%x00%B%x1e", &range])
-                        .map(|o| parse_log_records(&o.stdout_str()))
-                        .map_err(|e| format!("{e:#}"))
+                    // Our todo replaces git's, so commits missing from it would
+                    // vanish: merges are refused rather than skipped.
+                    let out = repo
+                        .git()
+                        .run(&["log", "--reverse", "--topo-order", "--format=%H%x00%P%x00%B%x1e", &range])
+                        .map_err(|e| format!("{e:#}"))?;
+                    split_parents(parse_log_records(&out.stdout_str()))
                 })
             });
             match task.take() {
@@ -397,18 +418,19 @@ pub struct Picks {
     ids: Vec<String>,
     revert: bool,
     no_commit: bool,
-    labels: Option<Vec<String>>,
+    sorted: bool,
+    labels: RevLabels,
 }
 
 impl Picks {
     pub fn new(ids: Vec<String>, revert: bool) -> Self {
-        Self { ids, revert, no_commit: false, labels: None }
+        Self { ids, revert, no_commit: false, sorted: false, labels: RevLabels::default() }
     }
 }
 
 impl TabDialog for Picks {
     fn show(&mut self, ctx: &Context, tab: &mut RepoTab, snap: &Snapshot, _shared: &mut Shared) -> bool {
-        if self.labels.is_none() {
+        if !self.sorted {
             // Cherry-pick oldest first; revert newest first.
             let row = |id: &String| {
                 gk_core::ObjectId::from_hex(id.as_bytes()).ok().and_then(|o| snap.history.row(&o)).unwrap_or(usize::MAX)
@@ -417,8 +439,9 @@ impl TabDialog for Picks {
             if self.revert {
                 self.ids.reverse();
             }
-            self.labels = Some(self.ids.iter().map(|id| describe_rev(tab, snap, id)).collect());
+            self.sorted = true;
         }
+        let labels = self.labels.get(tab, snap, &self.ids).to_vec();
         let (title, verb) = if self.revert { ("Revert", "Revert") } else { ("Cherry-pick", "Cherry-pick") };
         let into = current_label(snap);
         let (out, ()) = modal(ctx, "picks", title, 560.0, verb, |ui, ctl| {
@@ -430,7 +453,7 @@ impl TabDialog for Picks {
             });
             egui::Frame::group(ui.style()).show(ui, |ui| {
                 egui::ScrollArea::vertical().max_height(220.0).auto_shrink([false, true]).show(ui, |ui| {
-                    for (id, l) in self.ids.iter().zip(self.labels.iter().flatten()) {
+                    for (id, l) in self.ids.iter().zip(&labels) {
                         ui.label(RichText::new(if l.is_empty() { id.as_str() } else { l.as_str() }).monospace());
                     }
                 });
@@ -513,5 +536,19 @@ impl TabDialog for Reset {
                 Ok(String::new())
             });
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merges_refused() {
+        let out = "aaaa\0p1\0Subject A\n\nBody\n\x1e\nbbbb\0aaaa\0Subject B\n\x1e\n";
+        let commits = split_parents(parse_log_records(out)).unwrap();
+        assert_eq!(commits, [("aaaa".to_string(), "Subject A\n\nBody".to_string()), ("bbbb".to_string(), "Subject B".to_string())]);
+        let out = "aaaa\0p1\0A\n\x1e\ncccc\0p1 p2\0Merge\n\x1e\n";
+        assert!(split_parents(parse_log_records(out)).unwrap_err().contains("merge commits"));
     }
 }

@@ -1,11 +1,15 @@
 //! Modal dialogs. `Dialog` belongs to a repository tab, `GlobalDialog` to the
 //! app. Views only use the constructors below; this module owns the UI.
 
+mod bisect;
 mod branch;
 mod common;
+mod flow;
 mod global;
+mod lfs;
 mod misc;
 mod remote;
+mod repo_tools;
 mod rewrite;
 mod settings;
 mod tag;
@@ -18,7 +22,6 @@ use std::path::PathBuf;
 
 /// Askpass environment for git processes the app starts outside a tab
 /// (clone). Call once at startup with `GkApp::askpass_env()`.
-
 pub fn set_askpass_env(env: Vec<(String, String)>) {
     common::set_askpass_env(env);
 }
@@ -82,7 +85,7 @@ impl Dialog {
     pub fn stash() -> Self { Self::new(worktree::Stash::new(Vec::new())) }
     pub fn stash_paths(paths: Vec<String>) -> Self { Self::new(worktree::Stash::new(paths)) }
     pub fn stash_apply(index: usize) -> Self { Self::new(worktree::StashApply::new(index)) }
-    pub fn stash_drop(index: usize) -> Self { Self::new(worktree::StashDrop { index }) }
+    pub fn stash_drop(index: usize) -> Self { Self::new(worktree::StashDrop::new(index)) }
     pub fn stash_branch(index: usize) -> Self { Self::new(worktree::StashBranch::new(index)) }
 
     // tags
@@ -96,6 +99,18 @@ impl Dialog {
     pub fn archive(rev: String) -> Self { Self::new(misc::Archive::new(rev)) }
     /// Free-form git command line, output shown in the dialog.
     pub fn console() -> Self { Self::new(misc::Console::new()) }
+
+    // advanced
+    /// Start a bisect, or mark good/bad/skip while bisecting.
+    pub fn bisect(s: &Snapshot) -> Self { Self::new(bisect::Bisect::new(s)) }
+    /// Git Flow init (when not set up), start and finish.
+    pub fn git_flow(s: &Snapshot) -> Self { Self::new(flow::GitFlow::new(s)) }
+    pub fn lfs(s: &Snapshot) -> Self { Self::new(lfs::Lfs::new(s)) }
+    pub fn sparse_checkout(s: &Snapshot) -> Self { Self::new(repo_tools::Sparse::new(s)) }
+    /// Delete untracked (optionally ignored) files with a preview.
+    pub fn clean() -> Self { Self::new(repo_tools::Clean::new()) }
+    pub fn optimize(s: &Snapshot) -> Self { Self::new(repo_tools::Optimize::new(s)) }
+    pub fn submodule_add() -> Self { Self::new(repo_tools::SubmoduleAdd::default()) }
 
     /// Renders the dialog; returns false when it should close. A dialog may
     /// replace itself by setting `tab.dialog` and returning true.

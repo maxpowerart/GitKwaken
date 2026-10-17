@@ -36,6 +36,17 @@ fn folder_picker(ui: &mut egui::Ui, value: &mut String, title: &str) {
     });
 }
 
+/// A single folder name: no separators, not "." or "..".
+pub fn check_folder_name(name: &str) -> Result<(), String> {
+    if name == "." || name == ".." {
+        return Err(format!("\"{name}\" is not a valid folder name."));
+    }
+    if name.contains(['/', '\\']) {
+        return Err("The folder name cannot contain '/' or '\\'.".into());
+    }
+    Ok(())
+}
+
 fn dir_is_empty(p: &Path) -> bool {
     std::fs::read_dir(p).map(|mut d| d.next().is_none()).unwrap_or(false)
 }
@@ -47,6 +58,8 @@ struct CloneRun {
     lines: Arc<Mutex<Vec<String>>>,
     task: Task<Result<(), String>>,
     dest: PathBuf,
+    /// The destination folder did not exist before this run.
+    created: bool,
 }
 
 pub struct CloneRepo {
@@ -84,6 +97,8 @@ impl CloneRepo {
     fn start(&mut self, ctx: &Context, shared: &Shared) {
         let parent = PathBuf::from(self.parent.clone().unwrap_or_default().trim());
         let dest = parent.join(self.name.trim());
+        // Checked before git starts: only a folder this run created may be deleted.
+        let created = !dest.exists();
         let mut args: Vec<String> = vec!["clone".into(), "--progress".into()];
         if self.shallow {
             args.push(format!("--depth={}", self.depth.max(1)));
@@ -133,7 +148,7 @@ impl CloneRepo {
             }
         });
         self.error = None;
-        self.run = Some(CloneRun { cancel, lines, task, dest });
+        self.run = Some(CloneRun { cancel, lines, task, dest, created });
     }
 }
 
@@ -151,7 +166,7 @@ impl AppDialog for CloneRepo {
                     self.error = Some(if cancelled { "Clone cancelled.".into() } else { e });
                     // A cancelled or failed clone leaves a partial folder behind; git removes it
                     // itself on failure, but not when killed.
-                    if cancelled && run.dest.is_dir() {
+                    if cancelled && run.created && run.dest.is_dir() {
                         let _ = std::fs::remove_dir_all(&run.dest);
                     }
                     self.run = None;
@@ -201,6 +216,12 @@ impl AppDialog for CloneRepo {
             });
             let dest = Path::new(parent.trim()).join(self.name.trim());
             if self.url.trim().is_empty() || self.name.trim().is_empty() {
+                ctl.invalid();
+            } else if let Err(e) = check_folder_name(self.name.trim()) {
+                error(ui, e);
+                ctl.invalid();
+            } else if self.url.trim().starts_with('-') {
+                error(ui, "The URL cannot start with '-'.");
                 ctl.invalid();
             } else if !Path::new(parent.trim()).is_dir() {
                 error(ui, "The parent folder does not exist.");
@@ -442,5 +463,19 @@ impl AppDialog for About {
         });
         // About has no OK button: Enter closes too.
         out == Outcome::None && !ctx.input(|i| i.key_pressed(egui::Key::Enter))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn folder_names() {
+        assert!(check_folder_name("repo").is_ok());
+        assert!(check_folder_name("my.repo").is_ok());
+        for bad in [".", "..", "a/b", r"a\b", "../x"] {
+            assert!(check_folder_name(bad).is_err(), "{bad}");
+        }
     }
 }

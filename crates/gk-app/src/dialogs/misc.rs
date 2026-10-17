@@ -24,34 +24,38 @@ fn path_field(ui: &mut egui::Ui, path: &mut String, browse: impl FnOnce() -> Opt
 pub struct CreatePatch {
     ids: Vec<String>,
     path: String,
-    labels: Option<Vec<String>>,
+    sorted: bool,
+    labels: RevLabels,
+    /// Replace an existing file at `path`.
+    overwrite: bool,
 }
 
 impl CreatePatch {
     pub fn new(ids: Vec<String>) -> Self {
-        Self { ids, path: String::new(), labels: None }
+        Self { ids, path: String::new(), sorted: false, labels: RevLabels::default(), overwrite: false }
     }
 }
 
 impl TabDialog for CreatePatch {
     fn show(&mut self, ctx: &Context, tab: &mut RepoTab, snap: &Snapshot, _shared: &mut Shared) -> bool {
-        if self.labels.is_none() {
+        if !self.sorted {
             // Oldest first so the patch series applies in order.
             let row = |id: &String| {
                 gk_core::ObjectId::from_hex(id.as_bytes()).ok().and_then(|o| snap.history.row(&o)).unwrap_or(usize::MAX)
             };
             self.ids.sort_by_key(|id| std::cmp::Reverse(row(id)));
-            self.labels = Some(self.ids.iter().map(|id| describe_rev(tab, snap, id)).collect());
+            self.sorted = true;
             if let Some(first) = self.ids.last() {
                 let name = format!("{}.patch", crate::util::short_id(first));
                 self.path = tab.path.join(name).display().to_string();
             }
         }
+        let labels = self.labels.get(tab, snap, &self.ids).to_vec();
         let workdir = tab.path.clone();
         let (out, ()) = modal(ctx, "create-patch", "Create patch", 560.0, "Save patch", |ui, ctl| {
             ui.label(format!("{} commit(s):", self.ids.len()));
             egui::ScrollArea::vertical().max_height(160.0).auto_shrink([false, true]).show(ui, |ui| {
-                for (id, l) in self.ids.iter().zip(self.labels.iter().flatten()) {
+                for (id, l) in self.ids.iter().zip(&labels) {
                     ui.label(RichText::new(if l.is_empty() { id } else { l }).monospace());
                 }
             });
@@ -68,6 +72,12 @@ impl TabDialog for CreatePatch {
             });
             if self.ids.is_empty() || self.path.trim().is_empty() {
                 ctl.invalid();
+            } else if std::path::Path::new(self.path.trim()).exists() {
+                warning(ui, "A file with this name already exists.");
+                ui.checkbox(&mut self.overwrite, "Overwrite it");
+                if !self.overwrite {
+                    ctl.invalid();
+                }
             }
         });
         finish(out, || {
@@ -172,6 +182,9 @@ impl TabDialog for Archive {
             let lower = self.path.trim().to_lowercase();
             if self.rev.trim().is_empty() || lower.is_empty() {
                 ctl.invalid();
+            } else if self.rev.trim().starts_with('-') {
+                error(ui, "A revision cannot start with '-'.");
+                ctl.invalid();
             } else if ![".zip", ".tar", ".tar.gz", ".tgz"].iter().any(|e| lower.ends_with(e)) {
                 error(ui, "Unsupported extension: use .zip, .tar, .tar.gz or .tgz");
                 ctl.invalid();
@@ -193,24 +206,86 @@ impl TabDialog for Archive {
 static HISTORY: parking_lot::Mutex<Vec<String>> = parking_lot::Mutex::new(Vec::new());
 const MAX_OUTPUT: usize = 512 * 1024;
 
+/// The git subcommand of an argument list, skipping global options.
+fn subcommand(args: &[String]) -> Option<(usize, &str)> {
+    let mut i = 0;
+    while i < args.len() {
+        let a = args[i].as_str();
+        if matches!(a, "-c" | "-C" | "--git-dir" | "--work-tree" | "--namespace" | "--exec-path") {
+            i += 2;
+        } else if a.starts_with('-') {
+            i += 1;
+        } else {
+            return Some((i, a));
+        }
+    }
+    None
+}
+
+/// Why a console command needs confirmation, when it can destroy work.
+pub fn destructive_reason(args: &[String]) -> Option<&'static str> {
+    let (i, verb) = subcommand(args)?;
+    let rest: Vec<&str> = args[i + 1..].iter().map(String::as_str).collect();
+    let has = |opts: &[&str]| rest.iter().any(|a| opts.contains(a));
+    // Combined short flags such as -fd or -Df.
+    let short = |c: char| rest.iter().any(|a| a.len() > 1 && a.starts_with('-') && !a.starts_with("--") && a.contains(c));
+    match verb {
+        "reset" if has(&["--hard"]) => Some("reset --hard discards uncommitted changes"),
+        "clean" if !has(&["-n", "--dry-run"]) && !short('n') => Some("clean deletes untracked files"),
+        "push" if has(&["--force", "--mirror", "--delete", "--prune"])
+            || rest.iter().any(|a| a.starts_with("--force-with-lease") || a.starts_with('+') || (a.starts_with(':') && a.len() > 1))
+            || short('f')
+            || short('d') =>
+        {
+            Some("this push can overwrite or delete remote history")
+        }
+        "branch" if short('D') || ((short('d') || has(&["--delete"])) && (short('f') || has(&["--force"]))) => {
+            Some("branch -D deletes a branch even when it is not merged")
+        }
+        "checkout" if has(&["--", ".", "--force"]) || short('f') => Some("checkout can overwrite local changes"),
+        "restore" if !has(&["--staged", "-S"]) || has(&["--worktree", "-W"]) => Some("restore overwrites local changes"),
+        "stash" if rest.first().is_some_and(|s| *s == "drop" || *s == "clear") => Some("stash drop/clear deletes stashed changes"),
+        "rm" if !has(&["--cached", "-n", "--dry-run"]) => Some("rm deletes files from the working copy"),
+        "reflog" if rest.first().is_some_and(|s| *s == "expire" || *s == "delete") => Some("this removes reflog entries"),
+        "update-ref" if short('d') => Some("update-ref -d deletes a ref"),
+        "filter-branch" => Some("filter-branch rewrites history"),
+        "gc" if rest.iter().any(|a| a.starts_with("--prune")) => Some("gc --prune deletes unreachable objects"),
+        _ => None,
+    }
+}
+
 pub struct Console {
     input: String,
     output: String,
-    running: Option<Task<String>>,
+    running: Option<TrackedOp<String>>,
     /// Position while browsing the history with Up/Down.
     hist_pos: Option<usize>,
+    /// A destructive command line waiting for confirmation, with the reason.
+    confirm: Option<(String, &'static str)>,
 }
 
 impl Console {
     pub fn new() -> Self {
-        Self { input: String::new(), output: String::new(), running: None, hist_pos: None }
+        Self { input: String::new(), output: String::new(), running: None, hist_pos: None, confirm: None }
     }
 
-    fn run(&mut self, ctx: &Context, tab: &RepoTab) {
+    /// Runs the input line, asking for confirmation first when destructive.
+    fn submit(&mut self, tab: &RepoTab) {
         let line = self.input.trim().to_string();
         if line.is_empty() {
             return;
         }
+        if let Ok(args) = split_args(&line)
+            && let Some(reason) = destructive_reason(&args)
+        {
+            self.confirm = Some((line, reason));
+            return;
+        }
+        self.run(tab, line);
+    }
+
+    fn run(&mut self, tab: &RepoTab, line: String) {
+        self.confirm = None;
         {
             let mut h = HISTORY.lock();
             h.retain(|l| l != &line);
@@ -230,13 +305,14 @@ impl Console {
                 return;
             }
         };
-        let repo = tab.session.repo().clone();
-        let session = tab.session.clone();
-        self.running = Some(Task::spawn(ctx, move || {
+        // Queued with the other operations so it never races them; the
+        // session refreshes everything afterwards.
+        let label = format!("git {}", subcommand(&args).map(|(_, v)| v).unwrap_or_default());
+        self.running = Some(TrackedOp::queue(tab, label, move |repo, _, _| {
             let a: Vec<&str> = args.iter().map(String::as_str).collect();
             // No editor or pager can be shown: make git fail fast instead of hanging.
             let git = repo.git().env("GIT_EDITOR", "true").env("GIT_SEQUENCE_EDITOR", "true");
-            let text = match git.run_raw(&a, None) {
+            Ok(match git.run_raw(&a, None) {
                 Ok(o) => {
                     let mut t = o.stdout_str();
                     t.push_str(&o.stderr_str());
@@ -246,9 +322,7 @@ impl Console {
                     t
                 }
                 Err(e) => format!("error: {e:#}\n"),
-            };
-            session.refresh_all();
-            text
+            })
         }));
     }
 
@@ -276,8 +350,9 @@ impl Console {
 impl TabDialog for Console {
     fn show(&mut self, ctx: &Context, tab: &mut RepoTab, _snap: &Snapshot, _shared: &mut Shared) -> bool {
         if let Some(t) = &mut self.running
-            && let Some(text) = t.take()
+            && let Some(r) = t.take()
         {
+            let text = r.unwrap_or_else(|e| format!("error: {e}\n"));
             self.output.push_str(&text);
             if !text.ends_with('\n') {
                 self.output.push('\n');
@@ -293,7 +368,8 @@ impl TabDialog for Console {
         let input_id = egui::Id::new("git-console-input");
         let mut submit = false;
         let mut hist: Option<bool> = None;
-        let busy = self.running.is_some();
+        let busy = self.running.is_some() || self.confirm.is_some();
+        let mut confirmed: Option<bool> = None;
         let title = format!("Git console — {}", tab.name);
         let (out, ()) = modal(ctx, "console", &title, 760.0, "Run", |ui, ctl| {
             ctl.show_ok = false;
@@ -334,23 +410,100 @@ impl TabDialog for Console {
                         hist = Some(false);
                     }
                 }
-                if busy {
+                if self.running.is_some() {
                     ui.spinner();
-                } else if ui.button("Run").clicked() {
+                } else if ui.add_enabled(!busy, egui::Button::new("Run")).clicked() {
                     submit = true;
                 }
                 if ui.button("Clear").clicked() {
                     self.output.clear();
                 }
             });
+            if let Some((line, reason)) = &self.confirm {
+                warning(ui, format!("Careful: {reason}."));
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(format!("git {line}")).monospace());
+                    let run = egui::Button::new(RichText::new("Run anyway").strong().color(egui::Color32::WHITE)).fill(DANGER);
+                    if ui.add(run).clicked() {
+                        confirmed = Some(true);
+                    }
+                    if ui.button("Don't run").clicked() {
+                        confirmed = Some(false);
+                    }
+                });
+            }
         });
         if let Some(up) = hist {
             self.browse_history(ctx, input_id, up);
         }
+        match confirmed {
+            Some(true) => {
+                if let Some((line, _)) = self.confirm.take() {
+                    self.run(tab, line);
+                }
+                ctx.memory_mut(|m| m.request_focus(input_id));
+            }
+            Some(false) => {
+                self.confirm = None;
+                ctx.memory_mut(|m| m.request_focus(input_id));
+            }
+            None => {}
+        }
         if submit && !busy {
-            self.run(ctx, tab);
+            self.submit(tab);
             ctx.memory_mut(|m| m.request_focus(input_id));
         }
         out == Outcome::None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn reason(line: &str) -> Option<&'static str> {
+        destructive_reason(&split_args(line).unwrap())
+    }
+
+    #[test]
+    fn destructive_commands() {
+        for bad in [
+            "reset --hard HEAD~1",
+            "-c core.x=y reset --hard",
+            "clean -fd",
+            "push --force origin main",
+            "push -f",
+            "push --force-with-lease",
+            "push origin +main",
+            "push origin :old",
+            "push --delete origin x",
+            "branch -D topic",
+            "branch -d -f topic",
+            "checkout -- file.txt",
+            "checkout .",
+            "restore file.txt",
+            "restore --staged --worktree f",
+            "stash drop",
+            "stash clear",
+            "rm file",
+        ] {
+            assert!(reason(bad).is_some(), "{bad}");
+        }
+        for ok in [
+            "log --oneline",
+            "reset --soft HEAD~1",
+            "clean -n",
+            "clean -nd",
+            "push origin main",
+            "branch -d topic",
+            "checkout main",
+            "restore --staged f",
+            "stash list",
+            "rm --cached f",
+            "status",
+            "",
+        ] {
+            assert!(reason(ok).is_none(), "{ok}");
+        }
     }
 }
