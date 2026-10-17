@@ -312,7 +312,8 @@ fn results_table(
     src: &Source,
 ) {
     let hist = snap.history.clone();
-    let row_h = shared.settings.history.row_height.clamp(14.0, 60.0);
+    let row_h = crate::theme::Density::of(shared.settings.compact)
+        .history_row(shared.settings.history.row_height);
     let n = match src {
         Source::Rows(r) => r.len(),
         Source::File(f) => f.entries.len(),

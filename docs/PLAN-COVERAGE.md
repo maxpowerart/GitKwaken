@@ -163,11 +163,11 @@ Measurements made for this audit with `target/lead/release/gk-bench.exe` and the
 | SourceTree layout (sidebar, toolbar, history graph top and details bottom, File Status staged top / unstaged bottom / diff right / commit box bottom, Search view) | Done | impl: `crates/gk-app/src/tab.rs:205-224`, `views/history.rs:98,217`, `file_status.rs:224,231,240,408`, `views/search.rs:155`; test: `file_status.rs::renders_headless`, `history/ui_tests.rs` | |
 | SourceTree-style context menus | Done | impl: `history.rs:511`, `sidebar.rs:1291,1335`, `file_status/list.rs:761-912`, `diff.rs:600` | |
 | Drag a branch onto a branch to merge or rebase | Missing | (none) | Drag-and-drop exists only for files between lists (`file_status/dnd.rs`) and in the interactive-rebase list. |
-| Every action keyboard-accessible | Partial | impl: `app.rs:278` (Ctrl+O, W, Tab, Shift+P), `tab.rs:172` (F5, Ctrl+1/2/3), Ctrl+Enter commit, History keys; E2E: `h-keyboard.script` | The palette lacks cherry-pick, revert, reset, tag, stash apply/pop/drop, blame-from-History, worktree and submodule actions. These are mouse-only. |
+| Every action keyboard-accessible | Done | impl: `app.rs:278` (Ctrl+O, W, Tab, Shift+P), `tab.rs:172` (F5, Ctrl+1/2/3), Ctrl+Enter commit, History keys; scoped keymap actions (`keymap.rs` `Scope::FileList` / `Scope::Diff`, editable in Settings › Keyboard); File Status lists: Space stage/unstage, Delete discard (confirm), H file history, B blame, E external diff, I ignore, Shift+F10 context menu at the cursor row (`views/file_status/list.rs` `key_action`); diff: N / P next / previous hunk, S / U / Delete stage / unstage / discard the current hunk or the selected lines, Shift+Down / Shift+Up line selection (`views/diff.rs` `key_action`); palette: merge, rebase, interactive rebase, cherry-pick, revert, reset, tag, patch, archive and notes on the selected commits, blame of the selected file at the selected commit, stash apply / pop / drop / branch, add / open / remove worktree, update / open submodule (`views/palette.rs` `items`); sidebar submodule and worktree rows: Shift+F10, Enter, Delete; menus show their shortcuts; test: `keymap.rs::scoped_shortcuts_conflict_only_where_both_fire`, `list.rs::keyboard_actions_on_selection_and_cursor`, `diff/model.rs::keyboard_hunk_and_line_navigation`; E2E: `fb-keys-status.script`, `h-keyboard.script`, `fa-keys-history.script`, `fa-keys-sidebar.script` | The Menu (Apps) key is not delivered by egui-winit; Shift+F10 opens the keyboard menu (mapping the Menu key needs a change in `gk-dx11`). |
 | Command palette Ctrl+Shift+P | Done | `app.rs:285`; E2E: `palette.script` | |
 | Configurable hotkeys | Missing | `crates/gk-settings/src/lib.rs:55` (`keymap` field never read) | All shortcuts are hard-coded. |
 | Light / dark themes | Done | impl: `dialogs/settings.rs:225-229`, `crates/gk-app/src/theme.rs:144`; E2E: `r-settings.script`, `r-settings-reopen.script` | |
-| Compact density | Partial | impl: UI scale (`settings.rs:232`), History row height (`settings.rs:329`), toolbar auto-compact under 1080 px (`toolbar.rs:9`) | No density preset. File lists and the sidebar have fixed spacing. |
+| Compact density | Done | impl: `theme.rs` `Density` (Settings › Density: Compact, the default, or Comfortable) applied to global `item_spacing` / `button_padding` / `interact_size` (`theme::apply_density`, called from `app.rs`), File Status rows, sidebar rows, History / Search / Reflog rows and diff rows; commit-details and stash file lists follow `interact_size`; plus UI scale (`settings.rs:232`), History row height (`settings.rs:329`), toolbar auto-compact under 1080 px (`toolbar.rs:9`); test: `theme.rs::compact_density_keeps_the_classic_look` | Compact keeps the existing look (the default, so E2E coordinates are unchanged); Comfortable adds room everywhere. |
 | Configurable monospace font | Partial | impl: "Monospace font size" in Settings (`settings.rs:238`) | The setting has no effect: `theme::apply` (`theme.rs:144`, called from `app.rs:148`) never gets `mono_font_size`. The family is fixed to Consolas (`theme.rs:136`). |
 | Long operations in status bar with progress and cancel | Done | impl: `crates/gk-app/src/views/statusbar.rs:68-75`, `crates/gk-core/src/session.rs:650`; test: `it/remote.rs::cancelled_fetch` | |
 | No blocking "please wait" modals | Partial | impl: ops run in the background | Clone runs inside an `egui::Modal` (`dialogs/global.rs:284-289`), which blocks the rest of the UI until it finishes or is cancelled. Some dialogs wait with a spinner (`dialogs/common.rs:535`) but can be closed. |
@@ -253,7 +253,7 @@ Measurements made for this audit with `target/lead/release/gk-bench.exe` and the
 | git CLI | Done | `crates/gk-cli` | |
 | imara-diff | Done | `crates/gk-diff/Cargo.toml` | |
 | Syntax highlighting | Done | syntect (`crates/gk-app/Cargo.toml`) | |
-| Fuzzy search (nucleo) | Deviation | `crates/gk-app/src/views/palette.rs:139` (own subsequence scorer) | nucleo is not a dependency. |
+| Fuzzy search (nucleo) | Done | nucleo-matcher 0.3: command palette (`crates/gk-app/src/views/palette.rs` `Ranker`: exact > prefix > word start > nucleo score, matched characters highlighted) and the File Status filter (`views/file_status/tree.rs` `Filter`); test: `palette.rs::exact_and_prefix_first`, `palette.rs::highlight_indices_follow_chars` | |
 | Watcher | Done | notify 8 (`crates/gk-status/Cargo.toml`) | |
 | rayon | Done | workspace dependency | |
 | Disk cache (redb) | Missing | (none) | |
@@ -283,7 +283,7 @@ Measurements made for this audit with `target/lead/release/gk-bench.exe` and the
 | Status after save < 50 ms | Partial | fast path 0.2 ms (given: 0.2 ms) | Watcher debounce is 60 ms (`watch.rs:18`), so end-to-end is at least 60 ms. End-to-end is not measured. |
 | 1M-row scroll at 120 fps, no frame > 16 ms | Partial | 117 fps (vsync) and > 900 fps unlocked on a 1M-row list; 120 fps scrolling git.git history (given) | Not measured on 1M-commit history. Frame-time spikes were not recorded. |
 | Stage 100k files < 2 s | Partial | `ops.rs:16` (one `git add --pathspec-from-file`) | Not measured. |
-| Filter 1M paths < 50 ms per keystroke | Partial | `file_status.rs` sync and filter | Not measured. |
+| Filter 1M paths < 50 ms per keystroke | Done | `views/file_status/filter.rs` (rayon over 8k-entry chunks, results concatenated in status order; when the query only grows, only the previous matches are filtered), `views/file_status/list.rs` `sync`; test (release, `--ignored`): `filter.rs::filter_1m_paths_per_keystroke`, `list.rs::sync_1m_paths_per_keystroke` | 1M synthetic paths (`src/module_NNN/sub_NN/file_NNNNNNN.ext`), 32 hardware threads: filter 4-14 ms per keystroke (one thread: 47-272 ms), whole flat-list row rebuild 8-24 ms. Fewer cores scale the full pass down accordingly; typing forward uses the smaller incremental set. |
 | Open a 50k-line diff < 100 ms | Partial | | Not measured. Highlighting is skipped above 20k lines. |
 | File history < 1 s for the first 50 | Partial | `views/search.rs:220` | Not measured. It waits for the whole `git log --follow` before showing anything. |
 | Memory < 60 MB small repo / < 400 MB reference | Partial | Peak working set: demo 107 MB, git.git 133 MB, r1m 368 MB | Small repo is over budget (includes D3D11 and driver memory). r1m is under budget. |
@@ -344,9 +344,7 @@ One line per Missing or Partial item: what to add, and where.
 **UI/UX**
 
 - Branch drag-and-drop: make sidebar branch rows drag sources and drop targets, and on drop show a "Merge X into Y / Rebase Y onto X" popup (`views/sidebar.rs` `row_ui`, reuse `Dialog::merge` / `Dialog::rebase`).
-- Keyboard access: add palette entries for commit-menu actions on the selected commit and for stash, worktree and submodule actions (`views/palette.rs` `items`).
 - Configurable hotkeys: map action ids to shortcuts from `settings.keymap` in `app.rs` and `tab.rs` `shortcuts()`, and add a Settings page to edit them.
-- Compact density: add a Density setting (comfortable / compact) that scales `spacing.item_spacing` and the row heights of lists and the sidebar (`theme.rs::apply`).
 - Monospace font: pass `mono_font_size` and a font family into `theme::apply`, and load the font from the system or a path (`app.rs:148`, `theme.rs:136-144`).
 - Clone modal: run clone as a background job with status-bar progress that opens the tab when done, and close the dialog right away (`dialogs/global.rs` CloneRepo).
 
@@ -396,7 +394,7 @@ One line per Missing or Partial item: what to add, and where.
 - History first screen: walk the first screen (about 200 commits) and publish before the full layout. Load refs in parallel with the walk (`session.rs` refresh_loop).
 - Status after save: lower the watcher debounce for small bursts (for example a 10-20 ms first flush) and add an end-to-end save-to-snapshot benchmark (`gk-status/src/watch.rs:18`).
 - 1M-row scroll: add a frame-time histogram (`GK_DX11_*` stats) and a scripted scroll over a 1M-commit synthetic history (`crates/gk-dx11`, `scripts/e2e/`).
-- Stage 100k, filter 1M, 50k-line diff: add gk-bench cases for `Repo::stage` with 100k paths, `StatusState` filter rebuild on 1M entries, and `gk_diff::diff` plus layout on a 50k-line file.
+- Stage 100k, 50k-line diff: add gk-bench cases for `Repo::stage` with 100k paths and `gk_diff::diff` plus layout on a 50k-line file.
 - File history: stream `git log --follow` results and show the first 50 as they arrive (`views/search.rs:220`).
 - Memory: profile the idle working set on small repos (fonts, syntect assets loaded early, D3D buffers) and load syntect lazily (`views/diff/syntax.rs`, `theme.rs::install_fonts`).
 

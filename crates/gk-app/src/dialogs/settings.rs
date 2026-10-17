@@ -186,7 +186,8 @@ impl SettingsDialog {
             return;
         }
         let sc = Shortcut::from_event(key, mods);
-        if sc.is_typing_key() {
+        // Scoped shortcuts only fire while their list / diff has focus.
+        if sc.is_typing_key() && keymap::scope_of(act) == keymap::Scope::Global {
             self.record_error = Some(format!(
                 "{sc} would be typed into text fields: add Ctrl or Alt."
             ));

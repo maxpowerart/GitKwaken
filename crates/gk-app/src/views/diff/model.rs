@@ -160,6 +160,52 @@ pub fn hunk_keys(d: &FileDiff, h: usize) -> Vec<LineKey> {
         .unwrap_or_default()
 }
 
+/// The hunk covering display row `top` (hunk headers at rows `hunk_rows`).
+pub fn hunk_at(hunk_rows: &[u32], top: u32) -> Option<usize> {
+    (!hunk_rows.is_empty()).then(|| hunk_rows.iter().rposition(|&r| r <= top).unwrap_or(0))
+}
+
+/// Whether any row of hunk `h` lies within display rows `top..=bottom`.
+pub fn hunk_on_screen(hunk_rows: &[u32], total: u32, h: usize, top: u32, bottom: u32) -> bool {
+    let Some(&start) = hunk_rows.get(h) else {
+        return false;
+    };
+    let end = hunk_rows.get(h + 1).copied().unwrap_or(total);
+    start <= bottom && end > top
+}
+
+/// Next (`down`) or previous changed line after `from`; without `from`,
+/// the first changed line of hunk `h`.
+pub fn step_changed(d: &FileDiff, from: Option<u32>, down: bool, h: Option<usize>) -> Option<u32> {
+    let changed = |i: &usize| d.lines[*i].kind != LineKind::Context;
+    let n = d.lines.len();
+    let i = match from.filter(|&f| (f as usize) < n) {
+        Some(f) if down => (f as usize + 1..n).find(changed),
+        Some(f) => (0..f as usize).rev().find(changed),
+        None => {
+            let start = h
+                .and_then(|h| d.hunks.get(h))
+                .map_or(0, |hk| hk.lines.start);
+            (start..n).find(changed)
+        }
+    };
+    i.map(|i| i as u32)
+}
+
+/// Display row showing diff line `i`.
+pub fn row_of_line(rows: &[Row], i: u32) -> Option<usize> {
+    rows.iter().position(|r| match *r {
+        Row::Line(l) => l == i,
+        Row::Pair(a, b) => a == i || b == i,
+        Row::Hunk(_) => false,
+    })
+}
+
+/// Hunk containing diff line `i`.
+pub fn hunk_of_line(d: &FileDiff, i: u32) -> Option<usize> {
+    d.hunks.iter().position(|h| h.lines.contains(&(i as usize)))
+}
+
 /// Where a primary press in the diff body landed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Press {
@@ -506,5 +552,49 @@ mod tests {
             segments(3, std::slice::from_ref(&(0..3))),
             vec![(0..3, true)]
         );
+    }
+
+    /// Two hunks: line 2 changed, line 18 changed (20 lines, 3 context).
+    fn two_hunks() -> FileDiff {
+        let old: String = (1..=20).map(|i| format!("l{i}\n")).collect();
+        let new = old.replace("l2\n", "L2\n").replace("l18\n", "L18\nextra\n");
+        diff(old.as_bytes(), new.as_bytes(), Options::default())
+    }
+
+    #[test]
+    fn keyboard_hunk_and_line_navigation() {
+        let d = two_hunks();
+        assert_eq!(d.hunks.len(), 2);
+        let l = Layout::build(&d, 4);
+        let hr = l.hunk_rows(false);
+        let total = l.rows(false).len() as u32;
+        // The hunk at the top of the view.
+        assert_eq!(hunk_at(hr, 0), Some(0));
+        assert_eq!(hunk_at(hr, hr[1]), Some(1));
+        assert_eq!(hunk_at(hr, hr[1] - 1), Some(0));
+        assert_eq!(hunk_at(&[], 3), None);
+        // On screen: any of its rows within top..=bottom.
+        assert!(hunk_on_screen(hr, total, 0, 0, 2));
+        assert!(!hunk_on_screen(hr, total, 1, 0, hr[1] - 1));
+        assert!(hunk_on_screen(hr, total, 1, total - 1, total + 10));
+        assert!(!hunk_on_screen(hr, total, 5, 0, total));
+        // Changed lines, from the start of a hunk, then stepping.
+        let first = step_changed(&d, None, true, Some(1)).unwrap();
+        assert_eq!(hunk_of_line(&d, first), Some(1));
+        assert_ne!(d.lines[first as usize].kind, LineKind::Context);
+        let next = step_changed(&d, Some(first), true, None).unwrap();
+        assert!(next > first && d.lines[next as usize].kind != LineKind::Context);
+        assert_eq!(step_changed(&d, Some(next), false, None), Some(first));
+        let last = (d.lines.len() - 1) as u32;
+        let last_changed = (0..=last)
+            .rev()
+            .find(|&i| d.lines[i as usize].kind != LineKind::Context)
+            .unwrap();
+        assert_eq!(step_changed(&d, Some(last_changed), true, None), None);
+        // Display rows of lines, unified and side by side.
+        let r = row_of_line(l.rows(false), first).unwrap();
+        assert_eq!(l.rows(false)[r], Row::Line(first));
+        assert!(row_of_line(l.rows(true), first).is_some());
+        assert_eq!(row_of_line(l.rows(false), 9999), None);
     }
 }

@@ -12,6 +12,7 @@
 mod commit;
 mod conflict_guard;
 mod dnd;
+mod filter;
 mod ignore;
 mod list;
 mod merge_tool;
@@ -343,7 +344,7 @@ fn lists(
         .external_diff_tool
         .as_ref()
         .is_some_and(|t| !t.command.trim().is_empty());
-    let row_pad = if shared.settings.compact { 6.0 } else { 10.0 };
+    let row_pad = crate::theme::Density::of(shared.settings.compact).file_row_pad();
     let op_running = snap.op.is_some();
     let avail = ui.available_height();
     let key = tab.path.clone();

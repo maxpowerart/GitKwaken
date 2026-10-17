@@ -28,9 +28,47 @@ pub enum Act {
     Push,
     NewBranch,
     Stash,
+    // File Status lists (while a list has keyboard focus).
+    FileToggle,
+    FileDiscard,
+    FileHistory,
+    FileBlame,
+    FileExternalDiff,
+    FileIgnore,
+    // Diff view (while the diff body has keyboard focus).
+    DiffNextHunk,
+    DiffPrevHunk,
+    DiffStage,
+    DiffUnstage,
+    DiffDiscard,
+    DiffSelectDown,
+    DiffSelectUp,
 }
 
-/// (action, settings id, label, default shortcut)
+/// Where an action's shortcut is active. Scoped shortcuts only fire while
+/// that widget has keyboard focus, so they may be bare keys ("S", "Delete")
+/// and may repeat across scopes; global ones apply everywhere.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    Global,
+    FileList,
+    Diff,
+}
+
+pub fn scope_of(a: Act) -> Scope {
+    use Act::*;
+    match a {
+        FileToggle | FileDiscard | FileHistory | FileBlame | FileExternalDiff | FileIgnore => {
+            Scope::FileList
+        }
+        DiffNextHunk | DiffPrevHunk | DiffStage | DiffUnstage | DiffDiscard | DiffSelectDown
+        | DiffSelectUp => Scope::Diff,
+        _ => Scope::Global,
+    }
+}
+
+/// (action, settings id, label, default shortcut). New actions go at the
+/// end: Settings › Keyboard lists them in this order.
 pub const ACTIONS: &[(Act, &str, &str, &str)] = &[
     (Act::OpenRepo, "open_repo", "Open repository", "Ctrl+O"),
     (Act::CloseTab, "close_tab", "Close tab", "Ctrl+W"),
@@ -60,6 +98,69 @@ pub const ACTIONS: &[(Act, &str, &str, &str)] = &[
     (Act::Push, "push", "Push…", "Ctrl+Shift+K"),
     (Act::NewBranch, "new_branch", "New branch…", "Ctrl+Shift+B"),
     (Act::Stash, "stash", "Stash…", "Ctrl+Shift+S"),
+    (
+        Act::FileToggle,
+        "file_toggle",
+        "File list: Stage / unstage selected",
+        "Space",
+    ),
+    (
+        Act::FileDiscard,
+        "file_discard",
+        "File list: Discard selected…",
+        "Delete",
+    ),
+    (
+        Act::FileHistory,
+        "file_history",
+        "File list: File history",
+        "H",
+    ),
+    (Act::FileBlame, "file_blame", "File list: Blame", "B"),
+    (
+        Act::FileExternalDiff,
+        "file_external_diff",
+        "File list: Open in external diff tool",
+        "E",
+    ),
+    (Act::FileIgnore, "file_ignore", "File list: Ignore…", "I"),
+    (Act::DiffNextHunk, "diff_next_hunk", "Diff: Next hunk", "N"),
+    (
+        Act::DiffPrevHunk,
+        "diff_prev_hunk",
+        "Diff: Previous hunk",
+        "P",
+    ),
+    (
+        Act::DiffStage,
+        "diff_stage",
+        "Diff: Stage hunk / selected lines",
+        "S",
+    ),
+    (
+        Act::DiffUnstage,
+        "diff_unstage",
+        "Diff: Unstage hunk / selected lines",
+        "U",
+    ),
+    (
+        Act::DiffDiscard,
+        "diff_discard",
+        "Diff: Discard hunk / selected lines…",
+        "Delete",
+    ),
+    (
+        Act::DiffSelectDown,
+        "diff_select_down",
+        "Diff: Extend line selection down",
+        "Shift+Down",
+    ),
+    (
+        Act::DiffSelectUp,
+        "diff_select_up",
+        "Diff: Extend line selection up",
+        "Shift+Up",
+    ),
 ];
 
 /// A key with exact modifiers. `ctrl` means Ctrl (Cmd on macOS).
@@ -232,13 +333,16 @@ impl Keymap {
         self.get(a).map(|s| s.to_string()).unwrap_or_default()
     }
 
-    /// Pairs of actions sharing a shortcut.
+    /// Pairs of actions sharing a shortcut where both can fire: same scope,
+    /// or one of them global (global shortcuts are taken first).
     pub fn conflicts(&self) -> Vec<(Act, Act, Shortcut)> {
         let mut out = Vec::new();
         for (i, (a, sa)) in self.bindings.iter().enumerate() {
             let Some(sa) = sa else { continue };
             for (b, sb) in &self.bindings[i + 1..] {
-                if Some(*sa) == *sb {
+                let (x, y) = (scope_of(*a), scope_of(*b));
+                let overlap = x == y || x == Scope::Global || y == Scope::Global;
+                if overlap && Some(*sa) == *sb {
                     out.push((*a, *b, *sa));
                 }
             }
@@ -266,6 +370,36 @@ impl Keymap {
         });
         hit
     }
+
+    /// Consumes the presses of every action in `acts` (in that order);
+    /// returns the ones pressed this frame.
+    pub fn consume_all(&self, i: &mut InputState, acts: &[Act]) -> Vec<Act> {
+        acts.iter()
+            .copied()
+            .filter(|a| self.consume(i, *a))
+            .collect()
+    }
+}
+
+/// Scoped shortcuts pressed this frame (consumed), or nothing while
+/// shortcuts are suspended (a dialog or the palette is open).
+pub fn pressed(ctx: &Context, acts: &[Act]) -> Vec<Act> {
+    match active(ctx) {
+        Some(km) => ctx.input_mut(|i| km.consume_all(i, acts)),
+        None => Vec::new(),
+    }
+}
+
+/// The published keymap, also while shortcuts are suspended (for labels).
+pub fn current(ctx: &Context) -> Arc<Keymap> {
+    ctx.data(|d| d.get_temp::<(Arc<Keymap>, bool)>(data_id()))
+        .map(|(km, _)| km)
+        .unwrap_or_default()
+}
+
+/// Shortcut text of `a` in the published keymap ("" when unbound), for menus.
+pub fn text(ctx: &Context, a: Act) -> String {
+    current(ctx).text(a)
 }
 
 /// Builds the settings-map form of `bindings` (only entries differing from the defaults).
@@ -344,6 +478,32 @@ mod tests {
         for (a, ..) in ACTIONS {
             assert!(default_of(*a).is_some(), "{a:?} default parses");
         }
+    }
+
+    #[test]
+    fn scoped_shortcuts_conflict_only_where_both_fire() {
+        assert_eq!(scope_of(Act::Fetch), Scope::Global);
+        assert_eq!(scope_of(Act::FileDiscard), Scope::FileList);
+        assert_eq!(scope_of(Act::DiffDiscard), Scope::Diff);
+        // Delete in the file list and in the diff: different widgets.
+        assert_eq!(
+            Keymap::default().get(Act::FileDiscard),
+            Keymap::default().get(Act::DiffDiscard)
+        );
+        let mut o = BTreeMap::new();
+        o.insert("diff_stage".to_string(), "H".to_string());
+        assert!(
+            Keymap::from_overrides(&o).conflicts().is_empty(),
+            "file list H vs diff H"
+        );
+        o.insert("diff_unstage".to_string(), "S".to_string());
+        let c = Keymap::from_overrides(&o).conflicts();
+        assert_eq!(c.len(), 0, "S is free in the diff once Stage moved to H");
+        o.insert("file_blame".to_string(), "Ctrl+Shift+K".to_string());
+        let c = Keymap::from_overrides(&o).conflicts();
+        assert_eq!((c[0].0, c[0].1), (Act::Push, Act::FileBlame), "global wins");
+        o.insert("diff_next_hunk".to_string(), "S".to_string());
+        assert_eq!(Keymap::from_overrides(&o).conflicts().len(), 2);
     }
 
     #[test]

@@ -378,6 +378,14 @@ impl StashApply {
             restore_index: false,
         }
     }
+
+    /// The same dialog with "delete the stash after applying" checked.
+    pub fn pop(index: usize) -> Self {
+        Self {
+            pop: true,
+            ..Self::new(index)
+        }
+    }
 }
 
 impl TabDialog for StashApply {

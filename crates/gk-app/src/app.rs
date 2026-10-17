@@ -97,6 +97,7 @@ impl GkApp {
             settings.font_size,
             settings.mono_font_size,
         );
+        theme::apply_density(ctx, theme::Density::of(settings.compact));
         let git_check: Arc<Mutex<Option<String>>> = Arc::default();
         {
             let (slot, c) = (git_check.clone(), ctx.clone());
@@ -221,6 +222,7 @@ impl GkApp {
                         self.settings.font_size,
                         self.settings.mono_font_size,
                     );
+                    theme::apply_density(ctx, theme::Density::of(self.settings.compact));
                     // Status options apply to open tabs right away.
                     for t in &self.tabs {
                         let mut o = t.session.options();
