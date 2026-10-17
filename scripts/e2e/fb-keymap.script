@@ -1,0 +1,15 @@
+# Settings > Keyboard (Ctrl+Comma, GITKWAKEN_DIALOG=settings:keyboard):
+# click the Fetch shortcut, press Ctrl+Alt+F, Save.
+wait 2500
+key Comma ctrl
+wait 800
+click 739 579
+wait 300
+key F ctrl alt
+wait 300
+move 700 400
+wait 300
+shot $OUT/fb-keymap-settings.png
+click 933 699
+wait 1000
+exit

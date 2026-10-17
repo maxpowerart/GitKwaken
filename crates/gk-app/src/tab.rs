@@ -15,6 +15,10 @@ pub enum View {
     Merge,
     /// Blame of one file; state in [`RepoTab::blame`].
     Blame,
+    /// `git reflog` of HEAD; state in [`RepoTab::reflog`].
+    Reflog,
+    /// Changes of one stash; state in [`RepoTab::stash_view`].
+    Stash,
 }
 
 pub struct RepoTab {
@@ -33,6 +37,8 @@ pub struct RepoTab {
     pub merge: Option<Box<views::merge::MergeState>>,
     /// Open blame (see [`views::blame::open_blame`]).
     pub blame: Option<Box<views::blame::BlameState>>,
+    pub reflog: views::reflog::ReflogState,
+    pub stash_view: views::stash_view::StashViewState,
     pub dialog: Option<Dialog>,
     /// Last snapshot generation seen, to detect changes cheaply.
     pub seen_generation: u64,
@@ -61,11 +67,7 @@ impl RepoTab {
         } else {
             gk_status::Untracked::No
         };
-        opts.scope = if state.history_scope == "current" {
-            gk_core::history::Scope::Current
-        } else {
-            gk_core::history::Scope::All
-        };
+        opts.scope = views::history::scope_from_state(&state.history_scope);
         let c = ctx.clone();
         let session = Session::open(repo, opts, move || c.request_repaint());
         let name = session.repo().name();
@@ -86,6 +88,8 @@ impl RepoTab {
             search: Default::default(),
             merge: None,
             blame: None,
+            reflog: Default::default(),
+            stash_view: Default::default(),
             dialog: None,
             seen_generation: 0,
             last_fetch: None,
@@ -94,12 +98,13 @@ impl RepoTab {
         };
         tab.status.commit.message = tab.state.commit_message_draft.clone();
         // Debug/screenshot aid: `GITKWAKEN_START_VIEW` = `status`, `history`,
-        // `search`, `merge:<path>` or `blame:<path>` opens that view on startup.
+        // `search`, `reflog`, `merge:<path>` or `blame:<path>` opens that view on startup.
         if let Ok(v) = std::env::var("GITKWAKEN_START_VIEW") {
             match (v.as_str(), v.split_once(':')) {
                 ("status", _) => tab.view = View::FileStatus,
                 ("history", _) => tab.view = View::History,
                 ("search", _) => tab.view = View::Search,
+                ("reflog", _) => tab.view = View::Reflog,
                 (_, Some(("merge", p))) => views::merge::open_merge(&mut tab, p.to_string()),
                 (_, Some(("blame", p))) => views::blame::open_blame(&mut tab, p.to_string(), None),
                 _ => {}
@@ -151,45 +156,69 @@ impl RepoTab {
         self.last_fetch = Some(std::time::Instant::now());
         self.fetching
             .store(true, std::sync::atomic::Ordering::SeqCst);
-        let session = self.session.clone();
+        // Serialized with other operations; failures stay quiet (offline laptops).
         let flag = self.fetching.clone();
-        std::thread::spawn(move || {
-            let opts = gk_core::ops::FetchOptions {
-                prune: true,
-                tags: false,
-            };
-            let ok = session
-                .repo()
-                .fetch(None, &opts, &gk_cli::CancelToken::new(), &mut |_| {})
-                .is_ok();
-            flag.store(false, std::sync::atomic::Ordering::SeqCst);
-            if ok {
-                session.refresh_all();
-            }
-        });
+        self.session
+            .run_quiet_op("Auto fetch", move |repo, cancel, _| {
+                let opts = gk_core::ops::FetchOptions {
+                    prune: true,
+                    tags: false,
+                };
+                let r = repo.fetch(None, &opts, cancel, &mut |_| {});
+                flag.store(false, std::sync::atomic::Ordering::SeqCst);
+                r
+            });
     }
 
+    /// Tab-level shortcuts from the configurable keymap (see `keymap.rs`).
     fn shortcuts(&mut self, ctx: &egui::Context) {
-        use egui::{Key, Modifiers};
-        let (refresh, v1, v2, v3) = ctx.input_mut(|i| {
-            (
-                i.consume_key(Modifiers::NONE, Key::F5),
-                i.consume_key(Modifiers::COMMAND, Key::Num1),
-                i.consume_key(Modifiers::COMMAND, Key::Num2),
-                i.consume_key(Modifiers::COMMAND, Key::Num3),
-            )
-        });
-        if refresh {
-            self.session.refresh_all();
-        }
-        if v1 {
-            self.view = View::FileStatus;
-        }
-        if v2 {
-            self.view = View::History;
-        }
-        if v3 {
-            self.view = View::Search;
+        use crate::keymap::Act;
+        let Some(km) = crate::keymap::active(ctx) else {
+            return;
+        };
+        const ACTS: [Act; 12] = [
+            Act::Refresh,
+            Act::ViewStatus,
+            Act::ViewHistory,
+            Act::ViewSearch,
+            Act::Commit,
+            Act::StageAll,
+            Act::UnstageAll,
+            Act::Fetch,
+            Act::Pull,
+            Act::Push,
+            Act::NewBranch,
+            Act::Stash,
+        ];
+        let hit: Vec<Act> =
+            ctx.input_mut(|i| ACTS.into_iter().filter(|a| km.consume(i, *a)).collect());
+        for a in hit {
+            match a {
+                Act::Refresh => self.session.refresh_all(),
+                Act::ViewStatus => self.view = View::FileStatus,
+                Act::ViewHistory => self.view = View::History,
+                Act::ViewSearch => self.view = View::Search,
+                Act::Commit => {
+                    self.view = View::FileStatus;
+                    self.status.commit.request_focus();
+                }
+                Act::StageAll => {
+                    self.view = View::FileStatus;
+                    self.status.request_all(true);
+                }
+                Act::UnstageAll => {
+                    self.view = View::FileStatus;
+                    self.status.request_all(false);
+                }
+                Act::Fetch => self.dialog = Some(Dialog::fetch(&self.session.snapshot())),
+                Act::Pull => self.dialog = Some(Dialog::pull(&self.session.snapshot())),
+                Act::Push => self.dialog = Some(Dialog::push(&self.session.snapshot())),
+                Act::NewBranch => {
+                    self.dialog = Some(Dialog::branch(&self.session.snapshot(), None))
+                }
+                Act::Stash => self.dialog = Some(Dialog::stash()),
+                _ => {}
+            }
         }
     }
 
@@ -221,6 +250,8 @@ impl RepoTab {
             View::Search => views::search::show(ui, self, &snap, shared),
             View::Merge => views::merge::show(ui, self, &snap, shared),
             View::Blame => views::blame::show(ui, self, &snap, shared),
+            View::Reflog => views::reflog::show(ui, self, &snap, shared),
+            View::Stash => views::stash_view::show(ui, self, &snap, shared),
         });
         if let Some(mut d) = self.dialog.take()
             && d.show(ui.ctx(), self, &snap, shared)

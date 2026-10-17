@@ -1,0 +1,13 @@
+# GITKWAKEN_DIALOG=repo-config: append a section, Ctrl+Enter validates and saves.
+wait 2500
+key F ctrl shift
+wait 800
+key Enter
+type [gkfeat]
+key Enter
+type     flag = on
+wait 300
+shot $OUT/fb-repo-config.png
+key Enter ctrl
+wait 2000
+exit

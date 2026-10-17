@@ -1,0 +1,6 @@
+# GITKWAKEN_PALETTE="Undo last operation" after a merge -> Enter (reset --keep).
+wait 3000
+shot $OUT/fa-undo-merge-dialog.png
+key Enter
+wait 3000
+exit

@@ -1,8 +1,8 @@
 # Right-click the "upstream" remote -> Edit… -> new URL -> Save.
 wait 2500
-rclick 80 306
+rclick 80 327.3
 wait 500
-click 104 355
+click 104 376.3
 wait 600
 key A ctrl
 type $WORK/remotes/edited.git

@@ -1,0 +1,25 @@
+# Clone... -> URL, parent folder, Advanced: sparse checkout of "src" -> Enter.
+# The dialog closes at once; the clone runs in the background (jobs panel)
+# and opens as a new tab.
+wait 2500
+click 1276 14
+wait 800
+type $WORK/sparse-src.git
+key Tab
+key A ctrl
+type $WORK/clones
+wait 300
+click 470 486
+wait 300
+click 425 513
+wait 300
+click 640 524
+type src
+wait 300
+shot $OUT/fb-clone-dialog.png
+key Enter
+wait 150
+shot $OUT/fb-clone-progress.png
+wait 5000
+shot $OUT/fb-clone-done.png
+exit

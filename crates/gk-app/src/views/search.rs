@@ -356,6 +356,7 @@ fn results_table(
             );
         }
     }
+    let keys_pressed = hv::keys::ListKeys::read(ui, ui.memory(|m| m.has_focus(id)));
     let scroll_row = tab
         .search
         .scroll_to
@@ -425,10 +426,24 @@ fn results_table(
             tab.search.menu_ids.clear();
         }
     }
+    let ids = tab.search.sel.sorted(row_of);
+    let cursor = tab.search.sel.cursor_row(row_of);
+    hv::list_keys(tab, snap, keys_pressed, &ids);
+    if keys_pressed.menu && !ids.is_empty() {
+        tab.search.menu_ids = ids;
+    }
     if !tab.search.menu_ids.is_empty() {
         let ids = std::mem::take(&mut tab.search.menu_ids);
         out.response
             .context_menu(|ui| hv::commit_menu(ui, tab, snap, &ids));
+        let pos = out.row_pos(cursor.unwrap_or(0));
+        hv::keys::keyboard_menu(
+            &out.response,
+            id.with("kb-menu"),
+            keys_pressed.menu,
+            pos,
+            |ui| hv::commit_menu(ui, tab, snap, &ids),
+        );
         tab.search.menu_ids = ids;
     }
 }

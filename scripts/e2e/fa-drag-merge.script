@@ -1,0 +1,12 @@
+# Drag feature/search onto main (current) -> Merge feature/search into main…
+# -> merge dialog -> Enter.
+wait 2500
+drag 100 327.2 80 348.8
+wait 600
+shot $OUT/fa-drag-merge-popup.png
+click 700 434.4
+wait 1000
+shot $OUT/fa-drag-merge-dialog.png
+key Enter
+wait 3000
+exit

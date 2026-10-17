@@ -62,13 +62,100 @@ fn dir_is_empty(p: &Path) -> bool {
 
 // ---------------------------------------------------------------- clone
 
-struct CloneRun {
+/// A clone running in the background (not a modal): the app shows its
+/// progress in a floating panel, the user keeps working, and the new
+/// repository opens as a tab when it finishes.
+pub struct CloneJob {
+    pub url: String,
+    pub dest: PathBuf,
+    /// The destination folder did not exist before this run.
+    created: bool,
     cancel: CancelToken,
     lines: Arc<Mutex<Vec<String>>>,
     task: Task<Result<(), String>>,
-    dest: PathBuf,
-    /// The destination folder did not exist before this run.
-    created: bool,
+    /// Final error (or "cancelled"), once failed.
+    pub error: Option<String>,
+    finished: bool,
+}
+
+impl CloneJob {
+    /// Picks up the outcome once: `Some(Ok(dest))` on success, `Some(Err(e))` on failure.
+    pub fn poll(&mut self) -> Option<Result<PathBuf, String>> {
+        if self.finished {
+            return None;
+        }
+        let r = self.task.take()?;
+        self.finished = true;
+        Some(match r {
+            Ok(()) => Ok(self.dest.clone()),
+            Err(e) => {
+                let cancelled = self.cancel.is_cancelled();
+                // git removes a failed clone itself, but not when killed.
+                if cancelled && self.created && self.dest.is_dir() {
+                    let _ = std::fs::remove_dir_all(&self.dest);
+                }
+                let e = if cancelled {
+                    "Clone cancelled.".to_string()
+                } else {
+                    e
+                };
+                self.error = Some(e.clone());
+                Err(e)
+            }
+        })
+    }
+
+    pub fn running(&self) -> bool {
+        !self.finished
+    }
+
+    pub fn cancel(&self) {
+        self.cancel.cancel();
+    }
+
+    /// The latest progress line.
+    pub fn last_line(&self) -> String {
+        self.lines.lock().last().cloned().unwrap_or_default()
+    }
+
+    /// The whole (bounded) output, for the details of a failure.
+    pub fn output(&self) -> String {
+        self.lines.lock().join("\n")
+    }
+
+    /// Folder name of the destination.
+    pub fn name(&self) -> String {
+        self.dest
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| self.dest.display().to_string())
+    }
+}
+
+/// Initial cone directories of a sparse clone: one per line or separated by spaces.
+pub fn parse_sparse_dirs(text: &str) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    for d in text.split_whitespace() {
+        let d = d.trim_matches('/').replace('\\', "/");
+        if d.is_empty() {
+            continue;
+        }
+        if d.starts_with('-') {
+            return Err(format!("\"{d}\": a directory cannot start with '-'."));
+        }
+        if d.split('/').any(|c| c == ".." || c == ".") {
+            return Err(format!("\"{d}\": use plain repository-relative paths."));
+        }
+        if d.contains(['*', '?', '[', '!']) {
+            return Err(format!(
+                "\"{d}\": cone mode takes directories, not patterns."
+            ));
+        }
+        if !out.contains(&d) {
+            out.push(d);
+        }
+    }
+    Ok(out)
 }
 
 pub struct CloneRepo {
@@ -80,10 +167,10 @@ pub struct CloneRepo {
     shallow: bool,
     depth: u32,
     partial: bool,
+    sparse: bool,
+    sparse_dirs: String,
     submodules: bool,
     branch: String,
-    run: Option<CloneRun>,
-    error: Option<String>,
 }
 
 impl CloneRepo {
@@ -96,14 +183,14 @@ impl CloneRepo {
             shallow: false,
             depth: 1,
             partial: false,
+            sparse: false,
+            sparse_dirs: String::new(),
             submodules: true,
             branch: String::new(),
-            run: None,
-            error: None,
         }
     }
 
-    fn start(&mut self, ctx: &Context, shared: &Shared) {
+    fn start(&self, ctx: &Context, shared: &Shared) -> CloneJob {
         let parent = PathBuf::from(self.parent.clone().unwrap_or_default().trim());
         let dest = parent.join(self.name.trim());
         // Checked before git starts: only a folder this run created may be deleted.
@@ -115,6 +202,9 @@ impl CloneRepo {
         if self.partial {
             args.push("--filter=blob:none".into());
         }
+        if self.sparse {
+            args.push("--sparse".into());
+        }
         if self.submodules {
             args.push("--recurse-submodules".into());
         }
@@ -125,6 +215,11 @@ impl CloneRepo {
         args.push("--".into());
         args.push(self.url.trim().into());
         args.push(dest.display().to_string());
+        let cone = if self.sparse {
+            parse_sparse_dirs(&self.sparse_dirs).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         let mut git = gk_cli::Git::new(&parent, shared.log.clone());
         for (k, v) in askpass_env() {
             git = git.env(k, v);
@@ -132,6 +227,7 @@ impl CloneRepo {
         let cancel = CancelToken::new();
         let lines: Arc<Mutex<Vec<String>>> = Arc::default();
         let (c2, l2, ctx2) = (cancel.clone(), lines.clone(), ctx.clone());
+        let dest2 = dest.clone();
         let task = Task::spawn(ctx, move || {
             let a: Vec<&str> = args.iter().map(String::as_str).collect();
             let on_line = |l: Line| {
@@ -152,49 +248,37 @@ impl CloneRepo {
                 ctx2.request_repaint();
             };
             match git.run_streaming(&a, None, &c2, on_line) {
-                Ok(o) => o.check().map(|_| ()).map_err(|e| format!("{e:#}")),
-                Err(e) => Err(format!("{e:#}")),
+                Ok(o) => o.check().map(|_| ()).map_err(|e| format!("{e:#}"))?,
+                Err(e) => return Err(format!("{e:#}")),
             }
+            if !cone.is_empty() {
+                l2.lock()
+                    .push(format!("sparse-checkout set {}", cone.join(" ")));
+                ctx2.request_repaint();
+                let mut a = vec!["sparse-checkout", "set", "--"];
+                a.extend(cone.iter().map(String::as_str));
+                git.with_cwd(&dest2).run(&a).map_err(|e| {
+                    format!("The clone finished, but setting the sparse directories failed: {e:#}")
+                })?;
+            }
+            Ok(())
         });
-        self.error = None;
-        self.run = Some(CloneRun {
+        CloneJob {
+            url: self.url.trim().to_string(),
+            dest,
+            created,
             cancel,
             lines,
             task,
-            dest,
-            created,
-        });
+            error: None,
+            finished: false,
+        }
     }
 }
 
 impl AppDialog for CloneRepo {
     fn show(&mut self, ctx: &Context, shared: &mut Shared) -> bool {
         let parent = self.parent.get_or_insert_with(|| default_parent(shared));
-        if let Some(run) = &mut self.run {
-            match run.task.take() {
-                Some(Ok(())) => {
-                    shared.actions.push(Action::OpenRepo(run.dest.clone()));
-                    return false;
-                }
-                Some(Err(e)) => {
-                    let cancelled = run.cancel.is_cancelled();
-                    self.error = Some(if cancelled {
-                        "Clone cancelled.".into()
-                    } else {
-                        e
-                    });
-                    // A cancelled or failed clone leaves a partial folder behind; git removes it
-                    // itself on failure, but not when killed.
-                    if cancelled && run.created && run.dest.is_dir() {
-                        let _ = std::fs::remove_dir_all(&run.dest);
-                    }
-                    self.run = None;
-                }
-                None => {}
-            }
-        }
-        let running = self.run.is_some();
-        let mut cancel_clone = false;
         let (out, ()) = modal(
             ctx,
             "clone",
@@ -202,47 +286,46 @@ impl AppDialog for CloneRepo {
             600.0,
             "Clone",
             |ui, ctl| {
-                ui.add_enabled_ui(!running, |ui| {
-                    egui::Grid::new("clone-grid")
-                        .num_columns(2)
-                        .spacing([12.0, 6.0])
-                        .show(ui, |ui| {
-                            ui.label("Source URL / path:");
-                            let r = ui.add(
-                                egui::TextEdit::singleline(&mut self.url)
-                                    .desired_width(420.0)
-                                    .hint_text("https://github.com/user/repo.git"),
-                            );
-                            ctl.focus(&r);
-                            if r.changed() && !self.name_edited {
-                                self.name = folder_from_url(&self.url);
-                            }
-                            ui.end_row();
-                            ui.label("Parent folder:");
-                            ui.vertical(|ui| {
-                                ui.set_width(420.0);
-                                folder_picker(ui, parent, "Clone into folder");
-                            });
-                            ui.end_row();
-                            ui.label("Folder name:");
-                            if ui
-                                .add(
-                                    egui::TextEdit::singleline(&mut self.name).desired_width(420.0),
-                                )
-                                .changed()
-                            {
-                                self.name_edited = !self.name.is_empty();
-                            }
-                            ui.end_row();
-                            ui.label("Branch:");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut self.branch)
-                                    .desired_width(200.0)
-                                    .hint_text("default"),
-                            );
-                            ui.end_row();
+                egui::Grid::new("clone-grid")
+                    .num_columns(2)
+                    .spacing([12.0, 6.0])
+                    .show(ui, |ui| {
+                        ui.label("Source URL / path:");
+                        let r = ui.add(
+                            egui::TextEdit::singleline(&mut self.url)
+                                .desired_width(420.0)
+                                .hint_text("https://github.com/user/repo.git"),
+                        );
+                        ctl.focus(&r);
+                        if r.changed() && !self.name_edited {
+                            self.name = folder_from_url(&self.url);
+                        }
+                        ui.end_row();
+                        ui.label("Parent folder:");
+                        ui.vertical(|ui| {
+                            ui.set_width(420.0);
+                            folder_picker(ui, parent, "Clone into folder");
                         });
-                    ui.collapsing("Advanced options", |ui| {
+                        ui.end_row();
+                        ui.label("Folder name:");
+                        if ui
+                            .add(egui::TextEdit::singleline(&mut self.name).desired_width(420.0))
+                            .changed()
+                        {
+                            self.name_edited = !self.name.is_empty();
+                        }
+                        ui.end_row();
+                        ui.label("Branch:");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.branch)
+                                .desired_width(200.0)
+                                .hint_text("default"),
+                        );
+                        ui.end_row();
+                    });
+                egui::CollapsingHeader::new("Advanced options")
+                    .default_open(self.shallow || self.partial || self.sparse)
+                    .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.checkbox(&mut self.shallow, "Shallow clone, depth");
                             ui.add_enabled(
@@ -254,9 +337,22 @@ impl AppDialog for CloneRepo {
                             &mut self.partial,
                             "Partial clone (download file contents on demand: --filter=blob:none)",
                         );
+                        ui.checkbox(
+                            &mut self.sparse,
+                            "Sparse checkout (cone): check out only the top-level files and these folders",
+                        );
+                        if self.sparse {
+                            ui.horizontal(|ui| {
+                                ui.add_space(22.0);
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.sparse_dirs)
+                                        .desired_width(400.0)
+                                        .hint_text("folders, e.g. src docs (optional)"),
+                                );
+                            });
+                        }
                         ui.checkbox(&mut self.submodules, "Recurse submodules");
                     });
-                });
                 let dest = Path::new(parent.trim()).join(self.name.trim());
                 if self.url.trim().is_empty() || self.name.trim().is_empty() {
                     ctl.invalid();
@@ -269,63 +365,56 @@ impl AppDialog for CloneRepo {
                 } else if !Path::new(parent.trim()).is_dir() {
                     error(ui, "The parent folder does not exist.");
                     ctl.invalid();
-                } else if dest.exists() && !(dest.is_dir() && dir_is_empty(&dest)) && !running {
+                } else if dest.exists() && !(dest.is_dir() && dir_is_empty(&dest)) {
                     error(
                         ui,
                         format!("{} already exists and is not empty.", dest.display()),
                     );
                     ctl.invalid();
-                } else if !running {
-                    hint(ui, format!("Clone into {}", dest.display()));
-                }
-                if let Some(e) = &self.error {
-                    error(ui, e.clone());
-                }
-                if let Some(run) = &self.run {
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label("Cloning…");
-                        if ui.button("Cancel clone").clicked() {
-                            cancel_clone = true;
-                        }
-                    });
-                    egui::Frame::new()
-                        .fill(ui.visuals().extreme_bg_color)
-                        .inner_margin(4)
-                        .show(ui, |ui| {
-                            egui::ScrollArea::vertical()
-                                .max_height(160.0)
-                                .auto_shrink([false, true])
-                                .stick_to_bottom(true)
-                                .show(ui, |ui| {
-                                    for l in run.lines.lock().iter() {
-                                        ui.label(RichText::new(l).monospace().small());
-                                    }
-                                });
-                        });
+                } else if let Some(e) = self
+                    .sparse
+                    .then(|| parse_sparse_dirs(&self.sparse_dirs).err())
+                    .flatten()
+                {
+                    error(ui, e);
                     ctl.invalid();
+                } else {
+                    hint(
+                        ui,
+                        format!(
+                            "Clone into {} — runs in the background; the repository opens when done.",
+                            dest.display()
+                        ),
+                    );
                 }
             },
         );
-        if cancel_clone && let Some(r) = &self.run {
-            r.cancel.cancel();
-        }
         match out {
             Outcome::None => true,
-            Outcome::Cancel => {
-                // Closing while cloning cancels the clone.
-                if let Some(r) = &self.run {
-                    r.cancel.cancel();
-                    return true;
-                }
+            Outcome::Cancel => false,
+            Outcome::Ok => {
+                let job = self.start(ctx, shared);
+                shared.actions.push(Action::StartClone(Box::new(job)));
                 false
             }
-            Outcome::Ok => {
-                self.start(ctx, shared);
-                true
-            }
         }
+    }
+}
+
+#[cfg(test)]
+mod clone_tests {
+    use super::*;
+
+    #[test]
+    fn sparse_dirs_are_validated() {
+        assert_eq!(
+            parse_sparse_dirs(" src\n docs/ src\\ui ").unwrap(),
+            vec!["src", "docs", "src/ui"]
+        );
+        assert!(parse_sparse_dirs("").unwrap().is_empty());
+        assert!(parse_sparse_dirs("-x").is_err());
+        assert!(parse_sparse_dirs("a/../b").is_err());
+        assert!(parse_sparse_dirs("*.rs").is_err());
     }
 }
 

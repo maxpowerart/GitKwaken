@@ -12,6 +12,7 @@
 mod commit;
 mod conflict_guard;
 mod dnd;
+mod ignore;
 mod list;
 mod merge_tool;
 mod tree;
@@ -39,6 +40,8 @@ struct Paths {
     staged: Vec<String>,
     unstaged: Vec<String>,
     conflicts: usize,
+    /// Files per status chip bit (both lists), see [`list::KIND_FILTERS`].
+    kind_counts: [usize; 8],
 }
 
 /// Index operation queued by this view: its paths are drawn dimmed until
@@ -69,6 +72,12 @@ pub struct StatusState {
     preselect: Option<String>,
     /// Stage requests touching conflicted files, checked for markers first.
     guard: conflict_guard::Guard,
+    /// Status filter chips ([`list::KIND_FILTERS`] mask; 0 = all).
+    kinds: u8,
+    /// "Ignore › Custom pattern…" editor.
+    ignore_custom: Option<ignore::IgnoreCustom>,
+    /// Stage all (true) / unstage all (false) requested by a shortcut.
+    want_all: Option<bool>,
 }
 
 impl StatusState {
@@ -76,6 +85,12 @@ impl StatusState {
     /// in the status. Used by `GITKWAKEN_SELECT` (see `tab.rs`).
     pub fn preselect(&mut self, path: String) {
         self.preselect = Some(path);
+    }
+
+    /// Stage (`true`) or unstage (`false`) everything on the next frame of
+    /// the view (keyboard shortcuts; conflicted files are still checked).
+    pub fn request_all(&mut self, stage: bool) {
+        self.want_all = Some(stage);
     }
 
     fn apply_preselect(&mut self) {
@@ -126,19 +141,32 @@ impl StatusState {
                 .map(|e| e.path.to_string())
                 .collect();
             self.paths.conflicts = snap.status.conflicts().count();
+            let mut counts = [0usize; 8];
+            for e in snap.status.staged.iter().chain(snap.status.unstaged.iter()) {
+                counts[list::kind_bit(e.kind).trailing_zeros() as usize] += 1;
+            }
+            self.paths.kind_counts = counts;
             self.paths.status_gen = Some(snap.status_gen);
         }
         let g = snap.status_gen;
-        if self
-            .staged
-            .sync(g, &self.paths.staged, &self.filter, tree_mode)
-        {
+        if self.staged.sync(
+            g,
+            &self.paths.staged,
+            &snap.status.staged,
+            &self.filter,
+            self.kinds,
+            tree_mode,
+        ) {
             self.staged.repair_cursor(&self.paths.staged);
         }
-        if self
-            .unstaged
-            .sync(g, &self.paths.unstaged, &self.filter, tree_mode)
-        {
+        if self.unstaged.sync(
+            g,
+            &self.paths.unstaged,
+            &snap.status.unstaged,
+            &self.filter,
+            self.kinds,
+            tree_mode,
+        ) {
             self.unstaged.repair_cursor(&self.paths.unstaged);
         }
         if let Some(p) = &self.pending {
@@ -216,6 +244,16 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
     for op in tab.status.guard.poll() {
         run_stage(tab, snap, op);
     }
+    if let Some(stage) = tab.status.want_all.take() {
+        let side = if stage { Side::Unstaged } else { Side::Staged };
+        let any = match side {
+            Side::Staged => !snap.status.staged.is_empty(),
+            Side::Unstaged => !snap.status.unstaged.is_empty(),
+        };
+        if any {
+            handle(ui, tab, snap, shared, side, Ev::All);
+        }
+    }
     let key = tab.path.clone();
 
     if snap.refs.state != RepoState::Clean {
@@ -278,6 +316,7 @@ fn lists(
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.toggle_value(tree, "Tree")
                 .on_hover_text("Group files by folder");
+            kind_chips(ui, &mut tab.status.kinds, &tab.status.paths.kind_counts, p);
             if !tab.status.filter.is_empty()
                 && ui.small_button("×").on_hover_text("Clear filter").clicked()
             {
@@ -285,7 +324,7 @@ fn lists(
             }
             ui.add(
                 egui::TextEdit::singleline(&mut tab.status.filter)
-                    .hint_text("Filter files")
+                    .hint_text("Filter files (fuzzy)")
                     .desired_width(ui.available_width()),
             );
         });
@@ -299,6 +338,12 @@ fn lists(
         .external_merge_tool
         .as_ref()
         .is_some_and(|t| !t.command.trim().is_empty());
+    let has_diff_tool = shared
+        .settings
+        .external_diff_tool
+        .as_ref()
+        .is_some_and(|t| !t.command.trim().is_empty());
+    let row_pad = if shared.settings.compact { 6.0 } else { 10.0 };
     let op_running = snap.op.is_some();
     let avail = ui.available_height();
     let key = tab.path.clone();
@@ -311,7 +356,7 @@ fn lists(
             Side::Staged => (&snap.status.staged, snap.status.staged.len()),
             Side::Unstaged => (&snap.status.unstaged, snap.status.unstaged.len()),
         };
-        let filtered = !st.filter.trim().is_empty();
+        let filtered = !st.filter.trim().is_empty() || st.kinds != 0;
         let shown = st.list(side).model.files;
         let sel = st.list(side).target_count();
         let index_op = st
@@ -376,6 +421,8 @@ fn lists(
             pending: &pending,
             has_merge_tool: has_tool,
             dnd_scope,
+            has_diff_tool,
+            row_pad,
         };
         let ls = match side {
             Side::Staged => &mut st.staged,
@@ -435,6 +482,29 @@ fn lists(
         };
         dnd::paint_ghost(ui, &pl, over, p);
     }
+}
+
+/// Status filter chips (M A D R ? U), combinable; laid out right to left.
+fn kind_chips(ui: &mut Ui, kinds: &mut u8, counts: &[usize; 8], p: crate::theme::Palette) {
+    ui.spacing_mut().item_spacing.x = 2.0;
+    for &(bit, code, label) in list::KIND_FILTERS.iter().rev() {
+        let n = counts[bit.trailing_zeros() as usize];
+        let on = *kinds & bit != 0;
+        let text = RichText::new(code).monospace().color(if n == 0 && !on {
+            p.muted.gamma_multiply(0.6)
+        } else {
+            p.muted
+        });
+        let text = if on { text.strong() } else { text };
+        if ui
+            .selectable_label(on, text)
+            .on_hover_text(format!("Show only {label} files ({n}); combine several"))
+            .clicked()
+        {
+            *kinds ^= bit;
+        }
+    }
+    ui.add_space(4.0);
 }
 
 fn handle(ui: &Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared, side: Side, ev: Ev) {
@@ -516,6 +586,26 @@ fn handle(ui: &Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared, side
             session.run_index_op("Mark resolved", move |r| r.mark_resolved(&paths));
         }
         Ev::MergeEditor(p) => crate::views::merge::open_merge(tab, p),
+        Ev::IgnoreCustom(suggestion) => {
+            tab.status.ignore_custom = Some(ignore::IgnoreCustom::new(suggestion));
+        }
+        Ev::ExternalDiff(path) => {
+            let target = match side {
+                Side::Staged => DiffTarget::Staged {
+                    old_path: tab
+                        .status
+                        .paths
+                        .staged
+                        .binary_search(&path)
+                        .ok()
+                        .and_then(|i| snap.status.staged.get(i))
+                        .and_then(|e| e.orig_path.as_ref().map(|o| o.to_string())),
+                    path,
+                },
+                Side::Unstaged => DiffTarget::Unstaged { path },
+            };
+            crate::views::diff::open_external(&session, &target, shared);
+        }
         Ev::MergeTool(p) => match shared.settings.external_merge_tool.clone() {
             Some(tool) if !tool.command.trim().is_empty() => {
                 tab.status
@@ -683,6 +773,18 @@ fn banner(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &Shared) {
 
 fn modals(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &Shared) {
     let p = shared.palette;
+    if let Some(dlg) = &mut tab.status.ignore_custom {
+        match dlg.show(ui.ctx(), tab.session.repo(), p.muted, p.removed_fg) {
+            ignore::Outcome::Open => {}
+            ignore::Outcome::Cancel => tab.status.ignore_custom = None,
+            ignore::Outcome::Ignore(pattern) => {
+                tab.status.ignore_custom = None;
+                let label = format!("Ignore {pattern}");
+                tab.session
+                    .run_index_op(label, move |r| r.ignore(&[pattern]));
+            }
+        }
+    }
     if tab.status.confirm_abort {
         let state = snap.refs.state;
         let mut decision: Option<bool> = None;

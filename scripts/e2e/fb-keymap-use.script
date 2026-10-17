@@ -1,0 +1,8 @@
+# The rebound shortcut Ctrl+Alt+F opens Fetch; Enter fetches.
+wait 2500
+key F ctrl alt
+wait 800
+shot $OUT/fb-keymap-fetch-dialog.png
+key Enter
+wait 3500
+exit

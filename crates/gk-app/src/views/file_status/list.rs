@@ -59,12 +59,39 @@ pub enum Ev {
     MergeTool(String),
     /// Open the built-in three-way merge editor.
     MergeEditor(String),
+    /// Ask for a custom ignore pattern (prefilled with a suggestion).
+    IgnoreCustom(String),
+    /// Open the file's diff in the configured external diff tool.
+    ExternalDiff(String),
+}
+
+/// Status filter chips: (bit, code, label). A mask of 0 shows everything.
+pub const KIND_FILTERS: [(u8, &str, &str); 6] = [
+    (1, "M", "Modified"),
+    (2, "A", "Added"),
+    (4, "D", "Deleted"),
+    (8, "R", "Renamed"),
+    (16, "?", "Untracked"),
+    (32, "U", "Conflicted"),
+];
+
+/// The [`KIND_FILTERS`] bit of a status kind.
+pub fn kind_bit(k: Kind) -> u8 {
+    match k {
+        Kind::Modified | Kind::TypeChange => 1,
+        Kind::Added | Kind::IntentToAdd => 2,
+        Kind::Deleted => 4,
+        Kind::Renamed | Kind::Copied => 8,
+        Kind::Untracked => 16,
+        Kind::Conflict(_) => 32,
+    }
 }
 
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
 struct ModelKey {
     status_gen: u64,
     filter: String,
+    kinds: u8,
     tree: bool,
     collapse_ver: u64,
 }
@@ -108,33 +135,45 @@ pub struct ListCtx<'a> {
     pub has_merge_tool: bool,
     /// Drag-and-drop scope of the repository tab (see [`DragFiles`]).
     pub dnd_scope: Id,
+    pub has_diff_tool: bool,
+    /// Extra row height (comfortable density adds more).
+    pub row_pad: f32,
 }
 
 impl ListState {
     /// Rebuilds rows when the status, filter, mode or collapsed set changed.
-    /// Returns true when rebuilt.
+    /// `kinds` is a [`KIND_FILTERS`] mask (0 = all) over `entries` (parallel
+    /// to `paths`). Returns true when rebuilt.
     pub fn sync(
         &mut self,
         status_gen: u64,
         paths: &[String],
+        entries: &[Entry],
         filter: &str,
+        kinds: u8,
         tree_mode: bool,
     ) -> bool {
         let key = ModelKey {
             status_gen,
             filter: filter.to_string(),
+            kinds,
             tree: tree_mode,
             collapse_ver: self.collapse_ver,
         };
         if self.model.key.as_ref() == Some(&key) {
             return false;
         }
-        let terms = tree::terms(filter);
-        let mut buf = String::new();
+        let mut fuzzy = tree::Filter::new(filter);
         let items: Vec<(u32, &str)> = paths
             .iter()
             .enumerate()
-            .filter(|(_, p)| tree::matches(p, &terms, &mut buf))
+            .filter(|(i, _)| {
+                kinds == 0
+                    || entries
+                        .get(*i)
+                        .is_some_and(|e| kinds & kind_bit(e.kind) != 0)
+            })
+            .filter(|(_, p)| fuzzy.matches(p))
             .map(|(i, p)| (i as u32, p.as_str()))
             .collect();
         self.model.files = items.len();
@@ -343,7 +382,7 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
     let list_id = ui.make_persistent_id(("gk-file-list", c.side));
     let body_font = egui::TextStyle::Body.resolve(ui.style());
     let mono = egui::TextStyle::Monospace.resolve(ui.style());
-    let row_h = (ui.ctx().fonts_mut(|f| f.row_height(&body_font)) + 6.0).round();
+    let row_h = (ui.ctx().fonts_mut(|f| f.row_height(&body_font)) + c.row_pad).round();
     let n = ls.model.rows.len();
 
     if n == 0 {
@@ -855,10 +894,29 @@ fn file_menu(ui: &mut Ui, c: &ListCtx, targets: &[String], out: &mut Vec<Ev>) {
                     Ev::Ignore(targets.iter().map(|t| format!("/{t}")).collect()),
                 );
             }
+            ui.separator();
+            if ui.button("Custom pattern…").clicked() {
+                let suggestion = single
+                    .as_deref()
+                    .and_then(|p| p.rsplit('/').next())
+                    .and_then(|f| f.rsplit_once('.').filter(|(s, _)| !s.is_empty()))
+                    .map(|(_, ext)| format!("*.{ext}"))
+                    .unwrap_or_default();
+                emit(ui, Ev::IgnoreCustom(suggestion));
+            }
         });
     }
     ui.separator();
     if let Some(p) = &single {
+        let b = ui
+            .add_enabled(
+                c.has_diff_tool,
+                egui::Button::new("Open in external diff tool"),
+            )
+            .on_disabled_hover_text("Configure an external diff tool in Settings");
+        if b.clicked() {
+            emit(ui, Ev::ExternalDiff(p.clone()));
+        }
         if ui.button("Open file").clicked() {
             emit(ui, Ev::Open(p.clone()));
         }
@@ -926,7 +984,7 @@ mod tests {
 
     fn state(paths: &[String], tree: bool) -> ListState {
         let mut ls = ListState::default();
-        ls.sync(1, paths, "", tree);
+        ls.sync(1, paths, &[], "", 0, tree);
         ls
     }
 
@@ -954,15 +1012,15 @@ mod tests {
         let mut ls = state(&paths, false);
         ls.select_only("b".into(), 1);
         let after = strs(&["a", "c"]);
-        ls.sync(2, &after, "", false);
+        ls.sync(2, &after, &[], "", 0, false);
         assert!(ls.repair_cursor(&after));
         assert_eq!(ls.cursor.as_deref(), Some("c"));
         // Selection of vanished paths is dropped on status change.
         let last = strs(&["a"]);
-        ls.sync(3, &last, "", false);
+        ls.sync(3, &last, &[], "", 0, false);
         ls.repair_cursor(&last);
         assert_eq!(ls.cursor.as_deref(), Some("a"));
-        ls.sync(4, &[], "", false);
+        ls.sync(4, &[], &[], "", 0, false);
         ls.repair_cursor(&[]);
         assert!(ls.cursor.is_none());
     }
@@ -994,10 +1052,29 @@ mod tests {
     fn filter_and_rebuild_key() {
         let paths = strs(&["src/main.rs", "README.md"]);
         let mut ls = state(&paths, false);
-        assert!(!ls.sync(1, &paths, "", false));
-        assert!(ls.sync(1, &paths, "MAIN", false));
+        assert!(!ls.sync(1, &paths, &[], "", 0, false));
+        assert!(ls.sync(1, &paths, &[], "MAIN", 0, false));
         assert_eq!(ls.model.files, 1);
         ls.collapse_ver += 1;
-        assert!(ls.sync(1, &paths, "MAIN", false));
+        assert!(ls.sync(1, &paths, &[], "MAIN", 0, false));
+    }
+    #[test]
+    fn status_chips_combine_with_text_filter() {
+        let paths = strs(&["a.rs", "b.rs", "c.txt", "d.rs"]);
+        let entries = vec![
+            Entry::new("a.rs", Kind::Modified),
+            Entry::new("b.rs", Kind::Untracked),
+            Entry::new("c.txt", Kind::Untracked),
+            Entry::new("d.rs", Kind::Deleted),
+        ];
+        let mut ls = ListState::default();
+        ls.sync(1, &paths, &entries, "", 16, false);
+        assert_eq!(ls.model.files, 2, "untracked only");
+        assert!(ls.sync(1, &paths, &entries, "rs", 16, false));
+        assert_eq!(ls.model.files, 1, "untracked .rs");
+        ls.sync(1, &paths, &entries, "", 1 | 4, false);
+        assert_eq!(ls.model.files, 2, "modified + deleted");
+        ls.sync(1, &paths, &entries, "", 32, false);
+        assert_eq!(ls.model.files, 0);
     }
 }

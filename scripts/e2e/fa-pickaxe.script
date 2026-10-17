@@ -1,0 +1,19 @@
+# Pickaxe in regex mode: -G "f[67]".
+wait 2500
+click 1369 92
+wait 300
+click 914 118.4
+wait 300
+click 980 180
+wait 300
+click 1008 118.4
+type f[67]
+wait 2000
+shot $OUT/fa-pickaxe.png
+click 480 172
+wait 300
+key End shift
+wait 300
+key C ctrl
+wait 500
+exit

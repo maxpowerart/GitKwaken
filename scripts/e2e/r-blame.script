@@ -2,7 +2,7 @@
 wait 2500
 rclick 328 217
 wait 500
-click 354 440
+click 354 461.6
 wait 2000
 shot $OUT/blame.png
 rclick 400 182

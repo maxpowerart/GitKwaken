@@ -1,0 +1,4 @@
+# GITKWAKEN_FAKE_GIT_VERSION=2.30.1: non-modal "git too old" banner; Dismiss.
+wait 2500
+shot $OUT/fb-git-banner.png
+exit

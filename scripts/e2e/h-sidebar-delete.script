@@ -1,16 +1,16 @@
 # Sidebar: tag v0.1.0 -> Delete... -> Delete; then bugfix/crash -> Delete...
 # -> Delete (the tag goes first: deleting the branch shifts the rows below).
 wait 2500
-rclick 80 412.8
+rclick 80 434.1
 wait 500
-click 130 473.6
+click 130 494.9
 wait 800
 shot $OUT/h-sidebar-delete-tag-dialog.png
 click 803.2 512
 wait 2500
-rclick 80 242.4
+rclick 80 263.7
 wait 500
-click 130 455.2
+click 130 476.5
 wait 800
 shot $OUT/h-sidebar-delete-branch-dialog.png
 click 803.2 510.4

@@ -18,9 +18,22 @@
   Release notes for update.json.
 .PARAMETER SkipBuild
   Package an existing target\release\gitkwaken.exe without rebuilding.
+.PARAMETER BundleGit
+  Also bundle MinGit: downloads the busybox-free 64-bit MinGit zip from the
+  git-for-windows GitHub release (version >= 2.45), verifies its SHA-256 against
+  the checksum table in that release's notes, and unpacks it to <stage>\git\.
+  It ships in the zip and the installer installs it to {app}\git. gk-cli's
+  find_git prefers <exe_dir>\git\cmd\git.exe when present. Downloads are
+  cached in <dist>\cache.
+.PARAMETER MinGitVersion
+  Git for Windows version for -BundleGit, e.g. 2.47.1. Default: latest release.
+.PARAMETER DistDir
+  Output folder. Default: <repo>\dist.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File packaging\build-release.ps1
+.EXAMPLE
+  powershell -ExecutionPolicy Bypass -File packaging\build-release.ps1 -BundleGit -MinGitVersion 2.47.1
 #>
 [CmdletBinding()]
 param(
@@ -30,14 +43,61 @@ param(
     # GitHub "owner/name"; defaults to the origin remote. Drives download URLs
     # and the update channel compiled into the executable.
     [string]$Repo,
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [switch]$BundleGit,
+    [string]$MinGitVersion,
+    [string]$DistDir
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+# Downloads MinGit into $Dest (git\cmd\git.exe, ...) after checking its SHA-256
+# against the "MinGit-<v>-64-bit.zip | <sha256>" row of the release notes.
+function Install-MinGit([string]$Dest, [string]$WantVersion, [string]$CacheDir) {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $headers = @{ 'User-Agent' = 'gitkwaken-build'; 'Accept' = 'application/vnd.github+json' }
+    if ($env:GITHUB_TOKEN) { $headers['Authorization'] = "Bearer $env:GITHUB_TOKEN" }
+    $api = 'https://api.github.com/repos/git-for-windows/git/releases'
+    if ($WantVersion) {
+        $rel = Invoke-RestMethod -Headers $headers -Uri "$api/tags/v$($WantVersion.TrimStart('v')).windows.1"
+    } else {
+        $rel = Invoke-RestMethod -Headers $headers -Uri "$api/latest"
+    }
+    # Busybox-free build: "MinGit-2.47.1-64-bit.zip" (not "...-busybox-64-bit.zip").
+    $asset = $rel.assets | Where-Object { $_.name -match '^MinGit-\d+\.\d+\.\d+(\.\d+)?-64-bit\.zip$' } | Select-Object -First 1
+    if (-not $asset) { throw "no busybox-free 64-bit MinGit zip in release $($rel.tag_name)" }
+    $null = $asset.name -match '^MinGit-(\d+)\.(\d+)\.(\d+)'
+    $ver = [version]('{0}.{1}.{2}' -f $Matches[1], $Matches[2], $Matches[3])
+    if ($ver -lt [version]'2.45.0') { throw "MinGit $ver is older than the required 2.45" }
+    $m = [regex]::Match($rel.body, [regex]::Escape($asset.name) + '\s*\|\s*([0-9a-fA-F]{64})')
+    if (-not $m.Success) { throw "SHA-256 of $($asset.name) not found in the $($rel.tag_name) release notes" }
+    $want = $m.Groups[1].Value.ToLowerInvariant()
+    New-Item -ItemType Directory -Force $CacheDir | Out-Null
+    $zip = Join-Path $CacheDir $asset.name
+    if (-not (Test-Path $zip) -or (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant() -ne $want) {
+        Write-Host "==> downloading $($asset.browser_download_url)"
+        $ProgressPreference = 'SilentlyContinue'
+        Invoke-WebRequest -UseBasicParsing -Headers @{ 'User-Agent' = 'gitkwaken-build' } -Uri $asset.browser_download_url -OutFile $zip
+    }
+    $got = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
+    if ($got -ne $want) {
+        Remove-Item -Force $zip
+        throw "SHA-256 mismatch for $($asset.name): got $got, release notes list $want"
+    }
+    Write-Host "==> MinGit $ver ($($asset.name)): SHA-256 $got matches the $($rel.tag_name) release notes"
+    if (Test-Path $Dest) { Remove-Item -Recurse -Force $Dest }
+    Expand-Archive -Path $zip -DestinationPath $Dest
+    $gitExe = Join-Path $Dest 'cmd\git.exe'
+    if (-not (Test-Path $gitExe)) { throw "unexpected MinGit layout: $gitExe missing" }
+    $v = & $gitExe --version
+    if ($LASTEXITCODE -ne 0) { throw "bundled git does not run: $gitExe" }
+    Write-Host "==> bundled $v in $Dest"
+}
+
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$Dist = Join-Path $Root 'dist'
+$Dist = if ($DistDir) { [System.IO.Path]::GetFullPath($DistDir) } else { Join-Path $Root 'dist' }
+New-Item -ItemType Directory -Force $Dist | Out-Null
 Push-Location $Root
 try {
     # ---------------------------------------------------------------- metadata
@@ -88,6 +148,9 @@ try {
     foreach ($f in 'LICENSE-MIT', 'LICENSE-APACHE', 'README.md') {
         $p = Join-Path $Root $f
         if (Test-Path $p) { Copy-Item $p $Stage } else { Write-Warning "$f not found, skipped" }
+    }
+    if ($BundleGit) {
+        Install-MinGit -Dest (Join-Path $Stage 'git') -WantVersion $MinGitVersion -CacheDir (Join-Path $Dist 'cache')
     }
 
     # ---------------------------------------------------------------- zip

@@ -5,9 +5,9 @@ wait 600
 type v9.9
 key Enter
 wait 2000
-rclick 85 327
+rclick 85 348.3
 wait 500
-click 142 366
+click 142 387.3
 wait 600
 shot $OUT/tag-push-dialog.png
 key Enter

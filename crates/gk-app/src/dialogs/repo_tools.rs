@@ -393,6 +393,9 @@ pub struct Optimize {
     status: Option<Optimization>,
     pending: Option<TrackedOp<()>>,
     result: Option<Result<(), String>>,
+    /// Diagnostics: object write speed measurement.
+    diag: Option<Task<Result<super::diagnostics::WriteSpeed, String>>>,
+    diag_result: Option<Result<super::diagnostics::WriteSpeed, String>>,
 }
 
 impl Optimize {
@@ -402,6 +405,8 @@ impl Optimize {
             status: None,
             pending: None,
             result: None,
+            diag: None,
+            diag_result: None,
         }
     }
 
@@ -417,11 +422,20 @@ impl TabDialog for Optimize {
         ctx: &Context,
         tab: &mut RepoTab,
         snap: &Snapshot,
-        _shared: &mut Shared,
+        shared: &mut Shared,
     ) -> bool {
         if self.status.is_none() && self.task.is_none() {
             self.load(ctx, tab);
         }
+        if let Some(t) = &mut self.diag
+            && let Some(r) = t.take()
+        {
+            self.diag = None;
+            self.diag_result = Some(r);
+        }
+        let workdir = tab.path.clone();
+        let git_dir = tab.session.repo().git_dir().to_path_buf();
+        let log = shared.log.clone();
         if let Some(t) = &mut self.task
             && let Some(s) = t.take()
         {
@@ -493,6 +507,13 @@ impl TabDialog for Optimize {
                     Some(Err(e)) => error(ui, e.clone()),
                     None => {}
                 }
+                if diagnostics_ui(ui, &self.diag, &self.diag_result, &workdir) {
+                    let (w, g, log) = (workdir.clone(), git_dir.clone(), log.clone());
+                    self.diag_result = None;
+                    self.diag = Some(Task::spawn(ctx, move || {
+                        super::diagnostics::measure(&w, &g, &log)
+                    }));
+                }
             },
         );
         match out {
@@ -509,6 +530,92 @@ impl TabDialog for Optimize {
             }
         }
     }
+}
+
+/// Optimize › Diagnostics. Returns true when a measurement should start.
+fn diagnostics_ui(
+    ui: &mut egui::Ui,
+    running: &Option<Task<Result<super::diagnostics::WriteSpeed, String>>>,
+    result: &Option<Result<super::diagnostics::WriteSpeed, String>>,
+    workdir: &std::path::Path,
+) -> bool {
+    use super::diagnostics as diag;
+    let mut start = false;
+    ui.add_space(6.0);
+    ui.separator();
+    ui.label(RichText::new("Diagnostics").strong());
+    ui.horizontal(|ui| {
+        let b = ui
+            .add_enabled(
+                running.is_none(),
+                egui::Button::new("Measure object write speed"),
+            )
+            .on_hover_text(format!(
+                "Writes {} small objects into a throw-away repository on this volume",
+                diag::OBJECTS
+            ));
+        if b.clicked() {
+            start = true;
+        }
+        if running.is_some() {
+            ui.spinner();
+            ui.label(RichText::new("Measuring…").weak());
+        }
+    });
+    match result {
+        Some(Ok(s)) => {
+            let line = format!(
+                "{:.2} ms per object ({} objects in {:.0} ms){}",
+                s.per_object_ms,
+                diag::OBJECTS,
+                s.total_ms,
+                match s.dev_drive {
+                    Some(true) => " · Dev Drive",
+                    Some(false) => " · not a Dev Drive",
+                    None => "",
+                }
+            );
+            if s.slow() {
+                warning(ui, format!("Slow: {line}"));
+                ui.label(
+                    "Writing objects should take well under 2 ms each. On Windows the usual cause is \
+                     real-time antivirus scanning (Microsoft Defender) of every file git creates.",
+                );
+                hint(
+                    ui,
+                    "Exclude the repository and git from scanning (PowerShell as administrator):",
+                );
+                let cmds = diag::defender_commands(workdir, &gk_cli::find_git());
+                command_box(ui, &cmds);
+                hint(
+                    ui,
+                    "Or keep repositories on a Dev Drive (ReFS; Defender scans it in performance mode):",
+                );
+                command_box(ui, &diag::dev_drive_hint(workdir));
+                hint(ui, "GitKwaken never runs these commands itself.");
+            } else {
+                ui.label(RichText::new(format!("✔ {line}")).color(GOOD));
+            }
+        }
+        Some(Err(e)) => error(ui, e.clone()),
+        None => {}
+    }
+    start
+}
+
+/// Read-only monospace command text with a copy button.
+fn command_box(ui: &mut egui::Ui, text: &str) {
+    ui.horizontal_top(|ui| {
+        egui::Frame::new()
+            .fill(ui.visuals().extreme_bg_color)
+            .inner_margin(4)
+            .show(ui, |ui| {
+                ui.label(RichText::new(text).monospace().small());
+            });
+        if ui.small_button("Copy").clicked() {
+            ui.ctx().copy_text(text.to_string());
+        }
+    });
 }
 
 // ---------------------------------------------------------------- submodules

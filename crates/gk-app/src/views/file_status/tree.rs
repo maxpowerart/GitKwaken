@@ -1,6 +1,8 @@
 //! Directory tree of changed files, flattened into display rows, plus the
 //! filter matcher. Pure and allocation-light: built once per status change.
 
+use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
+use nucleo_matcher::{Config, Matcher, Utf32Str};
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
@@ -133,19 +135,34 @@ fn walk(tree: &Tree, n: usize, depth: u16, collapsed: &HashSet<String>, out: &mu
     }
 }
 
-/// Lower-cased whitespace-separated terms of a filter query.
-pub fn terms(query: &str) -> Vec<String> {
-    query.split_whitespace().map(str::to_lowercase).collect()
+/// Fuzzy path filter (nucleo-matcher, fzf syntax): whitespace-separated
+/// atoms must all match, case-insensitively; `'exact`, `^prefix`,
+/// `suffix$` and `!negation` work as in fzf.
+pub struct Filter {
+    pattern: Option<Pattern>,
+    matcher: Matcher,
+    buf: Vec<char>,
 }
 
-/// Every term occurs in `path` (case-insensitive substring match).
-pub fn matches(path: &str, terms: &[String], buf: &mut String) -> bool {
-    if terms.is_empty() {
-        return true;
+impl Filter {
+    pub fn new(query: &str) -> Filter {
+        let q = query.trim();
+        Filter {
+            pattern: (!q.is_empty())
+                .then(|| Pattern::parse(q, CaseMatching::Ignore, Normalization::Smart)),
+            matcher: Matcher::new(Config::DEFAULT.match_paths()),
+            buf: Vec::new(),
+        }
     }
-    buf.clear();
-    buf.extend(path.chars().flat_map(char::to_lowercase));
-    terms.iter().all(|t| buf.contains(t.as_str()))
+
+    pub fn matches(&mut self, path: &str) -> bool {
+        match &self.pattern {
+            None => true,
+            Some(p) => p
+                .score(Utf32Str::new(path, &mut self.buf), &mut self.matcher)
+                .is_some(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -255,11 +272,19 @@ mod tests {
     }
 
     #[test]
-    fn filter_terms() {
-        let mut buf = String::new();
-        let t = terms("  VIEWS  rs ");
-        assert!(matches("src/Views/diff.rs", &t, &mut buf));
-        assert!(!matches("src/model.rs", &t, &mut buf));
-        assert!(matches("anything", &terms(""), &mut buf));
+    fn fuzzy_filter() {
+        let mut f = Filter::new("  VIEWS  rs ");
+        assert!(f.matches("src/Views/diff.rs"));
+        assert!(!f.matches("src/model.rs"));
+        assert!(Filter::new("").matches("anything"));
+        // Fuzzy: a subsequence across path components.
+        let mut f = Filter::new("fsdiff");
+        assert!(f.matches("views/file_status/diff.rs"));
+        assert!(!f.matches("views/history.rs"));
+        // fzf operators.
+        assert!(Filter::new("!test").matches("src/main.rs"));
+        assert!(!Filter::new("!test").matches("tests/main.rs"));
+        assert!(Filter::new("rs$").matches("a/b.rs"));
+        assert!(!Filter::new("rs$").matches("a/rs.txt"));
     }
 }

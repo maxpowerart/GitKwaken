@@ -198,6 +198,19 @@ pub struct ListOutput {
     pub secondary: Option<usize>,
     /// Rows fully or partially on screen.
     pub visible: Range<usize>,
+    /// Screen y of row 0's top edge, and the row height (see [`Self::row_pos`]).
+    pub top: f32,
+    pub row_h: f32,
+}
+
+impl ListOutput {
+    /// Bottom-left corner of `row` on screen, clamped to the list (where a
+    /// keyboard-opened context menu goes).
+    pub fn row_pos(&self, row: usize) -> egui::Pos2 {
+        let r = self.response.rect;
+        let y = self.top + (row + 1) as f32 * self.row_h;
+        pos2(r.left() + 40.0, y.clamp(r.top(), r.bottom()))
+    }
 }
 
 /// Geometry handed to the row painter.
@@ -345,6 +358,8 @@ pub fn virtual_list(
                 double_clicked,
                 secondary,
                 visible,
+                top,
+                row_h,
             }
         })
         .inner
@@ -627,7 +642,7 @@ pub fn paint_commit_cells(
             cell_text(
                 p,
                 Rect::from_x_y_ranges(cols.author, y),
-                m.author.clone(),
+                m.author.to_string(),
                 &st.font,
                 st.text,
             );

@@ -1,0 +1,10 @@
+# Click the stash in the sidebar -> stash view (tracked + untracked files)
+# -> Pop.
+wait 2500
+click 120 476.8
+wait 2000
+shot $OUT/fa-stash-view.png
+click 324.8 92
+wait 3000
+shot $OUT/fa-stash-popped.png
+exit

@@ -1,0 +1,14 @@
+# GITKWAKEN_DIALOG=repo-config: an invalid edit is refused (file untouched).
+wait 2500
+key F ctrl shift
+wait 800
+key Enter
+type [broken
+key Enter ctrl
+wait 2000
+move 700 450
+wait 300
+shot $OUT/fb-repo-config-invalid.png
+key Escape
+wait 500
+exit

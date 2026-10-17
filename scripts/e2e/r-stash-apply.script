@@ -1,8 +1,8 @@
 # Sidebar stash row: right-click -> Apply… -> Apply (keeps the stash).
 wait 2500
-rclick 120 391
+rclick 120 412.3
 wait 500
-click 150 408
+click 150 429.3
 wait 600
 shot $OUT/stash-apply-dialog.png
 key Enter

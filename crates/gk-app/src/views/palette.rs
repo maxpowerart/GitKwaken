@@ -50,6 +50,29 @@ enum Cmd {
     Checkout(String),
     Merge(String),
     Blame(String),
+    /// A dialog for the selected commit (history, search or reflog).
+    OnCommit(fn(&Snapshot, String) -> Dialog),
+}
+
+/// The single commit selected in the active list, if any.
+fn selected_commit(t: &RepoTab, snap: &Snapshot) -> Option<String> {
+    let id = match t.view {
+        View::Search => {
+            let ids = t.search.sel.sorted(|k| t.search.row_of(snap, k));
+            (ids.len() == 1).then(|| ids[0])
+        }
+        View::Reflog => t.reflog.selected_id(),
+        _ => {
+            let f = &t.history.filter;
+            let ids = if f.active() {
+                t.history.sel.sorted(|k| f.row_of(k))
+            } else {
+                t.history.sel.sorted(|k| snap.history.row(k))
+            };
+            (ids.len() == 1).then(|| ids[0])
+        }
+    };
+    id.map(|i| i.to_string())
 }
 
 struct Item {
@@ -68,6 +91,10 @@ fn items(snap: Option<&Snapshot>) -> Vec<Item> {
     add("Open repository…", Cmd::App(|| Action::OpenRepoDialog));
     add("Clone repository…", Cmd::Global(GlobalDialog::clone_repo));
     add("Create repository…", Cmd::Global(GlobalDialog::init_repo));
+    add(
+        "Scan folder for repositories…",
+        Cmd::Global(GlobalDialog::scan_repos),
+    );
     add("Settings", Cmd::Global(GlobalDialog::settings));
     add("About GitKwaken", Cmd::Global(GlobalDialog::about));
     add("Toggle output log", Cmd::ToggleOutput);
@@ -75,6 +102,28 @@ fn items(snap: Option<&Snapshot>) -> Vec<Item> {
         add("View: File status", Cmd::View(View::FileStatus));
         add("View: History", Cmd::View(View::History));
         add("View: Search", Cmd::View(View::Search));
+        add("View: Reflog", Cmd::View(View::Reflog));
+        add("Undo last operation…", Cmd::Dialog(|_| Dialog::undo()));
+        add(
+            "Checkout selected commit…  (Enter)",
+            Cmd::OnCommit(|_, id| Dialog::checkout(id)),
+        );
+        add(
+            "New branch at selected commit…  (Ctrl+B)",
+            Cmd::OnCommit(|s, id| Dialog::branch(s, Some(id))),
+        );
+        add(
+            "New tag at selected commit…  (Ctrl+T)",
+            Cmd::OnCommit(|_, id| Dialog::tag(Some(id))),
+        );
+        add(
+            "Add/Edit note of selected commit…",
+            Cmd::OnCommit(|_, id| Dialog::edit_note(id)),
+        );
+        add(
+            "Reset current branch to selected commit…",
+            Cmd::OnCommit(|_, id| Dialog::reset(id)),
+        );
         add("Refresh", Cmd::Refresh);
         add("Fetch…", Cmd::Dialog(Dialog::fetch));
         add("Pull…", Cmd::Dialog(Dialog::pull));
@@ -91,6 +140,18 @@ fn items(snap: Option<&Snapshot>) -> Vec<Item> {
         add("Add remote…", Cmd::Dialog(|_| Dialog::add_remote()));
         add("Apply patch…", Cmd::Dialog(|_| Dialog::apply_patch()));
         add("Git console…", Cmd::Dialog(|_| Dialog::console()));
+        add(
+            "Edit .gitignore…",
+            Cmd::Dialog(|_| Dialog::edit_gitignore()),
+        );
+        add(
+            "Edit repository config…",
+            Cmd::Dialog(|_| Dialog::edit_repo_config()),
+        );
+        add(
+            "Edit global git config…",
+            Cmd::Dialog(|_| Dialog::edit_global_config()),
+        );
         add("Bisect…", Cmd::Dialog(Dialog::bisect));
         add("Git Flow…", Cmd::Dialog(Dialog::git_flow));
         add("Git LFS…", Cmd::Dialog(Dialog::lfs));
@@ -259,6 +320,13 @@ pub fn show(
         (Cmd::Checkout(b), Some(t), _) => t.dialog = Some(Dialog::checkout(b)),
         (Cmd::Merge(p), Some(t), _) => crate::views::merge::open_merge(t, p),
         (Cmd::Blame(p), Some(t), _) => crate::views::blame::open_blame(t, p, None),
+        (Cmd::OnCommit(f), Some(t), Some(s)) => match selected_commit(t, &s) {
+            Some(id) => t.dialog = Some(f(&s, id)),
+            None => t.session.push_message(
+                gk_core::MessageKind::Info,
+                "Select a single commit in History, Search or Reflog first.",
+            ),
+        },
         _ => {}
     }
 }

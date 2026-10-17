@@ -1,0 +1,7 @@
+# Undo after a merge with a local edit in a merged file: refused (Undo
+# disabled, Enter does nothing).
+wait 3000
+shot $OUT/fa-undo-refuse-dialog.png
+key Enter
+wait 1500
+exit

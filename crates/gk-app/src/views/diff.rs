@@ -6,6 +6,8 @@
 //! The row layout and the removed/added pairing are computed once per
 //! loaded diff ([`model::Layout`]); word highlights lazily per visible line.
 
+mod external;
+mod guard;
 mod model;
 mod preview;
 mod syntax;
@@ -65,6 +67,7 @@ enum Act {
     DiscardSel,
     CopySel,
     CopyPatch,
+    External,
 }
 
 struct ConfirmDiscard {
@@ -99,6 +102,10 @@ pub struct DiffView {
     syntax: HlCache,
     /// Before / after preview of changed images.
     images: preview::ImagePreview,
+    /// Large-file gate (`settings.diff.max_file_kb`).
+    size_guard: guard::SizeGuard,
+    /// Show the raw text of an LFS pointer diff.
+    lfs_raw: bool,
 }
 
 impl DiffView {
@@ -151,7 +158,41 @@ impl DiffView {
             _ => status_gen,
         };
         let mut failed: Option<String> = None;
-        match session.diff(target, diff_gen, self.ignore_ws, context) {
+        // Large files: measure first, diff only within the limit or on request.
+        let limit = shared.settings.diff.max_file_kb.saturating_mul(1024);
+        let gate = self
+            .size_guard
+            .check(ui.ctx(), session.repo(), target, diff_gen, limit);
+        let load = match gate {
+            guard::Gate::Open => session.diff(target, diff_gen, self.ignore_ws, context),
+            guard::Gate::Pending => Load::Loading,
+            guard::Gate::TooLarge(n) => {
+                self.loading_since = None;
+                let mut acts: Vec<Act> = Vec::new();
+                self.toolbar(ui, target, mode, false, false, &mut acts, shared);
+                ui.separator();
+                ui.add_space(8.0);
+                ui.label(RichText::new(format!("File is large ({})", human_size(n))).strong());
+                ui.label(
+                    RichText::new(format!(
+                        "Files over {} are not diffed automatically (Settings › Diff).",
+                        human_size(limit)
+                    ))
+                    .color(shared.palette.muted),
+                );
+                ui.horizontal(|ui| {
+                    if ui.button("Show anyway").clicked() {
+                        self.size_guard.allow(target);
+                        ui.ctx().request_repaint();
+                    }
+                    if ui.button("Open in external diff tool").clicked() {
+                        open_external(session, target, shared);
+                    }
+                });
+                return;
+            }
+        };
+        match load {
             Load::Ready(d) => {
                 self.loading_since = None;
                 self.accept(target, d, tab);
@@ -190,6 +231,11 @@ impl DiffView {
                     .show(ui, session.repo(), &shown.target, diff_gen, &shared.palette);
             } else if d.binary {
                 self.binary_info(ui, session, &shown.target, shared);
+            } else if let Some((old, new)) = guard::lfs_pointers(&d).filter(|_| !self.lfs_raw) {
+                lfs_info(ui, old, new, shared);
+                if ui.small_button("Show pointer text").clicked() {
+                    self.lfs_raw = true;
+                }
             } else if d.lines.is_empty() {
                 ui.add_space(8.0);
                 let msg = if self.ignore_ws {
@@ -220,6 +266,9 @@ impl DiffView {
     /// Takes a freshly loaded diff, keeping selection and caches when only
     /// the `Arc` changed but not the content.
     fn accept(&mut self, target: &DiffTarget, d: Arc<FileDiff>, tab: usize) {
+        if self.shown.as_ref().is_none_or(|s| &s.target != target) {
+            self.lfs_raw = false;
+        }
         if let Some(s) = &mut self.shown {
             if &s.target == target && s.tab == tab {
                 if Arc::ptr_eq(&s.diff, &d) {
@@ -650,6 +699,10 @@ impl DiffView {
                     acts.push(Act::CopyPatch);
                     ui.close();
                 }
+                if ui.button("Open in external diff tool").clicked() {
+                    acts.push(Act::External);
+                    ui.close();
+                }
                 if ui
                     .add_enabled(n > 0, egui::Button::new("Clear selection"))
                     .clicked()
@@ -1007,6 +1060,7 @@ impl DiffView {
         let path = s.target.path().to_string();
         match act {
             Act::CopySel => ui.ctx().copy_text(self.sel.text(&s.diff)),
+            Act::External => open_external(session, &s.target, shared),
             Act::CopyPatch => {
                 let old = match &s.target {
                     DiffTarget::Staged {
@@ -1222,6 +1276,53 @@ fn line_job(
 }
 
 /// `("dir/sub/", "file.rs")`
+/// Opens `target` (unstaged, staged or commit diff) in the configured
+/// external diff tool (`settings.external_diff_tool`, `$LOCAL` / `$REMOTE`):
+/// the sides are written to temp files on a worker thread. Errors become
+/// messages of the tab. Usable from any view (e.g. commit details menus).
+pub fn open_external(session: &Session, target: &DiffTarget, shared: &Shared) {
+    external::open(session, target, shared.settings.external_diff_tool.as_ref());
+}
+
+/// An LFS pointer diff: object ids and sizes instead of the pointer text.
+fn lfs_info(
+    ui: &mut Ui,
+    old: Option<guard::LfsPointer>,
+    new: Option<guard::LfsPointer>,
+    shared: &Shared,
+) {
+    let p = shared.palette;
+    ui.add_space(8.0);
+    ui.label(RichText::new("Git LFS object").strong());
+    let row = |ui: &mut Ui, label: &str, ptr: &Option<guard::LfsPointer>, color: Color32| {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(label).color(p.muted));
+            match ptr {
+                Some(ptr) => {
+                    let size = ptr.size.map(human_size).unwrap_or_else(|| "?".into());
+                    let short = &ptr.oid[..12.min(ptr.oid.len())];
+                    ui.label(
+                        RichText::new(format!("LFS object {short} ({size})"))
+                            .monospace()
+                            .color(color),
+                    )
+                    .on_hover_text(format!("sha256:{}", ptr.oid));
+                }
+                None => {
+                    ui.label(RichText::new("none").color(p.muted));
+                }
+            }
+        });
+    };
+    row(ui, "Before:", &old, p.removed_fg);
+    row(ui, "After: ", &new, p.added_fg);
+    ui.label(
+        RichText::new("The file is stored with Git LFS; the repository only tracks this pointer.")
+            .small()
+            .color(p.muted),
+    );
+}
+
 pub fn split_path(path: &str) -> (&str, &str) {
     match path.rfind('/') {
         Some(i) => (&path[..=i], &path[i + 1..]),

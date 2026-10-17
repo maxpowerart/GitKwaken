@@ -1,0 +1,6 @@
+# An LFS pointer change shows object ids and sizes.
+wait 3000
+move 1100 600
+wait 300
+shot $OUT/fb-lfs.png
+exit

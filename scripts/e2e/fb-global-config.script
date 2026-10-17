@@ -1,0 +1,10 @@
+# GITKWAKEN_DIALOG=global-config (GIT_CONFIG_GLOBAL points into $WORK).
+wait 2500
+key F ctrl shift
+wait 800
+type [gkglobal]
+key Enter
+type     x = 1
+key Enter ctrl
+wait 2000
+exit

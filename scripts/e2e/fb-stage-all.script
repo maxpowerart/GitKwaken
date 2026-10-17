@@ -1,0 +1,6 @@
+# Ctrl+Shift+A (keymap "stage_all") stages everything.
+wait 2500
+key A ctrl shift
+wait 2500
+shot $OUT/fb-stage-all.png
+exit

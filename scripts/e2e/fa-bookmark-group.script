@@ -1,0 +1,14 @@
+# Welcome: right-click bookmark "alpha" -> Move to group -> New group… ->
+# "Work" -> Enter. The bookmarks then show grouped.
+wait 1500
+rclick 294 252
+wait 400
+move 345.6 291.2
+wait 600
+click 468 323.2
+wait 600
+type Work
+key Enter
+wait 800
+shot $OUT/fa-bookmark-group.png
+exit

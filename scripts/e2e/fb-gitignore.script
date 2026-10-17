@@ -1,0 +1,13 @@
+# GITKWAKEN_DIALOG=gitignore: Ctrl+Shift+F opens Fetch, swapped for the
+# .gitignore editor (cursor at the end); add "*.log", preview, Ctrl+Enter saves.
+wait 2500
+key F ctrl shift
+wait 800
+type *.log
+wait 1500
+move 700 450
+wait 300
+shot $OUT/fb-gitignore.png
+key Enter ctrl
+wait 1500
+exit

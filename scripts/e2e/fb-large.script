@@ -1,0 +1,14 @@
+# diff.max_file_kb = 1: big.txt shows "File is large"; Show anyway loads it;
+# Stage hunk proves the diff is live.
+wait 3000
+move 1100 600
+wait 300
+shot $OUT/fb-large.png
+click 701 189
+wait 1500
+move 1100 600
+wait 300
+shot $OUT/fb-large-shown.png
+click 1254 136
+wait 2000
+exit

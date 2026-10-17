@@ -2,6 +2,13 @@
 //!
 //! `gk-bench gen <dir> <files>`     create a synthetic repository
 //! `gk-bench status <dir> [runs]`   time status engines against `git status`
+//! `gk-bench regress [opts]`        regression gate against bench/baseline-<os>.json (see regress.rs)
+//! `gk-bench gen-dag <dir> <n>`     synthetic n-commit DAG via git fast-import
+//! `gk-bench stage/filter/diff/file-history …`  budget measurements (see budgets.rs)
+
+mod budgets;
+mod regress;
+mod startup;
 
 use anyhow::{Context, Result, bail};
 use gk_cli::{CommandLog, Git};
@@ -30,11 +37,22 @@ fn main() -> Result<()> {
             let port: u16 = args.get(3).context("port")?.parse()?;
             serve(&dir, port)
         }
+        Some("regress") => regress::run(&args[2..]),
+        Some("gen-dag") => {
+            let dir = PathBuf::from(args.get(2).context("dir")?);
+            let n: usize = args.get(3).context("commits")?.parse()?;
+            regress::gen_dag(&dir, n)
+        }
+        Some(cmd @ ("stage" | "filter" | "diff" | "file-history")) => budgets::run(cmd, &args[2..]),
+        // Startup / latency budgets (see startup.rs).
+        Some(cmd @ ("open" | "history-first" | "save-latency")) => startup::run(cmd, &args[2..]),
         Some("history") => {
             let dir = PathBuf::from(args.get(2).context("dir")?);
             bench_history(&dir)
         }
-        _ => bail!("usage: gk-bench gen <dir> <files> | status <dir> [runs] | history <dir>"),
+        _ => bail!(
+            "usage: gk-bench gen <dir> <files> | status <dir> [runs] | history <dir> | regress [opts] | gen-dag <dir> <n> | stage <repo> [n] | filter [n] | diff [lines] | file-history <repo> [paths]"
+        ),
     }
 }
 

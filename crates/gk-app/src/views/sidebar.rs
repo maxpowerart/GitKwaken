@@ -14,6 +14,7 @@ use crate::app::{Action, Shared};
 use crate::dialogs::Dialog;
 use crate::tab::{RepoTab, View};
 use crate::theme::Palette;
+use crate::views::history::keys;
 use egui::text::{LayoutJob, TextWrapping};
 use egui::{Color32, FontId, Pos2, Rect, Sense, Stroke, TextFormat, Ui, pos2, vec2};
 use gk_core::refs::Refs;
@@ -174,9 +175,23 @@ impl<T: Send + 'static> Lazy<T> {
 }
 
 enum SidebarModal {
-    AddWorktree { path: String, branch: String },
-    RemoveWorktree { path: PathBuf, force: bool },
+    AddWorktree {
+        path: String,
+        branch: String,
+    },
+    RemoveWorktree {
+        path: PathBuf,
+        force: bool,
+    },
+    /// Branch `src` was dropped on branch `dst`.
+    DropBranch {
+        src: String,
+        dst: String,
+    },
 }
+
+/// Drag-and-drop payload of a branch row.
+struct BranchDrag(String);
 
 #[derive(Default)]
 pub struct SidebarState {
@@ -193,6 +208,8 @@ pub struct SidebarState {
     submodules: Lazy<Submodule>,
     worktrees: Lazy<Worktree>,
     modal: Option<SidebarModal>,
+    /// The sidebar has keyboard focus (a row was clicked last).
+    focused: bool,
 }
 
 // ------------------------------------------------------------------- rows
@@ -380,7 +397,7 @@ fn build_rows(st: &SidebarState, collapsed: &BTreeSet<String>) -> Vec<Row> {
         }
         match s {
             Section::Workspace => {
-                for v in [View::FileStatus, View::History, View::Search] {
+                for v in [View::FileStatus, View::History, View::Search, View::Reflog] {
                     out.push(Row::new(1, RowKind::Workspace(v)));
                 }
             }
@@ -485,6 +502,12 @@ enum Cmd {
     AddWorktree,
     RemoveWorktree(PathBuf),
     Reload,
+    /// Show the stash with this commit id in the stash view.
+    ShowStash(String),
+    DropBranch {
+        src: String,
+        dst: String,
+    },
 }
 
 fn dialog(d: Dialog) -> Cmd {
@@ -572,6 +595,8 @@ fn apply(cmd: Cmd, ui: &Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Sha
             st.submodules.invalidate();
             st.worktrees.invalidate();
         }
+        Cmd::ShowStash(id) => crate::views::stash_view::open(tab, &id),
+        Cmd::DropBranch { src, dst } => st.modal = Some(SidebarModal::DropBranch { src, dst }),
     }
 }
 
@@ -588,6 +613,28 @@ struct Cx<'a> {
     small: FontId,
     text: Color32,
     strong: Color32,
+    /// Shift+F10 was pressed: open the selected row's menu this frame.
+    kb_menu: bool,
+}
+
+impl Cx<'_> {
+    /// Shows `menu` as the context menu of `resp`, and, for the selected
+    /// row, as a keyboard-opened menu below it (Shift+F10).
+    fn menus(
+        &self,
+        resp: &egui::Response,
+        key: &str,
+        rect: Rect,
+        cmds: &mut Vec<Cmd>,
+        menu: impl Fn(&mut Ui, &mut Vec<Cmd>),
+    ) {
+        resp.context_menu(|ui| menu(ui, cmds));
+        if self.st.selected.as_deref() == Some(key) {
+            let id = egui::Id::new(("sidebar-kb-menu", self.workdir));
+            let pos = pos2(rect.left() + 30.0, rect.bottom());
+            keys::keyboard_menu(resp, id, self.kb_menu, pos, |ui| menu(ui, cmds));
+        }
+    }
 }
 
 fn menu_item(ui: &mut Ui, enabled: bool, text: &str) -> bool {
@@ -707,7 +754,12 @@ fn paint_row(ui: &Ui, cx: &Cx, rect: Rect, depth: u8, hovered: bool, look: Look)
 
 fn row_ui(ui: &mut Ui, cx: &Cx, row: &Row, h: f32, cmds: &mut Vec<Cmd>) {
     let w = ui.available_width().max(40.0);
-    let (rect, resp) = ui.allocate_exact_size(vec2(w, h), Sense::click());
+    let sense = if matches!(row.kind, RowKind::Branch(_)) {
+        Sense::click_and_drag()
+    } else {
+        Sense::click()
+    };
+    let (rect, resp) = ui.allocate_exact_size(vec2(w, h), sense);
     let snap = cx.snap;
     let refs = &*cx.d.refs;
     let pal = cx.pal;
@@ -812,6 +864,8 @@ fn row_ui(ui: &mut Ui, cx: &Cx, row: &Row, h: f32, cmds: &mut Vec<Cmd>) {
                 View::Search => ("🔍", "Search"),
                 View::Merge => ("⇄", "Merge"),
                 View::Blame => ("👤", "Blame"),
+                View::Reflog => ("↺", "Reflog"),
+                View::Stash => ("▣", "Stash"),
             };
             let mut badges = Vec::new();
             if *v == View::FileStatus {
@@ -954,14 +1008,36 @@ fn row_ui(ui: &mut Ui, cx: &Cx, row: &Row, h: f32, cmds: &mut Vec<Cmd>) {
             } else {
                 resp
             };
+            // Drag a branch onto another one: merge / rebase popup.
+            resp.dnd_set_drag_payload(BranchDrag(b.name.clone()));
+            if let Some(p) = resp.dnd_hover_payload::<BranchDrag>()
+                && p.0 != b.name
+            {
+                ui.painter().rect_stroke(
+                    rect,
+                    2.0,
+                    Stroke::new(1.5, pal.head),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            if let Some(p) = resp.dnd_release_payload::<BranchDrag>()
+                && p.0 != b.name
+            {
+                cmds.push(Cmd::DropBranch {
+                    src: p.0.clone(),
+                    dst: b.name.clone(),
+                });
+            }
             if resp.clicked() {
-                cmds.push(Cmd::Select(key));
+                cmds.push(Cmd::Select(key.clone()));
                 cmds.push(Cmd::Jump(b.target.clone()));
             }
             if resp.double_clicked() {
                 cmds.push(Cmd::Checkout(b.name.clone()));
             }
-            resp.context_menu(|ui| branch_menu(ui, b, snap, cmds));
+            cx.menus(&resp, &key, rect, cmds, |ui, cmds| {
+                branch_menu(ui, b, snap, cmds)
+            });
         }
         RowKind::RemoteBranch(i) => {
             let rb = &refs.remote_branches[*i as usize];
@@ -986,14 +1062,14 @@ fn row_ui(ui: &mut Ui, cx: &Cx, row: &Row, h: f32, cmds: &mut Vec<Cmd>) {
                 resp
             };
             if resp.clicked() {
-                cmds.push(Cmd::Select(key));
+                cmds.push(Cmd::Select(key.clone()));
                 cmds.push(Cmd::Jump(rb.target.clone()));
             }
             if resp.double_clicked() {
                 cmds.push(dialog(Dialog::checkout_remote(full.clone())));
             }
-            resp.context_menu(|ui| {
-                if menu_item(ui, true, "Checkout as tracking branch…") {
+            cx.menus(&resp, &key, rect, cmds, |ui, cmds| {
+                if keys::menu_item(ui, true, "Checkout as tracking branch…", keys::CHECKOUT_KEY) {
                     cmds.push(dialog(Dialog::checkout_remote(full.clone())));
                 }
                 if menu_item(ui, true, &format!("Merge {full} into current")) {
@@ -1002,11 +1078,11 @@ fn row_ui(ui: &mut Ui, cx: &Cx, row: &Row, h: f32, cmds: &mut Vec<Cmd>) {
                 if menu_item(ui, true, &format!("Rebase current onto {full}")) {
                     cmds.push(dialog(Dialog::rebase(snap, Some(full.clone()))));
                 }
-                if menu_item(ui, true, "New branch from here…") {
+                if keys::menu_item(ui, true, "New branch from here…", keys::BRANCH_KEY) {
                     cmds.push(dialog(Dialog::branch(snap, Some(full.clone()))));
                 }
                 ui.separator();
-                if menu_item(ui, true, "Delete on remote…") {
+                if keys::menu_item(ui, true, "Delete on remote…", keys::DELETE_KEY) {
                     cmds.push(dialog(Dialog::delete_remote_branch(
                         rb.remote.clone(),
                         rb.name.clone(),
@@ -1052,17 +1128,17 @@ fn row_ui(ui: &mut Ui, cx: &Cx, row: &Row, h: f32, cmds: &mut Vec<Cmd>) {
                 resp
             };
             if resp.clicked() {
-                cmds.push(Cmd::Select(key));
+                cmds.push(Cmd::Select(key.clone()));
                 cmds.push(Cmd::Jump(t.target.clone()));
             }
-            resp.context_menu(|ui| {
-                if menu_item(ui, true, "Checkout…") {
+            cx.menus(&resp, &key, rect, cmds, |ui, cmds| {
+                if keys::menu_item(ui, true, "Checkout…", keys::CHECKOUT_KEY) {
                     cmds.push(dialog(Dialog::checkout(t.name.clone())));
                 }
                 if menu_item(ui, true, "Push to remote…") {
                     cmds.push(dialog(Dialog::push_tag(t.name.clone())));
                 }
-                if menu_item(ui, true, "Delete…") {
+                if keys::menu_item(ui, true, "Delete…", keys::DELETE_KEY) {
                     cmds.push(dialog(Dialog::delete_tag(t.name.clone())));
                 }
                 ui.separator();
@@ -1097,17 +1173,18 @@ fn row_ui(ui: &mut Ui, cx: &Cx, row: &Row, h: f32, cmds: &mut Vec<Cmd>) {
                 resp
             };
             if resp.clicked() {
-                cmds.push(Cmd::Select(key));
+                cmds.push(Cmd::Select(key.clone()));
+                cmds.push(Cmd::ShowStash(s.id.clone()));
             }
             if resp.double_clicked() {
                 cmds.push(dialog(Dialog::stash_apply(s.index)));
             }
             let idx = s.index;
-            resp.context_menu(|ui| {
-                if menu_item(ui, true, "Apply…") {
+            cx.menus(&resp, &key, rect, cmds, |ui, cmds| {
+                if keys::menu_item(ui, true, "Apply…", keys::CHECKOUT_KEY) {
                     cmds.push(dialog(Dialog::stash_apply(idx)));
                 }
-                if menu_item(ui, true, "Drop…") {
+                if keys::menu_item(ui, true, "Drop…", keys::DELETE_KEY) {
                     cmds.push(dialog(Dialog::stash_drop(idx)));
                 }
                 if menu_item(ui, true, "Branch from stash…") {
@@ -1116,6 +1193,9 @@ fn row_ui(ui: &mut Ui, cx: &Cx, row: &Row, h: f32, cmds: &mut Vec<Cmd>) {
                 ui.separator();
                 if menu_item(ui, true, "Copy message") {
                     cmds.push(Cmd::Copy(s.message.clone()));
+                }
+                if menu_item(ui, true, "Show changes") {
+                    cmds.push(Cmd::ShowStash(s.id.clone()));
                 }
             });
         }
@@ -1336,7 +1416,7 @@ fn branch_menu(ui: &mut Ui, b: &gk_core::refs::Branch, snap: &Snapshot, cmds: &m
     let name = &b.name;
     let other = !b.is_head;
     let on_branch = snap.refs.head.branch().is_some();
-    if menu_item(ui, other, &format!("Checkout {name}")) {
+    if keys::menu_item(ui, other, &format!("Checkout {name}"), keys::CHECKOUT_KEY) {
         cmds.push(Cmd::Checkout(name.clone()));
     }
     if menu_item(
@@ -1360,13 +1440,13 @@ fn branch_menu(ui: &mut Ui, b: &gk_core::refs::Branch, snap: &Snapshot, cmds: &m
         cmds.push(dialog(Dialog::set_upstream(name.clone())));
     }
     ui.separator();
-    if menu_item(ui, true, "New branch from here…") {
+    if keys::menu_item(ui, true, "New branch from here…", keys::BRANCH_KEY) {
         cmds.push(dialog(Dialog::branch(snap, Some(name.clone()))));
     }
     if menu_item(ui, true, "Rename…") {
         cmds.push(dialog(Dialog::rename_branch(name.clone())));
     }
-    if menu_item(ui, other, "Delete…") {
+    if keys::menu_item(ui, other, "Delete…", keys::DELETE_KEY) {
         cmds.push(dialog(Dialog::delete_branch(name.clone())));
     }
     ui.separator();
@@ -1376,6 +1456,66 @@ fn branch_menu(ui: &mut Ui, b: &gk_core::refs::Branch, snap: &Snapshot, cmds: &m
     if menu_item(ui, true, "Show in history") {
         cmds.push(Cmd::Jump(b.target.clone()));
     }
+    if keys::menu_item(ui, true, "Create tag here…", keys::TAG_KEY) {
+        cmds.push(dialog(Dialog::tag(Some(name.clone()))));
+    }
+}
+
+/// Enter / Delete / Ctrl+B / Ctrl+T on the selected sidebar row.
+fn key_cmds(k: keys::ListKeys, sel: &str, snap: &Snapshot, cmds: &mut Vec<Cmd>) {
+    let refs = &snap.refs;
+    let (kind, name) = sel.split_once(':').unwrap_or(("", sel));
+    let name = name.to_string();
+    match kind {
+        "b" => {
+            let is_head = refs.branch(&name).is_some_and(|b| b.is_head);
+            if k.enter && !is_head {
+                cmds.push(Cmd::Checkout(name.clone()));
+            }
+            if k.delete && !is_head {
+                cmds.push(dialog(Dialog::delete_branch(name.clone())));
+            }
+        }
+        "rb" => {
+            if k.enter {
+                cmds.push(dialog(Dialog::checkout_remote(name.clone())));
+            }
+            if k.delete
+                && let Some(rb) = refs.remote_branches.iter().find(|b| b.full() == name)
+            {
+                cmds.push(dialog(Dialog::delete_remote_branch(
+                    rb.remote.clone(),
+                    rb.name.clone(),
+                )));
+            }
+        }
+        "t" => {
+            if k.enter {
+                cmds.push(dialog(Dialog::checkout(name.clone())));
+            }
+            if k.delete {
+                cmds.push(dialog(Dialog::delete_tag(name.clone())));
+            }
+        }
+        "s" => {
+            let idx = name.parse().unwrap_or(0);
+            if k.enter {
+                cmds.push(dialog(Dialog::stash_apply(idx)));
+            }
+            if k.delete {
+                cmds.push(dialog(Dialog::stash_drop(idx)));
+            }
+        }
+        _ => {}
+    }
+    if matches!(kind, "b" | "rb" | "t") {
+        if k.branch {
+            cmds.push(dialog(Dialog::branch(snap, Some(name.clone()))));
+        }
+        if k.tag {
+            cmds.push(dialog(Dialog::tag(Some(name))));
+        }
+    }
 }
 
 fn modal_ui(ui: &Ui, tab: &mut RepoTab, snap: &Snapshot) {
@@ -1384,6 +1524,7 @@ fn modal_ui(ui: &Ui, tab: &mut RepoTab, snap: &Snapshot) {
     };
     let mut close = false;
     let mut run: Option<(String, Vec<String>)> = None;
+    let mut drop_act: Option<DropAct> = None;
     let id = egui::Id::new(("sidebar-modal", &tab.path));
     let resp = egui::Modal::new(id).show(ui.ctx(), |ui| {
         ui.set_width(440.0);
@@ -1449,6 +1590,51 @@ fn modal_ui(ui: &Ui, tab: &mut RepoTab, snap: &Snapshot) {
                     }
                 });
             }
+            SidebarModal::DropBranch { src, dst } => {
+                ui.heading(format!("Drop {src} on {dst}"));
+                ui.add_space(4.0);
+                let current = snap.refs.head.branch() == Some(dst.as_str());
+                let mut choice = |ui: &mut Ui, text: String, act: DropAct| {
+                    let b = egui::Button::new(text).min_size(vec2(ui.available_width(), 26.0));
+                    if ui.add(b).clicked() {
+                        drop_act = Some(act);
+                        close = true;
+                    }
+                };
+                if current {
+                    choice(
+                        ui,
+                        format!("Merge {src} into {dst}…"),
+                        DropAct::Merge(src.clone()),
+                    );
+                    choice(
+                        ui,
+                        format!("Rebase {dst} onto {src}…"),
+                        DropAct::Rebase(src.clone()),
+                    );
+                } else {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{dst} is not the current branch: merging and rebasing need it checked out."
+                        ))
+                        .weak(),
+                    );
+                    choice(
+                        ui,
+                        format!("Checkout {dst} and merge {src}"),
+                        DropAct::CheckoutMerge(src.clone(), dst.clone()),
+                    );
+                    choice(
+                        ui,
+                        format!("Checkout {dst} and rebase onto {src}"),
+                        DropAct::CheckoutRebase(src.clone(), dst.clone()),
+                    );
+                }
+                ui.add_space(6.0);
+                if ui.button("Cancel").clicked() {
+                    close = true;
+                }
+            }
             SidebarModal::RemoveWorktree { path, force } => {
                 ui.heading("Remove worktree");
                 ui.label(format!("Remove the worktree at {}?", path.display()));
@@ -1482,9 +1668,43 @@ fn modal_ui(ui: &Ui, tab: &mut RepoTab, snap: &Snapshot) {
         });
         tab.sidebar.worktrees.invalidate();
     }
+    match drop_act {
+        Some(DropAct::Merge(src)) => tab.dialog = Some(Dialog::merge(snap, Some(src))),
+        Some(DropAct::Rebase(src)) => tab.dialog = Some(Dialog::rebase(snap, Some(src))),
+        Some(DropAct::CheckoutMerge(src, dst)) => {
+            tab.session
+                .run_op(format!("Checkout {dst} and merge {src}"), move |r, c, p| {
+                    let g = r.git();
+                    g.run_streaming(&["checkout", dst.as_str()], None, c, &mut *p)?
+                        .check()?;
+                    g.run_streaming(&["merge", "--no-edit", src.as_str()], None, c, p)?
+                        .check()?;
+                    Ok(String::new())
+                })
+        }
+        Some(DropAct::CheckoutRebase(src, dst)) => {
+            tab.session
+                .run_op(format!("Rebase {dst} onto {src}"), move |r, c, p| {
+                    // `git rebase <upstream> <branch>` checks out <branch> first.
+                    let args = ["rebase", src.as_str(), dst.as_str()];
+                    r.git().run_streaming(&args, None, c, p)?.check()?;
+                    Ok(String::new())
+                })
+        }
+        None => {}
+    }
     if close {
         tab.sidebar.modal = None;
     }
+}
+
+/// What to do with a branch dropped on another.
+enum DropAct {
+    Merge(String),
+    Rebase(String),
+    /// (src, dst)
+    CheckoutMerge(String, String),
+    CheckoutRebase(String, String),
 }
 
 pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared) {
@@ -1559,8 +1779,52 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
         tab.sidebar.rows_valid = true;
     }
 
-    // Rows.
+    // Keyboard: the sidebar has focus after a row click, until a click
+    // elsewhere or a text field takes the keyboard.
+    let area = ui.max_rect();
+    let pressed_at = ui
+        .ctx()
+        .input(|i| i.pointer.any_pressed().then(|| i.pointer.interact_pos()))
+        .flatten();
+    let any_focus = ui.ctx().memory(|m| m.focused().is_some());
+    if let Some(p) = pressed_at
+        && !area.contains(p)
+    {
+        tab.sidebar.focused = false;
+    }
     let mut cmds: Vec<Cmd> = Vec::new();
+    let k = keys::ListKeys::read(
+        ui,
+        tab.sidebar.focused && !any_focus && tab.dialog.is_none(),
+    );
+    if let Some(sel) = tab.sidebar.selected.clone() {
+        key_cmds(k, &sel, snap, &mut cmds);
+    }
+
+    // A branch being dragged follows the pointer.
+    if let Some(p) = egui::DragAndDrop::payload::<BranchDrag>(ui.ctx())
+        && let Some(pos) = ui.ctx().pointer_interact_pos()
+    {
+        let layer = egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("branch-drag"));
+        let painter = ui.ctx().layer_painter(layer);
+        let text = format!("⑂ {}", p.0);
+        let g = painter.layout_no_wrap(
+            text,
+            egui::TextStyle::Body.resolve(ui.style()),
+            shared.palette.head,
+        );
+        let r = Rect::from_min_size(pos + vec2(14.0, 6.0), g.size()).expand(4.0);
+        painter.rect_filled(r, 3.0, ui.visuals().window_fill);
+        painter.rect_stroke(
+            r,
+            3.0,
+            Stroke::new(1.0, shared.palette.head),
+            egui::StrokeKind::Inside,
+        );
+        painter.galley(r.min + vec2(4.0, 4.0), g, shared.palette.head);
+    }
+
+    // Rows.
     {
         let st = &tab.sidebar;
         let Some(d) = &st.derived else { return };
@@ -1576,6 +1840,7 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
             small: egui::TextStyle::Small.resolve(&style),
             text: ui.visuals().text_color(),
             strong: ui.visuals().strong_text_color(),
+            kb_menu: k.menu,
         };
         let h = (ui.text_style_height(&egui::TextStyle::Body) + 4.0).max(16.0);
         ui.scope(|ui| {
@@ -1590,6 +1855,15 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
         });
     }
     for c in cmds {
+        if matches!(c, Cmd::Select(_)) {
+            tab.sidebar.focused = true;
+            // Lists elsewhere stop taking the keyboard.
+            ui.ctx().memory_mut(|m| {
+                if let Some(f) = m.focused() {
+                    m.surrender_focus(f);
+                }
+            });
+        }
         apply(c, ui, tab, snap, shared);
     }
     modal_ui(ui, tab, snap);

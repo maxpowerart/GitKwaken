@@ -4,7 +4,7 @@
 wait 2500
 rclick 328 216.8
 wait 500
-click 368 417.6
+click 368 440
 wait 2500
 click 480 140
 wait 1500

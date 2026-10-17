@@ -3,6 +3,7 @@
 use super::AppDialog;
 use super::common::*;
 use crate::app::{Action, Shared};
+use crate::keymap::{self, Act, Keymap, Shortcut};
 use egui::{Context, RichText, Ui};
 use gk_settings::{ExternalTool, Settings, StatusEngine, Theme};
 
@@ -15,9 +16,10 @@ enum Section {
     Tools,
     Confirmations,
     Identity,
+    Keyboard,
 }
 
-const SECTIONS: [(Section, &str); 7] = [
+const SECTIONS: [(Section, &str); 8] = [
     (Section::General, "General"),
     (Section::Commit, "Commit"),
     (Section::Diff, "Diff"),
@@ -25,6 +27,18 @@ const SECTIONS: [(Section, &str); 7] = [
     (Section::Tools, "External tools"),
     (Section::Confirmations, "Confirmations"),
     (Section::Identity, "Git identity"),
+    (Section::Keyboard, "Keyboard"),
+];
+
+/// Monospace families offered in the font combo (any installed name can be typed).
+const MONO_FONTS: [&str; 7] = [
+    "Consolas",
+    "Cascadia Mono",
+    "Cascadia Code",
+    "JetBrains Mono",
+    "Fira Code",
+    "Lucida Console",
+    "Courier New",
 ];
 
 #[derive(Clone, Default, PartialEq, Eq)]
@@ -45,6 +59,11 @@ pub struct SettingsDialog {
     identity: Identity,
     saving: Option<Task<Result<(), String>>>,
     save_error: Option<String>,
+    /// Keymap being edited (one entry per action).
+    keys: Vec<(Act, Option<Shortcut>)>,
+    /// Action waiting for a key press.
+    recording: Option<Act>,
+    record_error: Option<String>,
 }
 
 impl SettingsDialog {
@@ -61,6 +80,9 @@ impl SettingsDialog {
             identity: Identity::default(),
             saving: None,
             save_error: None,
+            keys: Vec::new(),
+            recording: None,
+            record_error: None,
         }
     }
 
@@ -87,6 +109,7 @@ impl SettingsDialog {
             .as_ref()
             .map(|p| p.display().to_string())
             .unwrap_or_default();
+        self.keys = Keymap::from_overrides(&s.keymap).bindings().to_vec();
         self.draft = Some(s);
         let log = shared.log.clone();
         self.identity_task = Some(Task::spawn(ctx, move || {
@@ -112,6 +135,9 @@ impl SettingsDialog {
         dst.ui_scale = src.ui_scale;
         dst.font_size = src.font_size;
         dst.mono_font_size = src.mono_font_size;
+        dst.mono_font_family = src.mono_font_family.trim().to_string();
+        dst.compact = src.compact;
+        dst.keymap = keymap::to_overrides(&self.keys);
         dst.language = src.language.clone();
         dst.auto_fetch_minutes = src.auto_fetch_minutes;
         dst.update_url = src.update_url.trim().to_string();
@@ -128,6 +154,123 @@ impl SettingsDialog {
         dst.terminal = tool(&self.terminal);
         let gp = self.git_path.trim();
         dst.git_path = (!gp.is_empty()).then(|| gp.into());
+    }
+}
+
+impl SettingsDialog {
+    /// While recording a shortcut, takes the next key press (before the
+    /// modal sees Enter / Escape). Escape cancels.
+    fn capture_key(&mut self, ctx: &Context) {
+        let Some(act) = self.recording else { return };
+        let pressed = ctx.input_mut(|i| {
+            let mut got = None;
+            i.events.retain(|e| match e {
+                egui::Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if got.is_none() => {
+                    got = Some((*key, *modifiers));
+                    false
+                }
+                egui::Event::Key { .. } | egui::Event::Text(_) => false,
+                _ => true,
+            });
+            got
+        });
+        let Some((key, mods)) = pressed else { return };
+        if key == egui::Key::Escape && !mods.any() {
+            self.recording = None;
+            self.record_error = None;
+            return;
+        }
+        let sc = Shortcut::from_event(key, mods);
+        if sc.is_typing_key() {
+            self.record_error = Some(format!(
+                "{sc} would be typed into text fields: add Ctrl or Alt."
+            ));
+            return;
+        }
+        if let Some(b) = self.keys.iter_mut().find(|b| b.0 == act) {
+            b.1 = Some(sc);
+        }
+        self.recording = None;
+        self.record_error = None;
+    }
+}
+
+/// Settings › Keyboard: one row per action; click a shortcut, press keys.
+fn keyboard_section(
+    ui: &mut Ui,
+    keys: &mut [(Act, Option<Shortcut>)],
+    recording: &mut Option<Act>,
+    record_error: &Option<String>,
+    ctl: &mut Ctl,
+) {
+    ui.label("Click a shortcut, then press the new key combination (Esc cancels).");
+    ui.add_space(4.0);
+    let conflicts = Keymap::from_overrides(&keymap::to_overrides(keys)).conflicts();
+    let in_conflict = |a: Act| conflicts.iter().any(|c| c.0 == a || c.1 == a);
+    egui::Grid::new("set-keys")
+        .num_columns(4)
+        .spacing([12.0, 4.0])
+        .striped(true)
+        .show(ui, |ui| {
+            for (act, sc) in keys.iter_mut() {
+                ui.label(keymap::label_of(*act));
+                let rec = *recording == Some(*act);
+                let text = if rec {
+                    "Press keys…".to_string()
+                } else {
+                    sc.map(|s| s.to_string()).unwrap_or_else(|| "—".into())
+                };
+                let mut rt = RichText::new(text).monospace();
+                if in_conflict(*act) {
+                    rt = rt.color(DANGER);
+                }
+                let b = ui
+                    .add_sized([150.0, 20.0], egui::Button::new(rt).selected(rec))
+                    .on_hover_text(format!("Settings id: {}", keymap::id_of(*act)));
+                if b.clicked() {
+                    *recording = if rec { None } else { Some(*act) };
+                }
+                let def = keymap::default_of(*act);
+                if ui
+                    .add_enabled(*sc != def, egui::Button::new("Reset").small())
+                    .on_hover_text(def.map(|d| format!("Default: {d}")).unwrap_or_default())
+                    .clicked()
+                {
+                    *sc = def;
+                }
+                if ui
+                    .add_enabled(sc.is_some(), egui::Button::new("Clear").small())
+                    .clicked()
+                {
+                    *sc = None;
+                }
+                ui.end_row();
+            }
+        });
+    if let Some(e) = record_error {
+        warning(ui, e.clone());
+    }
+    for (a, b, sc) in &conflicts {
+        error(
+            ui,
+            format!(
+                "{sc} is used by both \"{}\" and \"{}\".",
+                keymap::label_of(*a),
+                keymap::label_of(*b)
+            ),
+        );
+    }
+    if !conflicts.is_empty() {
+        ctl.invalid();
+    }
+    if recording.is_some() {
+        // Enter must not save while waiting for keys.
+        ctl.enter_ok = false;
     }
 }
 
@@ -192,6 +335,7 @@ impl AppDialog for SettingsDialog {
                 None => {}
             }
         }
+        self.capture_key(ctx);
         let saving = self.saving.is_some();
         // Fixed-height pane (scrolls inside) so switching sections does not
         // resize the dialog; smaller on small windows.
@@ -274,6 +418,22 @@ impl AppDialog for SettingsDialog {
                                     ui.label("Update channel:");
                                     ui.add(egui::TextEdit::singleline(&mut d.update_url).desired_width(260.0).hint_text("default (GitHub releases)"));
                                     ui.end_row();
+                                    ui.label("Monospace font:");
+                                    ui.horizontal(|ui| {
+                                        ui.add(egui::TextEdit::singleline(&mut d.mono_font_family).desired_width(180.0).hint_text("Consolas"));
+                                        egui::ComboBox::from_id_salt("set-mono-font").selected_text("").width(24.0).show_ui(ui, |ui| {
+                                            for f in MONO_FONTS {
+                                                ui.selectable_value(&mut d.mono_font_family, f.to_string(), f);
+                                            }
+                                        });
+                                    });
+                                    ui.end_row();
+                                    ui.label("Density:");
+                                    ui.horizontal(|ui| {
+                                        ui.radio_value(&mut d.compact, true, "Compact");
+                                        ui.radio_value(&mut d.compact, false, "Comfortable");
+                                    });
+                                    ui.end_row();
                                 });
                                 hint(ui, "Status settings apply to newly opened tabs; the git executable after a restart.");
                                 let gp = self.git_path.trim();
@@ -318,6 +478,8 @@ impl AppDialog for SettingsDialog {
                                 ui.checkbox(&mut df.word_diff, "Highlight changed words");
                                 ui.checkbox(&mut df.side_by_side, "Side-by-side view");
                                 ui.checkbox(&mut df.syntax_highlight, "Syntax highlighting");
+                                ui.checkbox(&mut df.renames, "Detect renames in commit file lists");
+                                hint(ui, "Files larger than the maximum size show a \"Show anyway\" button instead of the diff.");
                             }
                             Section::History => {
                                 let h = &mut d.history;
@@ -377,6 +539,7 @@ impl AppDialog for SettingsDialog {
                                     hint(ui, "Written to the global git config only when you click Save.");
                                 }
                             }
+                            Section::Keyboard => keyboard_section(ui, &mut self.keys, &mut self.recording, &self.record_error, ctl),
                         }
                     });
                 });

@@ -1,0 +1,18 @@
+# Sidebar: click "crash" (bugfix/crash), Delete -> delete dialog -> Enter;
+# then click "login" (feature/login; two rows up once bugfix/ is gone), Enter ->
+# checked out.
+wait 2500
+click 80 264
+wait 300
+key Delete
+wait 800
+shot $OUT/fa-keys-sidebar-delete.png
+key Enter
+wait 3000
+shot $OUT/fa-keys-sidebar-deleted.png
+click 80 264
+wait 300
+key Enter
+wait 3000
+shot $OUT/fa-keys-sidebar-checkout.png
+exit

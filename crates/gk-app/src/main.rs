@@ -6,6 +6,7 @@
 
 mod app;
 mod dialogs;
+mod keymap;
 mod tab;
 mod theme;
 mod update;
@@ -16,6 +17,8 @@ fn main() {
     if let Some(code) = gk_askpass::client_main() {
         std::process::exit(code);
     }
+    // No-op unless built with `--features profile` (Tracy).
+    gk_core::profiling::init();
     // Removes the previous executable left behind by a self-update.
     gk_update::cleanup_old();
     let settings = gk_settings::Settings::load();

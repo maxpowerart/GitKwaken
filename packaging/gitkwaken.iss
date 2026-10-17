@@ -71,6 +71,10 @@ Source: "{#SourceDir}\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\LICENSE-MIT"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\LICENSE-APACHE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\README.md"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+#if FileExists(SourceDir + "\git\cmd\git.exe")
+; Bundled MinGit (build-release.ps1 -BundleGit); gk-cli prefers {app}\git\cmd\git.exe.
+Source: "{#SourceDir}\git\*"; DestDir: "{app}\git"; Flags: ignoreversion recursesubdirs createallsubdirs
+#endif
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"
@@ -92,6 +96,10 @@ Root: HKA; Subkey: "Software\Microsoft\Windows\CurrentVersion\App Paths\{#AppExe
 ; Leftovers of the built-in self-updater (gk-update).
 Type: files; Name: "{app}\{#AppExe}.old*"
 Type: files; Name: "{app}\{#AppExe}.new"
+#if FileExists(SourceDir + "\git\cmd\git.exe")
+; Replace (not merge) a previously bundled MinGit so removed files do not linger.
+Type: filesandordirs; Name: "{app}\git"
+#endif
 
 [UninstallDelete]
 Type: files; Name: "{app}\{#AppExe}.old*"

@@ -1,0 +1,22 @@
+# Unstaged TODO.txt -> Ignore -> Custom pattern... (prefilled "*.txt",
+# preview lists TODO.txt) -> Enter.
+wait 2500
+rclick 320 260
+wait 300
+move 322 261
+wait 300
+click 347 353
+wait 300
+move 350 354
+wait 300
+move 542 407
+wait 200
+click 542 407
+wait 1500
+move 600 500
+wait 300
+shot $OUT/fb-ignore-custom.png
+key Enter
+wait 2000
+shot $OUT/fb-ignore-done.png
+exit

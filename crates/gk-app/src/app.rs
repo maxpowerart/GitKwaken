@@ -1,10 +1,13 @@
 //! Top-level application: tabs, global dialogs, askpass prompts, settings.
 
+use crate::keymap::{self, Act, Keymap};
 use crate::tab::RepoTab;
 use crate::theme::{self, Palette};
 use crate::{dialogs, views};
 use gk_cli::CommandLog;
 use gk_settings::{Autosave, Settings};
+use parking_lot::Mutex;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -18,6 +21,8 @@ pub enum Action {
     Global(dialogs::GlobalDialog),
     /// Re-applies theme and fonts after settings changed.
     ApplySettings,
+    /// Tracks a background clone (progress panel; opens the tab when done).
+    StartClone(Box<dialogs::CloneJob>),
 }
 
 /// What views get besides their tab.
@@ -44,6 +49,36 @@ pub struct GkApp {
     errors: Vec<String>,
     command_palette: views::palette::PaletteState,
     updater: crate::update::Updater,
+    /// Active shortcuts and the `settings.keymap` they were built from.
+    keymap: Arc<Keymap>,
+    keymap_src: BTreeMap<String, String>,
+    /// Monospace family currently installed (fonts reload when it changes).
+    mono_family: String,
+    /// Background clones (non-modal progress panel).
+    clones: Vec<dialogs::CloneJob>,
+    /// Startup git check: the warning to show, once known.
+    git_check: Arc<Mutex<Option<String>>>,
+    git_warning_dismissed: bool,
+}
+
+/// Download page linked from the git version banner.
+const GIT_DOWNLOAD_URL: &str = "https://git-scm.com/downloads/win";
+
+/// [`gk_cli::Git::check_minimum`] (missing or too old git), as a warning.
+/// `GITKWAKEN_FAKE_GIT_VERSION` (e.g. "2.30.1") replaces the installed
+/// version, for screenshots and tests.
+fn check_git() -> Option<String> {
+    if let Ok(fake) = std::env::var("GITKWAKEN_FAKE_GIT_VERSION") {
+        let v = gk_cli::parse_version(&format!("git version {fake}"))?;
+        let (a, b) = gk_cli::MIN_VERSION;
+        return ((v.0, v.1) < (a, b)).then(|| {
+            format!(
+                "Git {}.{}.{} is too old: GitKwaken needs {a}.{b} or newer. Some operations will fail.",
+                v.0, v.1, v.2
+            )
+        });
+    }
+    gk_cli::Git::check_minimum().err()
 }
 
 impl GkApp {
@@ -53,15 +88,42 @@ impl GkApp {
         initial: Vec<PathBuf>,
         staged: crate::update::Staged,
     ) -> Self {
-        theme::install_fonts(ctx);
-        let palette = theme::apply(ctx, settings.theme, settings.ui_scale, settings.font_size);
+        let mono_family = mono_family(&settings);
+        install_fonts(ctx, &mono_family);
+        let palette = theme::apply_with(
+            ctx,
+            settings.theme,
+            settings.ui_scale,
+            settings.font_size,
+            settings.mono_font_size,
+        );
+        let git_check: Arc<Mutex<Option<String>>> = Arc::default();
+        {
+            let (slot, c) = (git_check.clone(), ctx.clone());
+            let _ = std::thread::Builder::new()
+                .name("gk-git-version".into())
+                .spawn(move || {
+                    if let Some(w) = check_git() {
+                        *slot.lock() = Some(w);
+                        c.request_repaint();
+                    }
+                });
+        }
         let c = ctx.clone();
         let askpass = gk_askpass::Server::start(Box::new(move || c.request_repaint()))
             .ok()
             .map(Arc::new);
+        gk_core::content::set_detect_renames(settings.diff.renames);
         let updater = crate::update::Updater::new(ctx, staged, &settings);
+        let keymap_src = settings.keymap.clone();
         let mut app = Self {
             autosave: Autosave::new(&settings),
+            keymap: Arc::new(Keymap::from_overrides(&keymap_src)),
+            keymap_src,
+            mono_family,
+            clones: Vec::new(),
+            git_check,
+            git_warning_dismissed: false,
             settings,
             tabs: Vec::new(),
             active: 0,
@@ -144,12 +206,20 @@ impl GkApp {
                 }
                 Action::SelectTab(i) => self.active = i.min(self.tabs.len().saturating_sub(1)),
                 Action::Global(d) => self.global = Some(d),
+                Action::StartClone(job) => self.clones.push(*job),
                 Action::ApplySettings => {
-                    self.palette = theme::apply(
+                    gk_core::content::set_detect_renames(self.settings.diff.renames);
+                    let family = mono_family(&self.settings);
+                    if family != self.mono_family {
+                        install_fonts(ctx, &family);
+                        self.mono_family = family;
+                    }
+                    self.palette = theme::apply_with(
                         ctx,
                         self.settings.theme,
                         self.settings.ui_scale,
                         self.settings.font_size,
+                        self.settings.mono_font_size,
                     );
                     // Status options apply to open tabs right away.
                     for t in &self.tabs {
@@ -207,10 +277,24 @@ impl GkApp {
             }
             if ui
                 .button("+")
-                .on_hover_text("Open repository (Ctrl+O)")
+                .on_hover_text(format!(
+                    "Open repository ({})",
+                    self.keymap.text(Act::OpenRepo)
+                ))
                 .clicked()
             {
                 self.actions.push(Action::OpenRepoDialog);
+            }
+            if !self.tabs.is_empty() {
+                // Bookmarks and recent repositories while tabs are open.
+                let mut shared = Shared {
+                    settings: &mut self.settings,
+                    palette: self.palette,
+                    log: &self.log,
+                    actions: &mut self.actions,
+                    show_log: &mut self.show_log,
+                };
+                views::welcome::repositories_menu(ui, &mut shared);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 self.updater.ui(ui);
@@ -275,17 +359,37 @@ impl GkApp {
         }
     }
 
+    /// Rebuilds the keymap when `settings.keymap` changed and publishes it
+    /// for this frame (suspended while a global dialog or modal is open).
+    fn publish_keymap(&mut self, ctx: &egui::Context) {
+        if self.settings.keymap != self.keymap_src {
+            self.keymap_src = self.settings.keymap.clone();
+            self.keymap = Arc::new(Keymap::from_overrides(&self.keymap_src));
+        }
+        let suspended = self.global.is_some()
+            || self.command_palette.open
+            || !self.errors.is_empty()
+            || self.askpass.as_ref().is_some_and(|s| s.pending().is_some());
+        keymap::publish(ctx, self.keymap.clone(), suspended);
+    }
+
+    /// Application-level shortcuts from the keymap.
     fn shortcuts(&mut self, ctx: &egui::Context) {
-        let (open, close, next, palette) = ctx.input_mut(|i| {
-            (
-                i.consume_key(egui::Modifiers::COMMAND, egui::Key::O),
-                i.consume_key(egui::Modifiers::COMMAND, egui::Key::W),
-                i.consume_key(egui::Modifiers::CTRL, egui::Key::Tab),
-                i.consume_key(
-                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-                    egui::Key::P,
-                ),
-            )
+        // A global dialog (e.g. the keymap editor recording keys) owns the keyboard.
+        if self.global.is_some() || !self.errors.is_empty() {
+            return;
+        }
+        let km = self.keymap.clone();
+        let [open, close, next, prev, palette, settings] = ctx.input_mut(|i| {
+            [
+                Act::OpenRepo,
+                Act::CloseTab,
+                Act::NextTab,
+                Act::PrevTab,
+                Act::Palette,
+                Act::Settings,
+            ]
+            .map(|a| km.consume(i, a))
         });
         // Never open over a dialog: its unsaved input would be lost.
         let dialog_open = self
@@ -294,6 +398,9 @@ impl GkApp {
             .is_some_and(|t| t.dialog.is_some());
         if palette && !dialog_open {
             self.command_palette.toggle();
+        }
+        if self.command_palette.open {
+            return;
         }
         if open {
             self.actions.push(Action::OpenRepoDialog);
@@ -304,14 +411,153 @@ impl GkApp {
         if next && !self.tabs.is_empty() {
             self.active = (self.active + 1) % self.tabs.len();
         }
+        if prev && !self.tabs.is_empty() {
+            self.active = (self.active + self.tabs.len() - 1) % self.tabs.len();
+        }
+        if settings && !dialog_open {
+            self.actions
+                .push(Action::Global(dialogs::GlobalDialog::settings()));
+        }
     }
+
+    /// Non-modal warning when git is missing or older than the minimum.
+    fn git_banner(&mut self, ui: &mut egui::Ui) {
+        if self.git_warning_dismissed {
+            return;
+        }
+        let Some(text) = self.git_check.lock().clone() else {
+            return;
+        };
+        let fill = self.palette.conflict.gamma_multiply(0.18);
+        egui::Panel::top("git-version-banner")
+            .frame(
+                egui::Frame::new()
+                    .fill(fill)
+                    .inner_margin(egui::Margin::symmetric(8, 4)),
+            )
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("⚠")
+                            .color(self.palette.conflict)
+                            .strong(),
+                    );
+                    ui.label(text);
+                    ui.hyperlink_to("Install the latest Git", GIT_DOWNLOAD_URL);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("Dismiss").clicked() {
+                            self.git_warning_dismissed = true;
+                        }
+                    });
+                });
+            });
+    }
+
+    /// Floating, non-modal panel with background clones (top right).
+    fn jobs_panel(&mut self, ctx: &egui::Context) {
+        let mut open: Vec<PathBuf> = Vec::new();
+        for j in &mut self.clones {
+            if let Some(Ok(dest)) = j.poll() {
+                open.push(dest);
+            }
+        }
+        self.clones.retain(|j| j.running() || j.error.is_some());
+        for p in open {
+            self.actions.push(Action::OpenRepo(p));
+        }
+        if self.clones.is_empty() {
+            return;
+        }
+        let p = self.palette;
+        let mut dismiss: Option<usize> = None;
+        egui::Area::new(egui::Id::new("gk-jobs"))
+            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 76.0))
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_width(380.0);
+                    for (i, j) in self.clones.iter().enumerate() {
+                        if i > 0 {
+                            ui.separator();
+                        }
+                        ui.horizontal(|ui| {
+                            if j.running() {
+                                ui.spinner();
+                                ui.label(
+                                    egui::RichText::new(format!("Cloning {}", j.name())).strong(),
+                                );
+                            } else {
+                                ui.label(
+                                    egui::RichText::new(format!("Clone of {} failed", j.name()))
+                                        .strong()
+                                        .color(p.removed_fg),
+                                );
+                            }
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if j.running() {
+                                        if ui.small_button("Cancel").clicked() {
+                                            j.cancel();
+                                        }
+                                    } else if ui.small_button("Dismiss").clicked() {
+                                        dismiss = Some(i);
+                                    }
+                                },
+                            );
+                        });
+                        ui.add(
+                            egui::Label::new(egui::RichText::new(&j.url).small().color(p.muted))
+                                .truncate(),
+                        );
+                        match &j.error {
+                            Some(e) => {
+                                ui.label(egui::RichText::new(e).small().color(p.removed_fg));
+                            }
+                            None => {
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(j.last_line()).monospace().small(),
+                                    )
+                                    .truncate(),
+                                )
+                                .on_hover_text(j.output());
+                            }
+                        }
+                    }
+                });
+            });
+        if let Some(i) = dismiss {
+            self.clones.remove(i);
+        }
+    }
+}
+
+/// Installs the UI fonts with `family` as monospace (`theme::install_fonts`
+/// itself honors the `GITKWAKEN_MONO_FONT` override).
+fn install_fonts(ctx: &egui::Context, family: &str) {
+    if std::env::var_os("GITKWAKEN_MONO_FONT").is_some() {
+        theme::install_fonts(ctx);
+    } else {
+        theme::install_fonts_with(ctx, Some(family));
+    }
+}
+
+/// Monospace family to install: `GITKWAKEN_MONO_FONT` (dev override) or the setting.
+fn mono_family(s: &Settings) -> String {
+    std::env::var("GITKWAKEN_MONO_FONT")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| s.mono_font_family.clone())
 }
 
 impl gk_dx11::App for GkApp {
     fn ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
+        self.publish_keymap(&ctx);
         self.shortcuts(&ctx);
         egui::Panel::top("tabs").show(ui, |ui| self.tab_bar(ui));
+        self.git_banner(ui);
         if self.show_log {
             egui::Panel::bottom("output")
                 .resizable(true)
@@ -368,6 +614,7 @@ impl gk_dx11::App for GkApp {
             let tab = self.tabs.get_mut(i);
             views::palette::show(&ctx, &mut self.command_palette, tab, &mut shared);
         }
+        self.jobs_panel(&ctx);
         self.askpass_prompt(&ctx);
         self.handle_actions(&ctx);
         self.persist();

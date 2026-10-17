@@ -1,0 +1,11 @@
+# README.md (unstaged) -> context menu -> Open in external diff tool
+# (configured as cmd /C copy ... so the sides land in $WORK).
+wait 2500
+rclick 320 237
+wait 300
+move 322 238
+wait 300
+shot $OUT/fb-external-menu.png
+click 400 362
+wait 3000
+exit

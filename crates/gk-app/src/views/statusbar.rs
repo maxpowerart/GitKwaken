@@ -11,12 +11,28 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
             egui::ScrollArea::vertical()
                 .max_height(140.0)
                 .show(ui, |ui| {
-                    for m in snap.messages.iter().rev() {
+                    for (i, m) in snap.messages.iter().enumerate().rev() {
                         let color = match m.kind {
                             MessageKind::Error => shared.palette.removed_fg,
                             MessageKind::Info => ui.visuals().text_color(),
                         };
-                        ui.colored_label(color, &m.text);
+                        // Info messages with details (e.g. commit hook output)
+                        // collapse to their first line.
+                        match (m.kind == MessageKind::Info, m.text.split_once('\n')) {
+                            (true, Some((first, rest))) if !rest.trim().is_empty() => {
+                                egui::CollapsingHeader::new(
+                                    egui::RichText::new(first).color(color),
+                                )
+                                .id_salt(("gk-message", i, m.at))
+                                .default_open(rest.lines().count() <= 3)
+                                .show(ui, |ui| {
+                                    ui.label(egui::RichText::new(rest).monospace().small());
+                                });
+                            }
+                            _ => {
+                                ui.colored_label(color, &m.text);
+                            }
+                        }
                     }
                 });
             if ui.small_button("Dismiss").clicked() {

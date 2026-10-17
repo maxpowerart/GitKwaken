@@ -1,0 +1,81 @@
+name: E2E UI
+
+# Drives the real release build through scripted input (GK_DX11_INPUT_SCRIPT)
+# and checks the resulting repositories with git: scripts/run-e2e*.sh.
+# GitHub's windows runners log in an interactive desktop session, so the
+# D3D11 window can be created; there is no GPU, so WARP is forced.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      suites:
+        description: 'Space-separated suites (core history remote update features-a features-b); empty = all'
+        required: false
+        default: ''
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  e2e:
+    name: E2E UI suites (windows)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      GK_DX11_WARP: '1'
+      GITKWAKEN_NO_UPDATE_CHECK: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: e2e-release
+
+      - name: git identity
+        shell: bash
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.invalid"
+          git config --global init.defaultBranch main
+          git config --global core.autocrlf false
+          git --version
+
+      - name: Build release (app + gk-bench)
+        run: cargo build --release --locked -p gk-app -p gk-bench
+
+      - name: Desktop session info
+        shell: pwsh
+        run: |
+          Get-CimInstance Win32_VideoController | Select-Object Name, DriverVersion | Format-Table
+          query user 2>$null; "Session: $([System.Diagnostics.Process]::GetCurrentProcess().SessionId)"
+
+      - name: Run E2E suites
+        shell: bash
+        run: |
+          # Never let git or the app walk up from a missing scenario repo into the checkout.
+          export GIT_CEILING_DIRECTORIES="$(cygpath -m "$GITHUB_WORKSPACE/bench-data")"
+          mkdir -p bench-data
+          bash scripts/ci-e2e.sh target/release/gitkwaken.exe target/release/gk-bench.exe ${{ github.event.inputs.suites }}
+
+      - name: Upload screenshots and logs (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots-${{ github.run_id }}
+          path: |
+            bench-data/ci-e2e/
+            bench-data/e2e-*/**/*.png
+            bench-data/e2e-*/**/*.log
+            bench-data/e2e-*/**/*.script
+          if-no-files-found: ignore
+          retention-days: 14

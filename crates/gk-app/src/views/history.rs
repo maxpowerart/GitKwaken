@@ -4,7 +4,9 @@
 //! requested for the visible range (plus a small prefetch) and loads in the
 //! background, so a million-commit history scrolls as smoothly as a small one.
 
+pub mod filter;
 pub mod graph;
+pub mod keys;
 pub mod selection;
 pub mod table;
 pub mod task;
@@ -14,8 +16,10 @@ mod ui_tests;
 use crate::app::Shared;
 use crate::dialogs::Dialog;
 use crate::tab::{RepoTab, View};
-use egui::{Id, Rect, Sense, Ui, UiBuilder, pos2, vec2};
+use egui::{Id, Rect, RichText, Sense, Ui, UiBuilder, pos2, vec2};
+use gk_core::history::Scope;
 use gk_core::{Label, ObjectId, Snapshot};
+use keys::ListKeys;
 use selection::Selection;
 use std::sync::Arc;
 use table::{CellStyle, Columns};
@@ -37,7 +41,8 @@ pub struct HistoryState {
     page_rows: usize,
     /// Graph column width used by the header (last frame's rows).
     graph_w: f32,
-    quick_filter: String,
+    /// Message / author / date / path / pickaxe filters (flat list).
+    pub filter: filter::FilterState,
     /// Identity of the last seen history, to prune the selection on refresh.
     history_ptr: usize,
     auto_selected: bool,
@@ -55,7 +60,7 @@ impl Default for HistoryState {
             menu_ids: Vec::new(),
             page_rows: 20,
             graph_w: 40.0,
-            quick_filter: String::new(),
+            filter: Default::default(),
             history_ptr: 0,
             auto_selected: false,
             clipboard: Oneshot::default(),
@@ -193,7 +198,31 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared
     }
 
     toolbar(ui, tab, snap);
+    {
+        let revs = scope_revs(&tab.session.options().scope, snap);
+        let git = tab.session.repo().git().clone();
+        tab.history.filter.sync(ui.ctx(), &git, revs, ptr);
+    }
     ui.add_space(2.0);
+
+    if tab.history.filter.active() {
+        let mut frac = tab.state.layout.list_split;
+        let (top, bottom) = split(
+            ui,
+            Id::new(("history-split", &tab.path)),
+            &mut frac,
+            true,
+            80.0,
+        );
+        tab.state.layout.list_split = frac;
+        in_rect(ui, top, "history-filtered", |ui| {
+            filtered_table(ui, tab, snap, shared)
+        });
+        in_rect(ui, bottom, "history-details", |ui| {
+            crate::views::details::show(ui, tab, snap, shared)
+        });
+        return;
+    }
 
     if hist.is_empty() {
         ui.vertical_centered(|ui| {
@@ -230,26 +259,140 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared
     });
 }
 
-fn set_scope(tab: &mut RepoTab, current: bool) {
+/// History scope from `RepoState::history_scope`: `all`, `current` or
+/// `revs:<name> <name>…` (ref names cannot contain spaces).
+pub fn scope_from_state(s: &str) -> Scope {
+    match s.strip_prefix("revs:") {
+        _ if s == "current" => Scope::Current,
+        Some(list) => {
+            let v: Vec<String> = list.split_whitespace().map(str::to_string).collect();
+            if v.is_empty() {
+                Scope::All
+            } else {
+                Scope::Revs(v)
+            }
+        }
+        None => Scope::All,
+    }
+}
+
+/// Inverse of [`scope_from_state`].
+pub fn scope_to_state(s: &Scope) -> String {
+    match s {
+        Scope::All => "all".into(),
+        Scope::Current => "current".into(),
+        Scope::Revs(v) => format!("revs:{}", v.join(" ")),
+    }
+}
+
+/// `git log` revision arguments for the commits a scope shows.
+pub fn scope_revs(scope: &Scope, snap: &Snapshot) -> Vec<String> {
+    match scope {
+        Scope::All => {
+            let mut v: Vec<String> = ["--branches", "--remotes", "--tags"]
+                .map(String::from)
+                .to_vec();
+            if snap.refs.head_id.is_some() {
+                v.push("HEAD".into());
+            }
+            v
+        }
+        Scope::Current => vec!["HEAD".into()],
+        Scope::Revs(r) => r.clone(),
+    }
+}
+
+fn set_scope(tab: &mut RepoTab, scope: Scope) {
     let mut o = tab.session.options();
-    o.scope = if current {
-        gk_core::history::Scope::Current
-    } else {
-        gk_core::history::Scope::All
-    };
+    tab.state.history_scope = scope_to_state(&scope);
+    o.scope = scope;
     tab.session.set_options(o);
-    tab.state.history_scope = if current { "current" } else { "all" }.into();
+}
+
+/// Text of the branch picker button.
+pub fn scope_label(s: &Scope) -> String {
+    match s {
+        Scope::All => "All branches".into(),
+        Scope::Current => "Current branch".into(),
+        Scope::Revs(v) if v.len() == 1 => v[0].clone(),
+        Scope::Revs(v) => format!("{} branches", v.len()),
+    }
+}
+
+/// Branch picker: all, current, or any set of branches (`Scope::Revs`).
+fn branch_picker(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot) {
+    let scope = tab.session.options().scope;
+    let mut new: Option<Scope> = None;
+    ui.menu_button(format!("{} ▾", scope_label(&scope)), |ui| {
+        if ui
+            .selectable_label(scope == Scope::All, "All branches")
+            .clicked()
+        {
+            new = Some(Scope::All);
+            ui.close();
+        }
+        if ui
+            .selectable_label(scope == Scope::Current, "Current branch")
+            .clicked()
+        {
+            new = Some(Scope::Current);
+            ui.close();
+        }
+        ui.separator();
+        ui.label(RichText::new("Show branches:").weak());
+        let picked: Vec<String> = match &scope {
+            Scope::Revs(v) => v.clone(),
+            _ => Vec::new(),
+        };
+        let mut toggle = |ui: &mut Ui, name: &str| {
+            let mut on = picked.iter().any(|p| p == name);
+            if ui.checkbox(&mut on, name).changed() {
+                let mut v = picked.clone();
+                if on {
+                    v.push(name.to_string());
+                } else {
+                    v.retain(|p| p != name);
+                }
+                new = Some(if v.is_empty() {
+                    Scope::All
+                } else {
+                    Scope::Revs(v)
+                });
+            }
+        };
+        egui::ScrollArea::vertical()
+            .id_salt("branch-picker")
+            .max_height(320.0)
+            .show(ui, |ui| {
+                for b in &snap.refs.branches {
+                    toggle(ui, &b.name);
+                }
+                if !snap.refs.remote_branches.is_empty() {
+                    ui.menu_button("Remote branches", |ui| {
+                        egui::ScrollArea::vertical()
+                            .id_salt("branch-picker-remote")
+                            .max_height(320.0)
+                            .show(ui, |ui| {
+                                for b in &snap.refs.remote_branches {
+                                    toggle(ui, &b.full());
+                                }
+                            });
+                    });
+                }
+            });
+    })
+    .response
+    .on_hover_text("Branches shown in the history");
+    if let Some(s) = new
+        && s != scope
+    {
+        set_scope(tab, s);
+    }
 }
 
 fn toolbar(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot) {
     ui.horizontal(|ui| {
-        let current = tab.state.history_scope == "current";
-        if ui.selectable_label(!current, "All branches").clicked() && current {
-            set_scope(tab, false);
-        }
-        if ui.selectable_label(current, "Current branch").clicked() && !current {
-            set_scope(tab, true);
-        }
+        branch_picker(ui, tab, snap);
         ui.separator();
         let head = head_oid(snap);
         if ui
@@ -260,22 +403,254 @@ fn toolbar(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot) {
             tab.history.select_commit(h);
             ui.memory_mut(|m| m.request_focus(list_id(tab)));
         }
+        if ui
+            .add_enabled(head.is_some(), egui::Button::new("↶ Undo…"))
+            .on_hover_text("Undo the last operation (commit, merge, rebase, reset, pull, checkout)")
+            .clicked()
+        {
+            tab.dialog = Some(Dialog::undo());
+        }
         if snap.history_loading {
             ui.spinner();
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let f = &mut tab.history.filter;
+            let n = f.edit.extra_count();
+            let label = if n > 0 {
+                format!("Filters ({n})")
+            } else {
+                "Filters".to_string()
+            };
+            if ui
+                .selectable_label(f.open, label)
+                .on_hover_text("Filter by author, date, path or content (-S / -G)")
+                .clicked()
+            {
+                f.open = !f.open;
+            }
+            if f.edit.is_active()
+                && ui
+                    .small_button("✖")
+                    .on_hover_text("Clear filters")
+                    .clicked()
+            {
+                f.clear();
+            }
             let r = ui.add(
-                egui::TextEdit::singleline(&mut tab.history.quick_filter)
-                    .hint_text("Filter commits…")
+                egui::TextEdit::singleline(&mut f.edit.text)
+                    .hint_text("Filter by message…")
                     .desired_width(200.0),
             );
-            if r.changed() && !tab.history.quick_filter.trim().is_empty() {
-                let q = std::mem::take(&mut tab.history.quick_filter);
-                tab.search.start_query(q);
-                tab.view = View::Search;
+            if r.changed() {
+                f.edited();
             }
         });
     });
+    if tab.history.filter.open {
+        filter_row(ui, &mut tab.history.filter);
+    }
+}
+
+/// Second toolbar row: author, dates, path and pickaxe.
+fn filter_row(ui: &mut Ui, f: &mut filter::FilterState) {
+    ui.horizontal_wrapped(|ui| {
+        let mut changed = false;
+        let mut field = |ui: &mut Ui, label: &str, v: &mut String, hint: &str, w: f32| {
+            ui.label(label);
+            changed |= ui
+                .add(
+                    egui::TextEdit::singleline(v)
+                        .hint_text(hint)
+                        .desired_width(w),
+                )
+                .changed();
+        };
+        field(ui, "Author:", &mut f.edit.author, "name or email", 130.0);
+        field(ui, "Since:", &mut f.edit.since, "2026-01-01", 90.0);
+        field(ui, "Until:", &mut f.edit.until, "2026-12-31", 90.0);
+        field(ui, "Path:", &mut f.edit.path, "file or folder", 150.0);
+        let before = f.edit.pickaxe_mode;
+        egui::ComboBox::from_id_salt("pickaxe-mode")
+            .width(50.0)
+            .selected_text(match f.edit.pickaxe_mode {
+                filter::Pickaxe::String => "-S",
+                filter::Pickaxe::Regex => "-G",
+            })
+            .show_ui(ui, |ui| {
+                ui.selectable_value(
+                    &mut f.edit.pickaxe_mode,
+                    filter::Pickaxe::String,
+                    "-S  occurrences of a string changed",
+                );
+                ui.selectable_value(
+                    &mut f.edit.pickaxe_mode,
+                    filter::Pickaxe::Regex,
+                    "-G  diff lines match a regex",
+                );
+            });
+        changed |= before != f.edit.pickaxe_mode && !f.edit.pickaxe.is_empty();
+        changed |= ui
+            .add(
+                egui::TextEdit::singleline(&mut f.edit.pickaxe)
+                    .hint_text("content (pickaxe)")
+                    .desired_width(130.0),
+            )
+            .changed();
+        if changed {
+            f.edited();
+        }
+        if f.running() {
+            ui.spinner();
+        }
+        if f.active() {
+            let n = f.rows.len();
+            ui.label(RichText::new(format!("{n} match{}", if n == 1 { "" } else { "es" })).weak());
+        }
+    });
+}
+
+/// The filtered history: matching commits as a flat list (no graph).
+fn filtered_table(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared) {
+    let rows = tab.history.filter.rows.clone();
+    let n = rows.len();
+    if let Some(e) = tab.history.filter.error() {
+        ui.colored_label(shared.palette.removed_fg, e);
+    }
+    if n == 0 {
+        ui.vertical_centered(|ui| {
+            ui.add_space(30.0);
+            if tab.history.filter.running() {
+                ui.spinner();
+                ui.label("Filtering…");
+            } else {
+                ui.label(RichText::new("No commits match the filters.").weak());
+            }
+        });
+        return;
+    }
+    let row_h = shared.settings.history.row_height.clamp(14.0, 60.0);
+    let id = Id::new(("history-filtered-list", &tab.path));
+    let fs = &tab.history.filter;
+    let key_at = |r: usize| rows.get(r).copied();
+    let row_of = |k: &ObjectId| fs.row_of(k);
+    let focused = ui.memory(|m| m.has_focus(id));
+    let mut scroll = None;
+    if focused {
+        let st = &mut tab.history.sel;
+        for (key, shift) in table::nav_keys(ui) {
+            let cur = st.cursor_row(row_of);
+            if let Some(t) =
+                selection::nav_target(key, cur, n, tab.history.page_rows.saturating_sub(1))
+            {
+                st.move_to(t, shift, key_at, row_of);
+                scroll = Some(table::ScrollTo::Reveal(t));
+            }
+        }
+        if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::C)) && !st.is_empty()
+        {
+            let ids = st.sorted(row_of);
+            ui.ctx().copy_text(
+                ids.iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            );
+        }
+    }
+    if let Some(k) = tab.history.scroll_to.take()
+        && let Some(r) = row_of(&k)
+    {
+        scroll = Some(table::ScrollTo::Jump(r));
+    }
+    let k = ListKeys::read(ui, focused);
+    let left = ui.max_rect().left();
+    let right = left + ui.available_width();
+    let rects = table::layout_columns(left, right, 0.0, &tab.history.cols);
+    table::header(ui, id.with("header"), &mut tab.history.cols, &rects, false);
+    let st = cell_style(ui, shared);
+    let cols = tab.history.cols;
+    let session = &tab.session;
+    let sel = &tab.history.sel;
+    let visuals = ui.visuals().clone();
+    let head = head_oid(snap);
+    let out = table::virtual_list(ui, id, n, row_h, scroll, |f, range| {
+        let pre_a = range.start.saturating_sub(PREFETCH);
+        let pre_b = (range.end + PREFETCH).min(n);
+        let metas = session.metas(&rows[pre_a..pre_b]);
+        let rects = table::layout_columns(f.x.min, f.x.max, 0.0, &cols);
+        for r in range {
+            let cid = rows[r];
+            let rect = f.row_rect(r);
+            table::paint_row_bg(
+                f,
+                r,
+                rect,
+                sel.contains(&cid),
+                focused,
+                st.palette,
+                &visuals,
+            );
+            let meta = metas.get(r - pre_a).and_then(|m| m.as_deref());
+            let labels = table::labels_of(&snap.refs.labels, &cid);
+            table::paint_commit_cells(
+                f.painter,
+                rect,
+                &rects,
+                &st,
+                &cid,
+                meta,
+                labels,
+                head == Some(cid),
+            );
+        }
+    });
+    tab.history.page_rows = out.visible.len().max(1);
+    if let Some((r, m)) = out.clicked {
+        tab.history.sel.click(r, m.command, m.shift, key_at, row_of);
+    }
+    if let Some(cid) = out.double_clicked.and_then(key_at) {
+        tab.dialog = Some(Dialog::checkout(checkout_rev(snap, &cid)));
+    }
+    if let Some(r) = out.secondary {
+        if let Some(cid) = key_at(r) {
+            if !tab.history.sel.contains(&cid) {
+                tab.history.sel.select_only(cid);
+            }
+            tab.history.menu_ids = tab.history.sel.sorted(row_of);
+        } else {
+            tab.history.menu_ids.clear();
+        }
+    }
+    let ids = tab.history.sel.sorted(row_of);
+    let cursor = tab.history.sel.cursor_row(row_of);
+    list_keys(tab, snap, k, &ids);
+    if k.menu && !ids.is_empty() {
+        tab.history.menu_ids = ids;
+    }
+    if !tab.history.menu_ids.is_empty() {
+        let ids = std::mem::take(&mut tab.history.menu_ids);
+        out.response
+            .context_menu(|ui| commit_menu(ui, tab, snap, &ids));
+        let pos = out.row_pos(cursor.unwrap_or(0));
+        keys::keyboard_menu(&out.response, id.with("kb-menu"), k.menu, pos, |ui| {
+            commit_menu(ui, tab, snap, &ids)
+        });
+        tab.history.menu_ids = ids;
+    }
+}
+
+/// Enter / Ctrl+B / Ctrl+T on the selected commits of a commit list (newest
+/// first). Shift+F10 is handled by the caller (it owns the menu).
+pub(crate) fn list_keys(tab: &mut RepoTab, snap: &Snapshot, k: ListKeys, ids: &[ObjectId]) {
+    let [id] = ids else { return };
+    let hex = id.to_string();
+    if k.enter {
+        tab.dialog = Some(Dialog::checkout(checkout_rev(snap, id)));
+    } else if k.branch {
+        tab.dialog = Some(Dialog::branch(snap, Some(hex)));
+    } else if k.tag {
+        tab.dialog = Some(Dialog::tag(Some(hex)));
+    }
 }
 
 fn list_id(tab: &RepoTab) -> Id {
@@ -341,6 +716,7 @@ fn commit_table(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Sh
             );
         }
     }
+    let keys_pressed = ListKeys::read(ui, ui.memory(|m| m.has_focus(id)));
     let jump = std::mem::take(&mut tab.history.scroll_jump);
     let mut scroll = tab
         .history
@@ -484,10 +860,24 @@ fn commit_table(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Sh
             tab.history.menu_ids.clear();
         }
     }
+    let ids = tab.history.sel.sorted(row_of);
+    let cursor = tab.history.sel.cursor_row(row_of);
+    list_keys(tab, snap, keys_pressed, &ids);
+    if keys_pressed.menu && !ids.is_empty() {
+        tab.history.menu_ids = ids;
+    }
     if !tab.history.menu_ids.is_empty() {
         let ids = std::mem::take(&mut tab.history.menu_ids);
         out.response
             .context_menu(|ui| commit_menu(ui, tab, snap, &ids));
+        let pos = out.row_pos(cursor.unwrap_or(off));
+        keys::keyboard_menu(
+            &out.response,
+            id.with("kb-menu"),
+            keys_pressed.menu,
+            pos,
+            |ui| commit_menu(ui, tab, snap, &ids),
+        );
         tab.history.menu_ids = ids;
     }
 }
@@ -518,11 +908,7 @@ pub fn commit_menu(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, ids: &[Objec
     let oldest_first: Vec<String> = newest_first.iter().rev().cloned().collect();
     let mut dialog: Option<Dialog> = None;
     fn item(ui: &mut Ui, enabled: bool, text: &str) -> bool {
-        let clicked = ui.add_enabled(enabled, egui::Button::new(text)).clicked();
-        if clicked {
-            ui.close();
-        }
-        clicked
+        keys::menu_item(ui, enabled, text, "")
     }
     if single {
         if let Some(ls) = table::labels_of(&snap.refs.labels, &first) {
@@ -537,14 +923,14 @@ pub fn commit_menu(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, ids: &[Objec
                 }
             }
         }
-        if item(ui, true, "Checkout…") {
+        if keys::menu_item(ui, true, "Checkout…", keys::CHECKOUT_KEY) {
             dialog = Some(Dialog::checkout(hex.clone()));
         }
         ui.separator();
-        if item(ui, true, "Create branch here…") {
+        if keys::menu_item(ui, true, "Create branch here…", keys::BRANCH_KEY) {
             dialog = Some(Dialog::branch(snap, Some(hex.clone())));
         }
-        if item(ui, true, "Create tag here…") {
+        if keys::menu_item(ui, true, "Create tag here…", keys::TAG_KEY) {
             dialog = Some(Dialog::tag(Some(hex.clone())));
         }
         ui.separator();
@@ -631,6 +1017,15 @@ pub fn commit_menu(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, ids: &[Objec
                 }
             }
         });
+    }
+    if single {
+        ui.separator();
+        if item(ui, true, "Add/Edit note…") {
+            dialog = Some(Dialog::edit_note(hex.clone()));
+        }
+        if item(ui, true, "Remove note…") {
+            dialog = Some(Dialog::remove_note(hex.clone()));
+        }
     }
     if let Some(d) = dialog {
         tab.dialog = Some(d);

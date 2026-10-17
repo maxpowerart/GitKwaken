@@ -118,19 +118,31 @@ struct Entry {
 }
 
 /// Image preview state of one diff view.
+/// How changed images are compared.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageMode {
+    SideBySide,
+    Swipe,
+    /// After drawn over before with adjustable opacity (onion skin).
+    Overlay,
+}
+
 pub struct ImagePreview {
     entries: Vec<Entry>,
-    swipe: bool,
+    mode: ImageMode,
     /// Swipe divider position, 0 (all after) ..= 1 (all before).
     split: f32,
+    /// Overlay opacity of the after image, 0 ..= 1.
+    opacity: f32,
 }
 
 impl Default for ImagePreview {
     fn default() -> Self {
         Self {
             entries: Vec::new(),
-            swipe: false,
+            mode: ImageMode::SideBySide,
             split: 0.5,
+            opacity: 0.5,
         }
     }
 }
@@ -184,9 +196,18 @@ impl ImagePreview {
         let loading = entry.pending.is_some();
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.swipe, false, "Side by side");
-            ui.selectable_value(&mut self.swipe, true, "Swipe");
-            if self.swipe {
+            ui.selectable_value(&mut self.mode, ImageMode::SideBySide, "Side by side");
+            ui.selectable_value(&mut self.mode, ImageMode::Swipe, "Swipe");
+            ui.selectable_value(&mut self.mode, ImageMode::Overlay, "Overlay");
+            if self.mode == ImageMode::Overlay {
+                ui.add(
+                    egui::Slider::new(&mut self.opacity, 0.0..=1.0)
+                        .show_value(false)
+                        .trailing_fill(true),
+                )
+                .on_hover_text("Opacity of the after image (or drag on the image)");
+            }
+            if self.mode == ImageMode::Swipe {
                 ui.add(
                     egui::Slider::new(&mut self.split, 0.0..=1.0)
                         .show_value(false)
@@ -212,7 +233,14 @@ impl ImagePreview {
         let (rect, resp) = ui.allocate_exact_size(avail, Sense::click_and_drag());
         let painter = ui.painter_at(rect);
         let dark = p.dark;
-        if self.swipe {
+        if self.mode == ImageMode::Overlay {
+            if let Some(pos) = resp.interact_pointer_pos()
+                && (resp.dragged() || resp.clicked())
+            {
+                self.opacity = swipe_split(rect, l, pos.x);
+            }
+            overlay(&painter, rect, l, self.opacity, p, ui);
+        } else if self.mode == ImageMode::Swipe {
             if let Some(pos) = resp.interact_pointer_pos()
                 && (resp.dragged() || resp.clicked())
             {
@@ -418,6 +446,47 @@ fn swipe_split(rect: Rect, l: &Loaded, x: f32) -> f32 {
     }
 }
 
+/// Onion skin: before at full opacity, after on top at `opacity`.
+fn overlay(
+    painter: &egui::Painter,
+    rect: Rect,
+    l: &Loaded,
+    opacity: f32,
+    p: &crate::theme::Palette,
+    ui: &Ui,
+) {
+    header(painter, rect, "Before", &l.before, Align2::LEFT_TOP, p, ui);
+    header(painter, rect, "After", &l.after, Align2::RIGHT_TOP, p, ui);
+    let body = Rect::from_min_max(pos2(rect.left(), rect.top() + HEADER_H), rect.max);
+    let Some((frame_r, dims)) = swipe_frame(rect, l) else {
+        placeholder(painter, body, &l.before, p, ui);
+        return;
+    };
+    checker(painter, frame_r, p.dark);
+    for (side, tint) in [
+        (&l.before, Color32::WHITE),
+        (&l.after, overlay_tint(opacity)),
+    ] {
+        if let Side::Image { tex, size, .. } = side {
+            painter.image(tex.id(), fit(body, *size, dims), unit_uv(), tint);
+        }
+    }
+    frame(painter, frame_r, ui);
+    let font = egui::TextStyle::Small.resolve(ui.style());
+    painter.text(
+        frame_r.center_bottom() + vec2(0.0, -4.0),
+        Align2::CENTER_BOTTOM,
+        format!("after {:.0}%", opacity * 100.0),
+        font,
+        p.muted,
+    );
+}
+
+/// Premultiplied white at `opacity` (image tint for the overlay).
+fn overlay_tint(opacity: f32) -> Color32 {
+    Color32::WHITE.gamma_multiply(opacity.clamp(0.0, 1.0))
+}
+
 fn swipe(
     painter: &egui::Painter,
     rect: Rect,
@@ -501,5 +570,14 @@ mod tests {
         // tiny images are enlarged at most MAX_ZOOM times
         let r = fit(area, [2, 2], [2, 2]);
         assert_eq!(r.size(), vec2(16.0, 16.0));
+    }
+
+    #[test]
+    fn overlay_tint_follows_opacity() {
+        assert_eq!(overlay_tint(1.0), Color32::WHITE);
+        assert_eq!(overlay_tint(0.0).a(), 0);
+        let half = overlay_tint(0.5);
+        assert!(half.a() > 100 && half.a() < 156, "{half:?}");
+        assert_eq!(overlay_tint(7.0), Color32::WHITE, "clamped");
     }
 }

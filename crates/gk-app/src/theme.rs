@@ -239,17 +239,6 @@ fn resolve_font(name: &str) -> Option<std::path::PathBuf> {
         .find_map(|suffix| system_font(&format!("{compact}{suffix}")))
 }
 
-/// Compatibility wrapper: monospace text at `font_size - 0.5`. Prefer
-/// [`apply_with`] with `settings.mono_font_size`.
-pub fn apply(
-    ctx: &egui::Context,
-    theme: gk_settings::Theme,
-    ui_scale: f32,
-    font_size: f32,
-) -> Palette {
-    apply_with(ctx, theme, ui_scale, font_size, font_size - 0.5)
-}
-
 /// Applies theme, zoom and text sizes; monospace text (diffs, ids, console)
 /// uses `mono_font_size` (`settings.mono_font_size`).
 pub fn apply_with(

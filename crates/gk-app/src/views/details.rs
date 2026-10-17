@@ -8,6 +8,7 @@ use crate::views::history::{in_rect, split, table};
 use egui::{Color32, Id, Rect, RichText, Sense, Ui, pos2, vec2};
 use gk_core::content::{ChangeKind, ChangedFile, DiffTarget};
 use gk_core::{Label, Load, ObjectId, Session, Snapshot};
+use std::sync::Arc;
 
 #[derive(Default)]
 pub struct DetailsState {
@@ -15,6 +16,8 @@ pub struct DetailsState {
     selected_file: Option<String>,
     filter: String,
     compare: Task<(ObjectId, ObjectId), Vec<ChangedFile>>,
+    /// Note of the shown commit, keyed by (commit, [`NOTES_GEN`]).
+    notes: Task<(ObjectId, u64), Option<String>>,
     /// Indices of files matching `filter`, keyed by (files identity, filter).
     filtered: Vec<usize>,
     filtered_key: Option<(usize, usize, String)>,
@@ -49,7 +52,12 @@ enum Act {
 pub fn show(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared) {
     let hist = snap.history.clone();
     // Selected commits of the active list, in display order when few.
-    let (count, ids, preferred) = if tab.view == View::Search {
+    let (count, ids, preferred) = if tab.view == View::Reflog {
+        match tab.reflog.selected_id() {
+            Some(id) => (1, vec![id], None),
+            None => (0, Vec::new(), None),
+        }
+    } else if tab.view == View::Search {
         let s = &tab.search;
         let ids = if s.sel.len() <= 2 {
             s.sel.sorted(|k| s.row_of(snap, k))
@@ -77,11 +85,53 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared
         2 => compare(ui, tab, shared, ids[1], ids[0], &mut act),
         n => placeholder(ui, &format!("{n} commits selected.")),
     }
+    apply(act, tab, snap);
+}
+
+fn apply(act: Option<Act>, tab: &mut RepoTab, snap: &Snapshot) {
     match act {
         Some(Act::SelectCommit(id)) => select_anywhere(tab, snap, id),
         Some(Act::FileHistory(path)) => crate::views::search::open_file_history(tab, path),
         Some(Act::Blame(path, rev)) => crate::views::blame::open_blame(tab, path, rev),
         None => {}
+    }
+}
+
+/// Changed-file list and diff of `files` (as in commit details), for other
+/// views such as the stash view. `rev` names the newer side (for blame and
+/// "open file at revision"); `target` identifies what is shown so the file
+/// selection resets when it changes.
+pub fn files_view(
+    ui: &mut Ui,
+    tab: &mut RepoTab,
+    snap: &Snapshot,
+    shared: &mut Shared,
+    files: &[ChangedFile],
+    rev: &str,
+    target: ObjectId,
+) {
+    retarget(&mut tab.details, (target, None), None);
+    let mut act = None;
+    files_and_diff(ui, tab, shared, files, rev, &mut act);
+    apply(act, tab, snap);
+}
+
+/// Bumped whenever a note is added or removed, so the details reload notes.
+pub static NOTES_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// `git notes show <id>` of the shown commit; `None` when it has no note.
+fn note_of(tab: &mut RepoTab, ctx: &egui::Context, id: ObjectId) -> Option<Arc<Option<String>>> {
+    let generation = NOTES_GEN.load(std::sync::atomic::Ordering::SeqCst);
+    let git = tab.session.repo().git().clone();
+    match tab.details.notes.get(&(id, generation), ctx, move || {
+        let hex = id.to_string();
+        let o = git.run_raw(&["notes", "show", hex.as_str()], None)?;
+        Ok((o.code == Some(0))
+            .then(|| o.stdout_str().trim_end().to_string())
+            .filter(|s| !s.is_empty()))
+    }) {
+        TaskState::Done(n) => Some(n),
+        _ => None,
     }
 }
 
@@ -136,12 +186,22 @@ fn single(
         return;
     }
     retarget(&mut tab.details, (id, None), preferred);
+    let note = note_of(tab, ui.ctx(), id);
     let max_h = (ui.available_height() * 0.45).clamp(60.0, 240.0);
     egui::ScrollArea::vertical()
         .id_salt(("details-header", id))
         .max_height(max_h)
         .auto_shrink([false, true])
-        .show(ui, |ui| header(ui, snap, shared, &d, act));
+        .show(ui, |ui| {
+            header(ui, snap, shared, &d, act);
+            if let Some(n) = note.as_deref().and_then(|n| n.as_deref()) {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Note:").color(shared.palette.muted));
+                    ui.add(egui::Label::new(RichText::new(n).italics()).selectable(true));
+                });
+            }
+        });
     ui.separator();
     files_and_diff(ui, tab, shared, &d.files, &id.to_string(), act);
 }
@@ -382,6 +442,7 @@ enum FileAct {
     CopyPath(String),
     History(String),
     Blame(String, Option<String>),
+    External(gk_core::content::DiffTarget),
 }
 
 fn files_and_diff(
@@ -491,6 +552,17 @@ fn files_and_diff(
                             file_act = Some(FileAct::History(f.path.clone()));
                             ui.close();
                         }
+                        if shared.settings.external_diff_tool.is_some()
+                            && ui.button("Open in external diff tool").clicked()
+                        {
+                            file_act =
+                                Some(FileAct::External(gk_core::content::DiffTarget::Blobs {
+                                    path: f.path.clone(),
+                                    old: f.old_id,
+                                    new: f.new_id,
+                                }));
+                            ui.close();
+                        }
                         if f.new_id.is_some() && ui.button("Blame").clicked() {
                             file_act = Some(FileAct::Blame(f.path.clone(), Some(rev.to_string())));
                             ui.close();
@@ -532,6 +604,7 @@ fn files_and_diff(
         Some(FileAct::CopyPath(p)) => ui.ctx().copy_text(p),
         Some(FileAct::History(p)) => *act = Some(Act::FileHistory(p)),
         Some(FileAct::Blame(p, r)) => *act = Some(Act::Blame(p, r)),
+        Some(FileAct::External(t)) => crate::views::diff::open_external(&tab.session, &t, shared),
         None => {}
     }
 }

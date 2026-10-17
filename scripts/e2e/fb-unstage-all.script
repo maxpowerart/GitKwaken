@@ -1,0 +1,6 @@
+# Ctrl+Shift+U (keymap "unstage_all") unstages everything.
+wait 2500
+key U ctrl shift
+wait 2500
+shot $OUT/fb-unstage-all.png
+exit

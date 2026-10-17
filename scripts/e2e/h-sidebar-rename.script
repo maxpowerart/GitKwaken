@@ -1,8 +1,8 @@
 # Sidebar: context menu on bugfix/crash -> Rename... -> bugfix/renamed.
 wait 2500
-rclick 80 242.4
+rclick 80 263.7
 wait 500
-click 130 433.6
+click 130 454.9
 wait 800
 click 700 446.4
 key A ctrl

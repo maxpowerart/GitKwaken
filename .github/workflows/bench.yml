@@ -1,0 +1,85 @@
+name: Benchmarks
+
+# Performance regression gate: `gk-bench regress` measures a fixed set of
+# operations (status on 50k files, fast path, history of a 50k-commit DAG,
+# 50k-line diff, 1M-row graph layout) as the median of 5 runs and compares
+# them with bench/baseline-windows.json. A metric fails when it is more than
+# 10% slower AND more than 2 ms slower than the baseline.
+#
+# No committed baseline yet (first run) -> the job records one and uploads it
+# as the `bench-baseline` artifact; commit it as bench/baseline-windows.json.
+# To refresh it on purpose run this workflow manually with `record: true`
+# (see docs/BENCHMARKS.md, "Regression gate").
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      record:
+        description: 'Record a new baseline instead of comparing'
+        type: boolean
+        default: false
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  regress:
+    name: gk-bench regress (windows)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: bench-release
+
+      - name: git identity
+        shell: bash
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.invalid"
+          git config --global core.autocrlf false
+
+      - name: Build gk-bench (release)
+        run: cargo build --release --locked -p gk-bench
+
+      # Generated data is deterministic; caching it saves ~1 min per run.
+      - name: Cache generated repositories
+        uses: actions/cache@v4
+        with:
+          path: target/bench-regress
+          key: bench-regress-data-v1-${{ hashFiles('crates/gk-bench/src/regress.rs', 'crates/gk-bench/src/main.rs') }}
+
+      - name: Run regression gate
+        shell: bash
+        run: |
+          # Generated repos live under target/; never let git walk up into the checkout.
+          mkdir -p target/bench-regress
+          export GIT_CEILING_DIRECTORIES="$(cygpath -m "$GITHUB_WORKSPACE/target/bench-regress")"
+          args=(--runs 5 --out target/bench-results/current.json)
+          if [ "${{ github.event.inputs.record }}" = "true" ]; then args+=(--record); fi
+          had_baseline=0; [ -f bench/baseline-windows.json ] && had_baseline=1
+          ./target/release/gk-bench.exe regress "${args[@]}"
+          if [ "$had_baseline" = 0 ] || [ "${{ github.event.inputs.record }}" = "true" ]; then
+            mkdir -p target/bench-results && cp bench/baseline-windows.json target/bench-results/
+          fi
+
+      - name: Upload results (and new baseline, if recorded)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-baseline
+          path: target/bench-results/
+          if-no-files-found: ignore
+          retention-days: 90

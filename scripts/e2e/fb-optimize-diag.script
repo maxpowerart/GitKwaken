@@ -1,0 +1,11 @@
+# GITKWAKEN_DIALOG=optimize via Ctrl+Shift+F: Diagnostics -> Measure object
+# write speed (200 blobs into a scratch repository next to the repo).
+wait 2500
+key F ctrl shift
+wait 1500
+click 485 609
+wait 5000
+move 700 300
+wait 300
+shot $OUT/fb-optimize-diag.png
+exit

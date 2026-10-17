@@ -4,21 +4,28 @@
 mod bisect;
 mod branch;
 mod common;
+mod config_edit;
+mod diagnostics;
 mod flow;
 mod global;
 mod lfs;
 mod misc;
+mod notes;
 mod remote;
 mod repo_tools;
 mod rewrite;
+mod scan;
 mod settings;
 mod tag;
+mod undo;
 mod worktree;
 
 use crate::app::Shared;
 use crate::tab::RepoTab;
 use gk_core::Snapshot;
 use std::path::PathBuf;
+
+pub use global::CloneJob;
 
 /// Askpass environment for git processes the app starts outside a tab
 /// (clone). Call once at startup with `GkApp::askpass_env()`.
@@ -193,6 +200,35 @@ impl Dialog {
     pub fn submodule_add() -> Self {
         Self::new(repo_tools::SubmoduleAdd::default())
     }
+    /// Text editor for the repository's `.gitignore` with an ignored-files preview.
+    pub fn edit_gitignore() -> Self {
+        Self::new(config_edit::ConfigEditor::new(
+            config_edit::ConfigKind::Gitignore,
+        ))
+    }
+    /// Text editor for `.git/config` (validated, backed up on save).
+    pub fn edit_repo_config() -> Self {
+        Self::new(config_edit::ConfigEditor::new(
+            config_edit::ConfigKind::RepoConfig,
+        ))
+    }
+    /// Text editor for the global `~/.gitconfig` (validated, backed up on save).
+    pub fn edit_global_config() -> Self {
+        Self::new(config_edit::ConfigEditor::new(
+            config_edit::ConfigKind::GlobalConfig,
+        ))
+    }
+    /// Undo the last operation (from the reflog), with a preview.
+    pub fn undo() -> Self {
+        Self::new(undo::Undo::new())
+    }
+    /// Add or edit the `git notes` note of commit `id`.
+    pub fn edit_note(id: String) -> Self {
+        Self::new(notes::EditNote::new(id))
+    }
+    pub fn remove_note(id: String) -> Self {
+        Self::new(notes::RemoveNote::new(id))
+    }
 
     /// Renders the dialog; returns false when it should close. A dialog may
     /// replace itself by setting `tab.dialog` and returning true.
@@ -343,6 +379,9 @@ pub fn debug_open(spec: &str, snap: &Snapshot) -> Option<Dialog> {
         "clean" => Dialog::clean(),
         "optimize" => Dialog::optimize(snap),
         "submodule-add" => Dialog::submodule_add(),
+        "gitignore" => Dialog::edit_gitignore(),
+        "repo-config" => Dialog::edit_repo_config(),
+        "global-config" => Dialog::edit_global_config(),
         _ => return None,
     })
 }
@@ -360,6 +399,7 @@ pub fn debug_open_global(spec: &str) -> Option<GlobalDialog> {
             PathBuf::from(arg)
         }),
         "about" => GlobalDialog::about(),
+        "global-config" => GlobalDialog::edit_global_config(),
         _ => return None,
     })
 }
@@ -384,8 +424,18 @@ impl GlobalDialog {
     pub fn bookmark(p: PathBuf) -> Self {
         Self::new(global::Bookmark::new(p))
     }
+    /// Walks a folder for repositories to open or bookmark.
+    pub fn scan_repos() -> Self {
+        Self::new(scan::ScanRepos::new())
+    }
     pub fn about() -> Self {
         Self::new(global::About::default())
+    }
+    /// Text editor for the global `~/.gitconfig` (no repository needed).
+    pub fn edit_global_config() -> Self {
+        Self::new(config_edit::ConfigEditor::new(
+            config_edit::ConfigKind::GlobalConfig,
+        ))
     }
 
     pub fn show(&mut self, ctx: &egui::Context, shared: &mut Shared) -> bool {

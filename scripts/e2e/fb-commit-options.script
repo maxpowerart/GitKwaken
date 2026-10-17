@@ -1,0 +1,24 @@
+# Commit template prefilled (commit.template), Options -> Override author...,
+# author typed, body appended, Commit; the pre-commit hook output shows as
+# an info message.
+wait 2500
+click 478 855
+wait 300
+move 480 856
+wait 300
+shot $OUT/fb-commit-options-menu.png
+click 518 795
+wait 300
+click 1000 400
+wait 300
+click 720 828
+type Override Person <override@example.com>
+wait 200
+click 1000 804
+type Body from E2E
+wait 300
+shot $OUT/fb-commit-options.png
+click 1343 855
+wait 3500
+shot $OUT/fb-commit-hook-output.png
+exit

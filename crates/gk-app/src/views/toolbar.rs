@@ -37,7 +37,7 @@ type MakeDialog = fn(&Snapshot) -> Dialog;
 fn more_menu(ui: &mut egui::Ui, compact: bool, snap: &Snapshot) -> Option<Dialog> {
     let button = tool_button(compact, "⋯", "More");
     let (resp, inner) = egui::containers::menu::MenuButton::from_button(button).ui(ui, |ui| {
-        let items: [(&str, MakeDialog); 8] = [
+        let items: [(&str, MakeDialog); 11] = [
             ("Bisect…", Dialog::bisect),
             ("LFS…", Dialog::lfs),
             ("Sparse checkout…", Dialog::sparse_checkout),
@@ -46,10 +46,15 @@ fn more_menu(ui: &mut egui::Ui, compact: bool, snap: &Snapshot) -> Option<Dialog
             ("Add submodule…", |_| Dialog::submodule_add()),
             ("Git console…", |_| Dialog::console()),
             ("Apply patch…", |_| Dialog::apply_patch()),
+            ("Edit .gitignore…", |_| Dialog::edit_gitignore()),
+            ("Edit repository config…", |_| Dialog::edit_repo_config()),
+            ("Edit global git config…", |_| {
+                Dialog::edit_global_config()
+            }),
         ];
         let mut chosen = None;
         for (i, (label, make)) in items.iter().enumerate() {
-            if matches!(i, 5 | 6) {
+            if matches!(i, 5 | 6 | 8) {
                 ui.separator();
             }
             if ui.button(*label).clicked() {
