@@ -10,6 +10,8 @@
 //! files cost nothing per frame.
 
 mod commit;
+mod conflict_guard;
+mod dnd;
 mod list;
 mod merge_tool;
 mod tree;
@@ -18,7 +20,9 @@ use crate::app::Shared;
 use crate::dialogs::Dialog;
 use crate::tab::RepoTab;
 use crate::views::diff::{DiffMode, DiffView};
-use egui::{Id, RichText, Ui};
+use conflict_guard::{Answer, StageOp};
+use dnd::DragFiles;
+use egui::{Id, RichText, Sense, Ui};
 use gk_core::content::DiffTarget;
 use gk_core::ops::Side as MergeSide;
 use gk_core::{MessageKind, RepoState, Snapshot};
@@ -63,6 +67,8 @@ pub struct StatusState {
     confirm_abort: bool,
     /// File to focus once the status has loaded (see [`Self::preselect`]).
     preselect: Option<String>,
+    /// Stage requests touching conflicted files, checked for markers first.
+    guard: conflict_guard::Guard,
 }
 
 impl StatusState {
@@ -159,6 +165,22 @@ impl StatusState {
         p.since = Instant::now();
     }
 
+    /// The conflicted files among unstaged `paths`.
+    fn conflicted_among(&self, snap: &Snapshot, paths: &[String]) -> Vec<String> {
+        paths
+            .iter()
+            .filter(|p| {
+                self.paths
+                    .unstaged
+                    .binary_search(p)
+                    .ok()
+                    .and_then(|i| snap.status.unstaged.get(i))
+                    .is_some_and(|e| matches!(e.kind, gk_status::Kind::Conflict(_)))
+            })
+            .cloned()
+            .collect()
+    }
+
     /// Diff target of the focused file.
     fn focused(&self, snap: &Snapshot) -> Option<(DiffTarget, DiffMode)> {
         let (entries, paths) = match self.active {
@@ -191,6 +213,9 @@ impl StatusState {
 pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared) {
     tab.status.sync(snap, tab.state.file_view_tree);
     collect_tool_exits(tab);
+    for op in tab.status.guard.poll() {
+        run_stage(tab, snap, op);
+    }
     let key = tab.path.clone();
 
     if snap.refs.state != RepoState::Clean {
@@ -277,8 +302,11 @@ fn lists(
     let op_running = snap.op.is_some();
     let avail = ui.available_height();
     let key = tab.path.clone();
+    let dnd_scope = Id::new(("fs-dnd", &key));
 
+    // Returns true while the list accepts a hovering drag payload.
     let one = |ui: &mut Ui, st: &mut StatusState, side: Side, out: &mut Vec<(Side, Ev)>| {
+        let zone = ui.max_rect();
         let (entries, total) = match side {
             Side::Staged => (&snap.status.staged, snap.status.staged.len()),
             Side::Unstaged => (&snap.status.unstaged, snap.status.unstaged.len()),
@@ -286,11 +314,14 @@ fn lists(
         let filtered = !st.filter.trim().is_empty();
         let shown = st.list(side).model.files;
         let sel = st.list(side).target_count();
-        let pending_here = st
+        let index_op = st
             .pending
             .as_ref()
             .is_some_and(|p| p.all == Some(side) || !p.paths.is_empty())
             && op_running;
+        // Conflicted files being checked for markers before staging.
+        let checking = side == Side::Unstaged && st.guard.is_busy();
+        let pending_here = index_op || checking;
         let mut evs: Vec<Ev> = Vec::new();
         ui.horizontal(|ui| {
             let title = match side {
@@ -344,6 +375,7 @@ fn lists(
             active: st.active == side,
             pending: &pending,
             has_merge_tool: has_tool,
+            dnd_scope,
         };
         let ls = match side {
             Side::Staged => &mut st.staged,
@@ -351,9 +383,29 @@ fn lists(
         };
         list::show(ui, ls, &ctx, &mut evs);
         out.extend(evs.into_iter().map(|e| (side, e)));
+
+        // Drop zone: the whole list panel, header included. Hover-only, so
+        // rows underneath keep their clicks.
+        let zone_resp = ui.interact(zone, Id::new(("fs-drop", &key, side)), Sense::hover());
+        let accepting = zone_resp
+            .dnd_hover_payload::<DragFiles>()
+            .is_some_and(|pl| dnd::accepts(&pl, dnd_scope, side));
+        if accepting {
+            dnd::paint_target(ui, zone, p);
+        }
+        if let Some(pl) = zone_resp.dnd_release_payload::<DragFiles>() {
+            let source: &[String] = match pl.from {
+                Side::Staged => &st.paths.staged,
+                Side::Unstaged => &st.paths.unstaged,
+            };
+            if let Some(paths) = dnd::drop_paths(&pl, dnd_scope, side, source) {
+                out.push((pl.from, Ev::Toggle(paths)));
+            }
+        }
+        accepting
     };
 
-    egui::Panel::top(Id::new(("fs-staged", &key)))
+    let over_staged = egui::Panel::top(Id::new(("fs-staged", &key)))
         .resizable(true)
         .default_size((avail * 0.4).max(90.0))
         .size_range(70.0..=(avail - 90.0).max(90.0))
@@ -362,11 +414,27 @@ fn lists(
             bottom: 4,
             ..Default::default()
         }))
-        .show(ui, |ui| one(ui, &mut tab.status, Side::Staged, events));
-    egui::CentralPanel::no_frame().show(ui, |ui| {
-        ui.add_space(4.0);
-        one(ui, &mut tab.status, Side::Unstaged, events)
-    });
+        .show(ui, |ui| one(ui, &mut tab.status, Side::Staged, events))
+        .inner;
+    let over_unstaged = egui::CentralPanel::no_frame()
+        .show(ui, |ui| {
+            ui.add_space(4.0);
+            one(ui, &mut tab.status, Side::Unstaged, events)
+        })
+        .inner;
+
+    if let Some(pl) = egui::DragAndDrop::payload::<DragFiles>(ui.ctx())
+        && pl.scope == dnd_scope
+    {
+        let over = if over_staged {
+            Some(Side::Staged)
+        } else if over_unstaged {
+            Some(Side::Unstaged)
+        } else {
+            None
+        };
+        dnd::paint_ghost(ui, &pl, over, p);
+    }
 }
 
 fn handle(ui: &Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared, side: Side, ev: Ev) {
@@ -386,29 +454,32 @@ fn handle(ui: &Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared, side
             if paths.is_empty() {
                 return;
             }
-            tab.status.set_pending(snap, &paths, None);
-            let n = paths.len();
-            let what = if n == 1 {
-                paths[0].clone()
-            } else {
-                format!("{n} files")
-            };
             match side {
                 Side::Unstaged => {
-                    session.run_index_op(format!("Stage {what}"), move |r| r.stage(&paths))
+                    let conflicted = tab.status.conflicted_among(snap, &paths);
+                    guarded_stage(ui, tab, snap, StageOp::Paths(paths), conflicted);
                 }
                 Side::Staged => {
+                    tab.status.set_pending(snap, &paths, None);
+                    let what = what(&paths);
                     session.run_index_op(format!("Unstage {what}"), move |r| r.unstage(&paths))
                 }
             }
         }
-        Ev::All => {
-            tab.status.set_pending(snap, &[], Some(side));
-            match side {
-                Side::Unstaged => session.run_index_op("Stage all", |r| r.stage_all()),
-                Side::Staged => session.run_index_op("Unstage all", |r| r.unstage_all()),
+        Ev::All => match side {
+            Side::Unstaged => {
+                let conflicted: Vec<String> = snap
+                    .status
+                    .conflicts()
+                    .map(|e| e.path.to_string())
+                    .collect();
+                guarded_stage(ui, tab, snap, StageOp::All, conflicted);
             }
-        }
+            Side::Staged => {
+                tab.status.set_pending(snap, &[], Some(side));
+                session.run_index_op("Unstage all", |r| r.unstage_all());
+            }
+        },
         Ev::Discard { tracked, untracked } => {
             if !tracked.is_empty() || !untracked.is_empty() {
                 tab.dialog = Some(Dialog::discard_paths(tracked, untracked));
@@ -456,6 +527,56 @@ fn handle(ui: &Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared, side
                 "No external merge tool is configured (Settings).",
             ),
         },
+    }
+}
+
+fn what(paths: &[String]) -> String {
+    match paths {
+        [one] => one.clone(),
+        _ => format!("{} files", paths.len()),
+    }
+}
+
+/// Stages `op`, unless `conflicted` files are involved: those are first
+/// checked for leftover conflict markers in the background (see
+/// [`conflict_guard`]); the stage runs once they are clean or confirmed.
+fn guarded_stage(
+    ui: &Ui,
+    tab: &mut RepoTab,
+    snap: &Snapshot,
+    op: StageOp,
+    conflicted: Vec<String>,
+) {
+    if conflicted.is_empty() {
+        return run_stage(tab, snap, op);
+    }
+    let repo = tab.session.repo();
+    let files = conflicted
+        .into_iter()
+        .map(|p| {
+            let abs = repo.abs(&p);
+            (p, abs)
+        })
+        .collect();
+    tab.status.guard.check(op, files, ui.ctx());
+}
+
+/// Runs a stage request (the unstaged list's Stage / Stage all).
+fn run_stage(tab: &mut RepoTab, snap: &Snapshot, op: StageOp) {
+    let session = tab.session.clone();
+    match op {
+        StageOp::Paths(paths) => {
+            if paths.is_empty() {
+                return;
+            }
+            tab.status.set_pending(snap, &paths, None);
+            let what = what(&paths);
+            session.run_index_op(format!("Stage {what}"), move |r| r.stage(&paths));
+        }
+        StageOp::All => {
+            tab.status.set_pending(snap, &[], Some(Side::Unstaged));
+            session.run_index_op("Stage all", |r| r.stage_all());
+        }
     }
 }
 
@@ -625,6 +746,45 @@ fn modals(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &Shared) {
                 tab.status.set_pending(snap, &paths, None);
                 tab.session
                     .run_index_op("Mark resolved", move |r| r.mark_resolved(&paths));
+            }
+        }
+    }
+
+    if let Some(marked) = tab.status.guard.asking() {
+        let question = conflict_guard::question(marked);
+        let can_open = !marked.is_empty();
+        let mut answer: Option<Answer> = None;
+        let resp =
+            egui::Modal::new(Id::new(("fs-conflict-guard", &tab.path))).show(ui.ctx(), |ui| {
+                ui.set_width(460.0);
+                ui.heading("Conflict markers");
+                ui.label(question);
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if can_open && ui.button("Open merge editor").clicked() {
+                        answer = Some(Answer::OpenMergeEditor);
+                    }
+                    if ui
+                        .button(RichText::new("Stage anyway").color(p.conflict))
+                        .clicked()
+                    {
+                        answer = Some(Answer::StageAnyway);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        answer = Some(Answer::Cancel);
+                    }
+                });
+            });
+        if resp.should_close() && answer.is_none() {
+            answer = Some(Answer::Cancel);
+        }
+        if let Some(a) = answer {
+            let (op, open) = tab.status.guard.answer(a);
+            if let Some(op) = op {
+                run_stage(tab, snap, op);
+            }
+            if let Some(path) = open {
+                crate::views::merge::open_merge(tab, path);
             }
         }
     }

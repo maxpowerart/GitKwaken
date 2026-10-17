@@ -2,6 +2,7 @@
 //! multi-selection, keyboard navigation and the context menu. The list only
 //! emits [`Ev`]ents; the parent runs the operations.
 
+use super::dnd::DragFiles;
 use super::tree::{self, Tree, TreeRow};
 use crate::theme::Palette;
 use egui::{Align2, Color32, Id, Pos2, Rect, Sense, Ui, pos2, vec2};
@@ -105,6 +106,8 @@ pub struct ListCtx<'a> {
     /// An index operation runs that touches this path.
     pub pending: &'a dyn Fn(&str) -> bool,
     pub has_merge_tool: bool,
+    /// Drag-and-drop scope of the repository tab (see [`DragFiles`]).
+    pub dnd_scope: Id,
 }
 
 impl ListState {
@@ -220,6 +223,16 @@ impl ListState {
             v
         } else {
             self.cursor.iter().cloned().collect()
+        }
+    }
+
+    /// Paths dragged when the drag starts on `path`: the selection when
+    /// `path` is part of it, else just `path`.
+    pub fn drag_paths(&self, path: &str) -> Vec<String> {
+        if self.selected.contains(path) {
+            self.targets()
+        } else {
+            vec![path.to_string()]
         }
     }
 
@@ -392,7 +405,14 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
                     };
                     let path = &c.paths[*entry as usize];
                     let id = list_id.with(path.as_str());
-                    let resp = ui.interact(rect, id, Sense::click());
+                    let resp = ui.interact(rect, id, Sense::click_and_drag());
+                    if resp.drag_started() {
+                        resp.dnd_set_drag_payload(DragFiles {
+                            scope: c.dnd_scope,
+                            from: c.side,
+                            paths: ls.drag_paths(path),
+                        });
+                    }
                     let selected = ls.selected.contains(path);
                     let is_cursor = ls.cursor.as_deref() == Some(path.as_str());
                     if selected {
@@ -508,7 +528,14 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
                     collapsed,
                 } => {
                     let id = list_id.with(("dir", *node, name.as_str()));
-                    let resp = ui.interact(rect, id, Sense::click());
+                    let resp = ui.interact(rect, id, Sense::click_and_drag());
+                    if resp.drag_started() {
+                        resp.dnd_set_drag_payload(DragFiles {
+                            scope: c.dnd_scope,
+                            from: c.side,
+                            paths: ls.dir_files(*node, c.paths),
+                        });
+                    }
                     if resp.hovered() {
                         painter.rect_filled(rect, 0.0, hover_fill);
                     }
@@ -938,6 +965,29 @@ mod tests {
         ls.sync(4, &[], "", false);
         ls.repair_cursor(&[]);
         assert!(ls.cursor.is_none());
+    }
+
+    #[test]
+    fn drag_takes_selection_only_when_row_is_selected() {
+        let paths = strs(&["a", "b", "c"]);
+        let mut ls = state(&paths, false);
+        assert_eq!(ls.drag_paths("b"), strs(&["b"]));
+        ls.select_only("c".into(), 2);
+        ls.selected.insert("a".into());
+        assert_eq!(ls.drag_paths("c"), strs(&["a", "c"]));
+        assert_eq!(ls.drag_paths("b"), strs(&["b"]), "unselected row");
+    }
+
+    #[test]
+    fn dragging_a_folder_takes_its_files() {
+        let paths = strs(&["a/x", "a/y/z", "b"]);
+        let ls = state(&paths, true);
+        let Some(Row::Dir { node, .. }) = ls.model.rows.first().cloned() else {
+            panic!("first row is a folder");
+        };
+        let mut files = ls.dir_files(node, &paths);
+        files.sort();
+        assert_eq!(files, strs(&["a/x", "a/y/z"]));
     }
 
     #[test]
