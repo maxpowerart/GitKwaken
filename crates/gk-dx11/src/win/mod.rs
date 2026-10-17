@@ -592,7 +592,10 @@ mod tests {
         assert_eq!(at(990.0, 2.0), Some(ResizeDirection::NorthEast));
         assert_eq!(at(2.0, 595.0), Some(ResizeDirection::SouthWest));
         // Grip width follows the DPI scale.
-        assert_eq!(edge_at((8.0, 300.0), size, 2.0), Some(ResizeDirection::West));
+        assert_eq!(
+            edge_at((8.0, 300.0), size, 2.0),
+            Some(ResizeDirection::West)
+        );
         assert_eq!(edge_at((8.0, 300.0), size, 1.0), None);
     }
 }
