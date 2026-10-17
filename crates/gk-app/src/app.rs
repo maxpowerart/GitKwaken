@@ -267,6 +267,7 @@ impl GkApp {
             tab: self.tabs.get_mut(i),
             active: i,
             tabs,
+            update: self.updater.menu_entry(),
         };
         let mut shared = Shared {
             settings: &mut self.settings,
@@ -279,8 +280,8 @@ impl GkApp {
         if out.toggle_palette && !self.tabs.get(i).is_some_and(|t| t.dialog.is_some()) {
             self.command_palette.toggle();
         }
-        if out.check_updates {
-            self.updater.check_now(ui.ctx());
+        if let Some(a) = out.update {
+            self.updater.act(a, ui.ctx());
         }
     }
 

@@ -70,8 +70,8 @@ fn bisect_finds_first_bad_commit() {
         };
         let out = t.repo.bisect_mark(mark, None).unwrap();
         transcript.push_str(&format!("--- {mark:?} at {:?}:\n{out}\n", state.trim()));
-        if out.contains("is the first bad commit") {
-            found = out.split_whitespace().next().map(str::to_string);
+        if let Some(id) = first_bad_from_output(&out) {
+            found = Some(id);
             break;
         }
     }

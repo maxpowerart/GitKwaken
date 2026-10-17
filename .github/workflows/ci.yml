@@ -33,6 +33,9 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    # A hung test (e.g. a child process waiting on a pipe) fails fast instead of
+    # holding the runner for the 6 h default.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 

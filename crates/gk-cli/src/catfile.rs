@@ -19,9 +19,11 @@ use parking_lot::{Condvar, Mutex};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Stdio};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-const ARGS: [&str; 2] = ["cat-file", "--batch-command"];
+/// `--buffer` + an explicit `flush` after every request: the reply flush point
+/// is ours, not left to git's per-version default.
+const ARGS: [&str; 3] = ["cat-file", "--batch-command", "--buffer"];
 /// Bytes of the process's stderr kept for error messages.
 const STDERR_TAIL: usize = 4096;
 
@@ -79,7 +81,8 @@ enum Reply {
 
 struct Proc {
     child: Child,
-    stdin: ChildStdin,
+    /// `None` once closed: the process sees EOF and exits by itself.
+    stdin: Option<ChildStdin>,
     stdout: BufReader<ChildStdout>,
     stderr: Arc<Mutex<Vec<u8>>>,
     reader: Option<std::thread::JoinHandle<()>>,
@@ -119,7 +122,7 @@ impl Proc {
         });
         Ok(Proc {
             child,
-            stdin,
+            stdin: Some(stdin),
             stdout,
             stderr,
             reader,
@@ -130,8 +133,13 @@ impl Proc {
 
     fn exchange(&mut self, request: &[u8], data: bool, limit: u64) -> std::io::Result<Reply> {
         use std::io::{Error, ErrorKind};
-        self.stdin.write_all(request)?;
-        self.stdin.flush()?;
+        let stdin = self
+            .stdin
+            .as_mut()
+            .ok_or_else(|| Error::new(ErrorKind::BrokenPipe, "git cat-file was stopped"))?;
+        stdin.write_all(request)?;
+        stdin.write_all(b"flush\n")?;
+        stdin.flush()?;
         let mut header = Vec::with_capacity(96);
         self.stdout.read_until(b'\n', &mut header)?;
         if header.pop() != Some(b'\n') {
@@ -196,19 +204,64 @@ impl Proc {
             .to_string()
     }
 
-    /// Kills the process and records its lifetime in the command log.
-    fn stop(mut self, git: &Git) {
+    /// Ends the process like a crash would: stdin closed, then killed. With
+    /// Git for Windows' `cmd\git.exe` the child is a launcher and the real
+    /// git is its child, which the kill does not reach; the closed stdin
+    /// makes that one exit too (EOF ends the batch loop).
+    fn terminate(&mut self) {
+        self.stdin = None;
         let _ = self.child.kill();
-        let status = self.child.wait().ok();
-        if let Some(r) = self.reader.take() {
-            let _ = r.join();
+        let _ = self.child.wait();
+    }
+
+    /// Stops the process and records its lifetime in the command log.
+    fn stop(self, git: &Git) {
+        let Proc {
+            mut child,
+            stdin,
+            stdout,
+            stderr,
+            reader,
+            started,
+            served,
+        } = self;
+        // EOF on stdin ends git normally; closing stdout unblocks a git
+        // stuck writing a reply nobody reads (a desynchronized stream).
+        drop(stdin);
+        drop(stdout);
+        let status = wait_for(&mut child, Duration::from_secs(2)).or_else(|| {
+            let _ = child.kill();
+            child.wait().ok()
+        });
+        // A grandchild that outlived the kill holds stderr open: never block
+        // on it for long.
+        if let Some(r) = reader {
+            let deadline = Instant::now() + Duration::from_secs(1);
+            while !r.is_finished() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            if r.is_finished() {
+                let _ = r.join();
+            }
         }
         let out = Output {
             code: status.and_then(|s| s.code()),
-            stdout: format!("{} objects served\n", self.served).into_bytes(),
-            stderr: self.stderr.lock().clone(),
+            stdout: format!("{served} objects served\n").into_bytes(),
+            stderr: stderr.lock().clone(),
         };
-        git.log.push(&git.cwd, &ARGS, self.started.elapsed(), &out);
+        git.log.push(&git.cwd, &ARGS, started.elapsed(), &out);
+    }
+}
+
+/// The exit status, when `child` exits within `limit`.
+fn wait_for(child: &mut Child, limit: Duration) -> Option<std::process::ExitStatus> {
+    let deadline = Instant::now() + limit;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Some(status),
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(5)),
+            _ => return None,
+        }
     }
 }
 
@@ -271,8 +324,7 @@ impl CatFile {
     /// request notices and starts a new one. For diagnostics and tests.
     pub fn kill(&mut self) {
         if let Some(p) = &mut self.proc {
-            let _ = p.child.kill();
-            let _ = p.child.wait();
+            p.terminate();
         }
     }
 

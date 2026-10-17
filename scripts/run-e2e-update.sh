@@ -21,14 +21,70 @@ printf '{"version":"99.0.0","notes":"e2e","url":"http://127.0.0.1:8799/GitKwaken
 trap 'kill $SRV 2>/dev/null || true' EXIT
 bash "$ROOT/scripts/make-demo-repo.sh" "$W/repo" >/dev/null
 cat > "$W/update.script" <<'EOF'
-wait 4000
-click 1334 36
-wait 15000
-click 1092 36
-wait 3000
-# second attempt in case the download was slow (no-op once closed)
-click 1092 36
-wait 3000
+# Help menu, update slot (row 2, same place in every state): "Check for updates" →
+# "Install update 99.0.0" → (downloading, disabled) → "Restart to finish update 99.0.0".
+# Escape closes the menu when the entry was disabled. Extra rounds are no-ops.
+wait 5000
+click 282 12
+wait 400
+click 333 59.2
+wait 300
+key Escape
+wait 3500
+click 282 12
+wait 400
+click 333 59.2
+wait 300
+key Escape
+wait 3500
+click 282 12
+wait 400
+click 333 59.2
+wait 300
+key Escape
+wait 3500
+click 282 12
+wait 400
+click 333 59.2
+wait 300
+key Escape
+wait 3500
+click 282 12
+wait 400
+click 333 59.2
+wait 300
+key Escape
+wait 3500
+click 282 12
+wait 400
+click 333 59.2
+wait 300
+key Escape
+wait 3500
+click 282 12
+wait 400
+click 333 59.2
+wait 300
+key Escape
+wait 3500
+click 282 12
+wait 400
+click 333 59.2
+wait 300
+key Escape
+wait 3500
+click 282 12
+wait 400
+click 333 59.2
+wait 300
+key Escape
+wait 3500
+click 282 12
+wait 400
+click 333 59.2
+wait 300
+key Escape
+wait 3500
 EOF
 GK_DX11_INPUT_SCRIPT="$(cygpath -m "$W/update.script")" GITKWAKEN_NO_RELAUNCH=1 \
 GITKWAKEN_UPDATE_URL=http://127.0.0.1:8799/update.json \

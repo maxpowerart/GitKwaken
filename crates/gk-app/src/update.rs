@@ -24,6 +24,14 @@ pub type Staged = Arc<Mutex<Option<PathBuf>>>;
 /// Set by "Restart now": `main` starts the updated executable after swapping it.
 pub static RESTART: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// What a Help-menu update entry does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateAction {
+    Check,
+    Install,
+    Restart,
+}
+
 pub struct Updater {
     state: Arc<Mutex<State>>,
     staged: Staged,
@@ -110,6 +118,56 @@ impl Updater {
             };
             c.request_repaint();
         });
+    }
+
+    /// The Help-menu update entry: check, install an available
+    /// update, or restart to finish a downloaded one.
+    pub fn menu_entry(&self) -> (String, bool, UpdateAction) {
+        // One slot whatever the state, so the menu layout never shifts.
+        match &*self.state.lock() {
+            State::Available(rel) => (
+                format!("Install update {}", rel.version),
+                true,
+                UpdateAction::Install,
+            ),
+            State::Ready(v) => (
+                format!("Restart to finish update {v}"),
+                true,
+                UpdateAction::Restart,
+            ),
+            State::Checking => ("Checking for updates…".into(), false, UpdateAction::Check),
+            State::Downloading(done, total) => (
+                match (done * 100).checked_div(*total) {
+                    Some(pct) => format!("Downloading update {pct}%"),
+                    None => "Downloading update…".into(),
+                },
+                false,
+                UpdateAction::Check,
+            ),
+            State::Idle | State::UpToDate | State::Failed(_) => {
+                ("Check for updates".into(), true, UpdateAction::Check)
+            }
+        }
+    }
+
+    /// Runs a Help-menu entry (same as the tab-bar buttons).
+    pub fn act(&self, action: UpdateAction, ctx: &egui::Context) {
+        match action {
+            UpdateAction::Check => self.check_now(ctx),
+            UpdateAction::Install => {
+                let rel = match &*self.state.lock() {
+                    State::Available(rel) => rel.clone(),
+                    _ => return,
+                };
+                self.download(rel, ctx);
+            }
+            UpdateAction::Restart => {
+                if matches!(*self.state.lock(), State::Ready(_)) {
+                    RESTART.store(true, std::sync::atomic::Ordering::SeqCst);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
     }
 
     /// Small control for the tab bar; nothing is shown while there is no update.

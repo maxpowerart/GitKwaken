@@ -70,12 +70,10 @@ pub fn parse_bisect_log(log: &str) -> BisectLog {
     out
 }
 
-/// The commit id from "<id> is the first bad commit" in bisect output.
+/// The commit id from "<id> is the first bad commit" in bisect output
+/// (also git 2.55's "is the first 'bad' commit").
 pub fn parse_first_bad(output: &str) -> Option<String> {
-    output.lines().find_map(|l| {
-        let id = l.trim().strip_suffix(" is the first bad commit")?;
-        (id.len() >= 7 && id.bytes().all(|b| b.is_ascii_hexdigit())).then(|| id.to_string())
-    })
+    gk_core::advanced::first_bad_from_output(output)
 }
 
 /// "Bisecting: 3 revisions left to test after this (roughly 2 steps)".
@@ -489,6 +487,9 @@ mod tests {
     #[test]
     fn output_parsing() {
         let out = format!("{A} is the first bad commit\ncommit {A}\nAuthor: X <x@y>\n");
+        assert_eq!(parse_first_bad(&out).as_deref(), Some(A));
+        // git 2.55 quotes the term.
+        let out = format!("{A} is the first 'bad' commit\ncommit {A}\n");
         assert_eq!(parse_first_bad(&out).as_deref(), Some(A));
         let out =
             "Bisecting: 3 revisions left to test after this (roughly 2 steps)\n[abc] Subject\n";
