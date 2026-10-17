@@ -523,14 +523,10 @@ impl AppDialog for SettingsDialog {
                                     });
                                     ui.end_row();
                                     ui.label("Updates:");
-                                    if crate::update::SELF_UPDATE {
-                                        ui.checkbox(&mut d.check_updates, "Check for updates on startup");
-                                        ui.end_row();
-                                        ui.label("Update channel:");
-                                        ui.add(egui::TextEdit::singleline(&mut d.update_url).desired_width(260.0).hint_text("default (GitHub releases)"));
-                                    } else {
-                                        ui.label("via your package manager or a new release download");
-                                    }
+                                    ui.checkbox(&mut d.check_updates, "Check for updates automatically");
+                                    ui.end_row();
+                                    ui.label("Update channel:");
+                                    ui.add(egui::TextEdit::singleline(&mut d.update_url).desired_width(260.0).hint_text("default (GitHub releases)"));
                                     ui.end_row();
                                     ui.label("Monospace font:");
                                     ui.horizontal(|ui| {

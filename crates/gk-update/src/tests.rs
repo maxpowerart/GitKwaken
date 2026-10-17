@@ -308,6 +308,170 @@ fn relative_download_urls_resolve_against_manifest() {
     );
 }
 
+// ---------------------------------------------------------------- Linux
+
+fn make_tgz(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    let gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    let mut b = tar::Builder::new(gz);
+    for (name, data) in entries {
+        let mut h = tar::Header::new_gnu();
+        h.set_size(data.len() as u64);
+        h.set_mode(0o644);
+        h.set_cksum();
+        b.append_data(&mut h, name, *data).unwrap();
+    }
+    b.into_inner().unwrap().finish().unwrap()
+}
+
+fn linux_manifest(tarball: Option<(&str, &str)>, pacman: Option<(&str, &str)>) -> String {
+    let asset = |a: Option<(&str, &str)>| {
+        a.map_or("null".to_string(), |(u, s)| {
+            format!(r#"{{"url":"{u}","sha256":"{s}"}}"#)
+        })
+    };
+    format!(
+        r#"{{"version":"1.0.2","url":"https://x/w.zip","sha256":"{SHA0}","linux":{{"tarball":{},"pacman":{}}}}}"#,
+        asset(tarball),
+        asset(pacman)
+    )
+}
+
+#[test]
+fn manifest_with_linux_assets() {
+    let sha = "CD".repeat(32);
+    let r = parse_manifest(&linux_manifest(
+        Some(("https://x/t.tar.gz", &sha)),
+        Some(("https://x/p.pkg.tar.zst", SHA0)),
+    ))
+    .unwrap();
+    let linux = r.linux.clone().unwrap();
+    assert_eq!(linux.tarball.unwrap().sha256, "cd".repeat(32));
+    assert_eq!(linux.pacman.unwrap().url, "https://x/p.pkg.tar.zst");
+    assert_eq!(
+        parse_manifest(&serde_json::to_string(&r).unwrap()).unwrap(),
+        r
+    );
+    // Linux entries are validated like the Windows one.
+    assert!(parse_manifest(&linux_manifest(Some(("https://x/t", "abc")), None)).is_err());
+    assert!(parse_manifest(&linux_manifest(None, Some(("file:///etc/p", SHA0)))).is_err());
+    // Relative Linux URLs resolve against the manifest too.
+    let base = serve(HashMap::from([(
+        "/c/update.json",
+        linux_manifest(Some(("t.tar.gz", SHA0)), None).into_bytes(),
+    )]));
+    let r = check("1.0.1", &format!("{base}/c/update.json"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        r.linux.unwrap().tarball.unwrap().url,
+        format!("{base}/c/t.tar.gz")
+    );
+}
+
+#[test]
+fn linux_method_follows_the_installation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let exe = tmp.path().join("gitkwaken");
+    let both = parse_manifest(&linux_manifest(
+        Some(("https://x/t.tar.gz", SHA0)),
+        Some(("https://x/p.pkg.tar.zst", SHA0)),
+    ))
+    .unwrap();
+    assert!(matches!(
+        linux_method(&both, &exe, false).unwrap(),
+        Method::Tarball(a) if a.url == "https://x/t.tar.gz"
+    ));
+    assert!(matches!(
+        linux_method(&both, &exe, true).unwrap(),
+        Method::Pacman(a) if a.url == "https://x/p.pkg.tar.zst"
+    ));
+    let tar_only =
+        parse_manifest(&linux_manifest(Some(("https://x/t.tar.gz", SHA0)), None)).unwrap();
+    let err = linux_method(&tar_only, &exe, true).unwrap_err();
+    assert!(format!("{err}").contains("no Arch package"), "{err}");
+    let windows_only = parse_manifest(&manifest_json("1.0.2", "https://x/w.zip", SHA0)).unwrap();
+    let err = linux_method(&windows_only, &exe, false).unwrap_err();
+    assert!(format!("{err}").contains("no Linux build"), "{err}");
+    let missing_dir = tmp.path().join("nope").join("gitkwaken");
+    let err = linux_method(&both, &missing_dir, false).unwrap_err();
+    assert!(format!("{err}").contains("no write access"), "{err}");
+}
+
+#[test]
+fn tarball_update_stages_the_executable() {
+    let bin: Vec<u8> = (0..150_000u32).map(|i| (i * 13 % 251) as u8).collect();
+    let tgz = make_tgz(&[
+        ("GitKwaken-1.0.2-x86_64-linux/README.md", b"readme"),
+        ("GitKwaken-1.0.2-x86_64-linux/icons/gitkwaken.png", b"png"),
+        ("GitKwaken-1.0.2-x86_64-linux/gitkwaken", &bin),
+    ]);
+    let base = serve(HashMap::from([("/t.tar.gz", tgz.clone())]));
+    let release = parse_manifest(&linux_manifest(
+        Some((&format!("{base}/t.tar.gz"), &sha_hex(&tgz))),
+        None,
+    ))
+    .unwrap();
+    let method = Method::Tarball(release.linux.clone().unwrap().tarball.unwrap());
+    let tmp = tempfile::tempdir().unwrap();
+    let staged = stage_in(&release, &method, tmp.path(), |_, _| {}).unwrap();
+    let Staged::Exe(exe) = staged else {
+        panic!("{staged:?}")
+    };
+    assert_eq!(fs::read(&exe).unwrap(), bin);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(&exe).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+    }
+    let left: Vec<_> = fs::read_dir(tmp.path()).unwrap().flatten().collect();
+    assert_eq!(left.len(), 1, "only the executable is kept: {left:?}");
+
+    // A tarball without the executable, and a wrong checksum, stage nothing.
+    let empty = make_tgz(&[("x/README.md", b"r")]);
+    let base = serve(HashMap::from([("/e.tar.gz", empty.clone())]));
+    let bad = Method::Tarball(Asset {
+        url: format!("{base}/e.tar.gz"),
+        sha256: sha_hex(&empty),
+    });
+    let tmp = tempfile::tempdir().unwrap();
+    let err = stage_in(&release, &bad, tmp.path(), |_, _| {}).unwrap_err();
+    assert!(format!("{err:#}").contains("not found"), "{err:#}");
+    let wrong = Method::Tarball(Asset {
+        url: format!("{base}/e.tar.gz"),
+        sha256: SHA0.into(),
+    });
+    let err = stage_in(&release, &wrong, tmp.path(), |_, _| {}).unwrap_err();
+    assert!(format!("{err:#}").contains("SHA-256 mismatch"), "{err:#}");
+    assert_eq!(fs::read_dir(tmp.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn pacman_update_stages_the_package() {
+    let pkg = b"\x28\xb5\x2f\xfd fake zstd package".to_vec();
+    let base = serve(HashMap::from([(
+        "/gitkwaken-bin-1.0.2-1-x86_64.pkg.tar.zst",
+        pkg.clone(),
+    )]));
+    let release = parse_manifest(&linux_manifest(None, None)).unwrap();
+    let method = Method::Pacman(Asset {
+        url: format!("{base}/gitkwaken-bin-1.0.2-1-x86_64.pkg.tar.zst"),
+        sha256: sha_hex(&pkg),
+    });
+    let tmp = tempfile::tempdir().unwrap();
+    let staged = stage_in(&release, &method, tmp.path(), |_, _| {}).unwrap();
+    let Staged::Package(p) = staged else {
+        panic!("{staged:?}")
+    };
+    assert_eq!(
+        p.file_name().unwrap(),
+        "gitkwaken-bin-1.0.2-1-x86_64.pkg.tar.zst"
+    );
+    assert_eq!(fs::read(&p).unwrap(), pkg);
+}
+
 #[test]
 fn local_folder_channel_end_to_end() {
     let dir = tempfile::tempdir().unwrap();

@@ -4,10 +4,13 @@
 //! 1. At startup call [`cleanup_old`] (removes the `.old` exe left by a previous update).
 //! 2. On a background thread call [`check`] with the running version and a channel URL
 //!    (usually [`DEFAULT_CHANNEL_URL`]). `Some(release)` means a newer version exists.
-//! 3. If the user accepts, [`download_and_stage`] downloads the release zip, verifies its
-//!    SHA-256 and extracts `gitkwaken.exe` into a staging directory.
-//! 4. When the app exits, [`apply_on_exit`] swaps the staged exe into place (the running exe is
-//!    renamed to `gitkwaken.exe.old`, which Windows allows; it cannot be deleted while running).
+//! 3. [`method`] picks how this installation takes it: the Windows zip, the Linux tarball, or
+//!    (when pacman owns the executable) the Arch package.
+//! 4. If the user accepts, [`stage`] downloads that file and verifies its SHA-256. The zip and
+//!    the tarball yield the new executable in a staging directory; the package is installed
+//!    right away with [`install_package`] (`pkexec pacman -U`).
+//! 5. When the app exits, [`apply_on_exit`] swaps a staged executable into place (the running
+//!    one is renamed to `<exe>.old`, which Windows allows while it runs and Linux always does).
 //!
 //! # Channel manifest (`update.json`)
 //!
@@ -17,10 +20,15 @@
 //!   "notes": "Changelog text (plain / markdown)",
 //!   "url": "https://github.com/<owner>/gitkwaken/releases/download/v1.0.1/GitKwaken-1.0.1-x64.zip",
 //!   "sha256": "<64 hex chars of the zip>",
-//!   "published": "2026-10-17"
+//!   "published": "2026-10-17",
+//!   "linux": {
+//!     "tarball": { "url": "…/GitKwaken-1.0.1-x86_64-linux.tar.gz", "sha256": "…" },
+//!     "pacman": { "url": "…/gitkwaken-bin-1.0.1-1-x86_64.pkg.tar.zst", "sha256": "…" }
+//!   }
 //! }
 //! ```
-//! `notes` and `published` are optional. `version` may carry a leading `v`.
+//! `notes`, `published` and `linux` (and each of its entries) are optional. `version` may carry
+//! a leading `v`. `url` / `sha256` are the Windows zip (older clients read only those).
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use serde::{Deserialize, Serialize};
@@ -38,6 +46,9 @@ pub const DEFAULT_CHANNEL_URL: Option<&str> = option_env!("GITKWAKEN_UPDATE_CHAN
 /// File name of the executable inside the release zip (matched case-insensitively, any folder).
 pub const EXE_NAME: &str = "gitkwaken.exe";
 
+/// File name of the executable inside the Linux tarball (any folder).
+pub const LINUX_EXE_NAME: &str = "gitkwaken";
+
 /// Max size accepted for the channel manifest.
 const MANIFEST_LIMIT: u64 = 1024 * 1024;
 
@@ -47,10 +58,31 @@ pub struct Release {
     pub version: String,
     #[serde(default)]
     pub notes: String,
+    /// The Windows zip.
     pub url: String,
     pub sha256: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub published: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linux: Option<LinuxAssets>,
+}
+
+/// One downloadable file of a release.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Asset {
+    pub url: String,
+    pub sha256: String,
+}
+
+/// The Linux x86_64 files of a release.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinuxAssets {
+    /// `GitKwaken-<ver>-x86_64-linux.tar.gz`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tarball: Option<Asset>,
+    /// `gitkwaken-bin-<ver>-<rel>-x86_64.pkg.tar.zst`, built from the release's PKGBUILD.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pacman: Option<Asset>,
 }
 
 impl Release {
@@ -58,24 +90,36 @@ impl Release {
     pub fn semver(&self) -> Result<semver::Version> {
         parse_version(&self.version)
     }
+
+    fn assets_mut(&mut self) -> impl Iterator<Item = (&mut String, &mut String)> {
+        let linux = self.linux.iter_mut().flat_map(|l| {
+            [l.tarball.as_mut(), l.pacman.as_mut()]
+                .into_iter()
+                .flatten()
+                .map(|a| (&mut a.url, &mut a.sha256))
+        });
+        std::iter::once((&mut self.url, &mut self.sha256)).chain(linux)
+    }
 }
 
 /// Parses and validates a channel manifest.
 pub fn parse_manifest(json: &str) -> Result<Release> {
     let mut r: Release = serde_json::from_str(json).context("invalid update manifest JSON")?;
     r.semver()?;
-    ensure!(
-        r.sha256.len() == 64 && r.sha256.bytes().all(|b| b.is_ascii_hexdigit()),
-        "update manifest: sha256 must be 64 hex chars"
-    );
-    r.sha256.make_ascii_lowercase();
-    // http(s) or relative to the manifest (local channels use relative URLs).
-    // Absolute file:// or other schemes are rejected so a remote manifest can
-    // never point at local files.
-    ensure!(
-        r.url.starts_with("https://") || r.url.starts_with("http://") || !r.url.contains(':'),
-        "update manifest: url must be http(s) or relative to the manifest"
-    );
+    for (url, sha256) in r.assets_mut() {
+        ensure!(
+            sha256.len() == 64 && sha256.bytes().all(|b| b.is_ascii_hexdigit()),
+            "update manifest: sha256 must be 64 hex chars"
+        );
+        sha256.make_ascii_lowercase();
+        // http(s) or relative to the manifest (local channels use relative URLs).
+        // Absolute file:// or other schemes are rejected so a remote manifest can
+        // never point at local files.
+        ensure!(
+            url.starts_with("https://") || url.starts_with("http://") || !url.contains(':'),
+            "update manifest: url must be http(s) or relative to the manifest"
+        );
+    }
     Ok(r)
 }
 
@@ -112,7 +156,9 @@ pub fn check(current: &str, channel_url: &str) -> Result<Option<Release>> {
         .read_to_string(&mut body)
         .context("read update manifest")?;
     let mut release = parse_manifest(&body)?;
-    release.url = resolve_url(channel_url, &release.url);
+    for (url, _) in release.assets_mut() {
+        *url = resolve_url(channel_url, url);
+    }
     Ok(is_newer(current, &release.version)?.then_some(release))
 }
 
@@ -128,15 +174,143 @@ pub fn resolve_url(manifest_url: &str, url: &str) -> String {
     format!("{base}/{}", url.trim_start_matches("./"))
 }
 
+/// How the running installation takes an update.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Method {
+    /// The Windows zip; its `gitkwaken.exe` is swapped in on exit.
+    WindowsZip(Asset),
+    /// The Linux tarball; its `gitkwaken` is swapped in on exit (an install the user can write).
+    Tarball(Asset),
+    /// The Arch package, installed with `pkexec pacman -U` (pacman owns the executable).
+    Pacman(Asset),
+}
+
+/// A downloaded, verified update.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Staged {
+    /// New executable for [`apply_on_exit`].
+    Exe(PathBuf),
+    /// Package for [`install_package`].
+    Package(PathBuf),
+}
+
+/// How this installation updates to `release`, or why it cannot.
+pub fn method(release: &Release) -> Result<Method> {
+    if cfg!(windows) {
+        return Ok(Method::WindowsZip(Asset {
+            url: release.url.clone(),
+            sha256: release.sha256.clone(),
+        }));
+    }
+    if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        let exe = std::env::current_exe().context("locate current exe")?;
+        let exe = fs::canonicalize(&exe).unwrap_or(exe);
+        return linux_method(release, &exe, pacman_owns(&exe));
+    }
+    bail!("GitKwaken does not update itself on this platform")
+}
+
+/// [`method`] on Linux for the executable at `exe` (testable core).
+pub fn linux_method(release: &Release, exe: &Path, owned_by_pacman: bool) -> Result<Method> {
+    let linux = release.linux.clone().unwrap_or_default();
+    if owned_by_pacman {
+        return linux
+            .pacman
+            .map(Method::Pacman)
+            .ok_or_else(|| anyhow!("release {} has no Arch package", release.version));
+    }
+    let tarball = linux
+        .tarball
+        .ok_or_else(|| anyhow!("release {} has no Linux build", release.version))?;
+    let dir = exe.parent().unwrap_or(Path::new("."));
+    ensure!(
+        writable(dir),
+        "no write access to {}: update GitKwaken with the tool that installed it",
+        dir.display()
+    );
+    Ok(Method::Tarball(tarball))
+}
+
+/// Whether the installed package `pacman -Qo` reports owns `exe`.
+fn pacman_owns(exe: &Path) -> bool {
+    std::process::Command::new("pacman")
+        .arg("-Qqo")
+        .arg(exe)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+/// Whether a file can be created in `dir` (permissions alone miss read-only mounts).
+fn writable(dir: &Path) -> bool {
+    let probe = dir.join(format!(".gitkwaken-update-{}", std::process::id()));
+    let ok = fs::File::create(&probe).is_ok();
+    let _ = fs::remove_file(&probe);
+    ok
+}
+
 /// Directory used for downloads and the staged exe.
 pub fn staging_dir() -> PathBuf {
     std::env::temp_dir().join("gitkwaken-update")
 }
 
-/// Downloads the release zip into [`staging_dir`], verifies SHA-256, extracts the exe and returns
-/// its path. `progress(downloaded, total)` is called as bytes arrive (`total` is 0 if unknown).
+/// Downloads the file `method` names into [`staging_dir`] and verifies its SHA-256; the zip and
+/// the tarball are unpacked to the new executable. `progress(downloaded, total)` is called as
+/// bytes arrive (`total` is 0 if unknown).
 ///
 /// Blocking (network): call from a background thread.
+pub fn stage(release: &Release, method: &Method, progress: impl FnMut(u64, u64)) -> Result<Staged> {
+    stage_in(release, method, &staging_dir(), progress)
+}
+
+/// [`stage`] with an explicit staging directory.
+pub fn stage_in(
+    release: &Release,
+    method: &Method,
+    dir: &Path,
+    progress: impl FnMut(u64, u64),
+) -> Result<Staged> {
+    let version = release.semver()?;
+    fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
+    match method {
+        Method::WindowsZip(asset) => {
+            let part = dir.join(format!("GitKwaken-{version}.zip.part"));
+            let exe = dir.join(format!("gitkwaken-{version}.exe"));
+            let r = download(asset, &part, progress).and_then(|()| extract_exe(&part, &exe));
+            let _ = fs::remove_file(&part);
+            r.map(|()| Staged::Exe(exe))
+        }
+        Method::Tarball(asset) => {
+            let part = dir.join(format!("GitKwaken-{version}.tar.gz.part"));
+            let exe = dir.join(format!("gitkwaken-{version}"));
+            let r = download(asset, &part, progress).and_then(|()| extract_tar_exe(&part, &exe));
+            let _ = fs::remove_file(&part);
+            r.map(|()| Staged::Exe(exe))
+        }
+        Method::Pacman(asset) => {
+            // pacman reads the compression from the extension.
+            let name = asset
+                .url
+                .rsplit('/')
+                .next()
+                .filter(|n| n.ends_with(".pkg.tar.zst") && !n.contains(['\\', '\0']))
+                .map_or_else(
+                    || format!("gitkwaken-bin-{version}.pkg.tar.zst"),
+                    String::from,
+                );
+            let pkg = dir.join(name);
+            let part = with_suffix(&pkg, ".part");
+            let r = download(asset, &part, progress).and_then(|()| replace_file(&part, &pkg));
+            if r.is_err() {
+                let _ = fs::remove_file(&part);
+            }
+            r.map(|()| Staged::Package(pkg))
+        }
+    }
+}
+
+/// The Windows zip update ([`stage`] with [`Method::WindowsZip`]); returns the staged exe.
 pub fn download_and_stage(release: &Release, progress: impl FnMut(u64, u64)) -> Result<PathBuf> {
     download_and_stage_in(release, &staging_dir(), progress)
 }
@@ -145,52 +319,113 @@ pub fn download_and_stage(release: &Release, progress: impl FnMut(u64, u64)) -> 
 pub fn download_and_stage_in(
     release: &Release,
     dir: &Path,
-    mut progress: impl FnMut(u64, u64),
+    progress: impl FnMut(u64, u64),
 ) -> Result<PathBuf> {
-    let version = release.semver()?;
-    fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
-    let zip_path = dir.join(format!("GitKwaken-{version}.zip.part"));
+    let zip = Method::WindowsZip(Asset {
+        url: release.url.clone(),
+        sha256: release.sha256.clone(),
+    });
+    match stage_in(release, &zip, dir, progress)? {
+        Staged::Exe(p) | Staged::Package(p) => Ok(p),
+    }
+}
 
-    let result = (|| -> Result<PathBuf> {
-        let (mut reader, total) = open_source(&release.url, Duration::from_secs(30 * 60))?;
-        let mut file = fs::File::create(&zip_path)
-            .with_context(|| format!("create {}", zip_path.display()))?;
-        let mut hasher = Sha256::new();
-        let mut buf = vec![0u8; 64 * 1024];
-        let mut done = 0u64;
-        progress(0, total);
-        loop {
-            let n = reader.read(&mut buf).context("download interrupted")?;
-            if n == 0 {
-                break;
-            }
-            hasher.update(&buf[..n]);
-            file.write_all(&buf[..n])?;
-            done += n as u64;
-            progress(done, total);
+/// Downloads `asset` to `dest` and checks its size and SHA-256.
+fn download(asset: &Asset, dest: &Path, mut progress: impl FnMut(u64, u64)) -> Result<()> {
+    let (mut reader, total) = open_source(&asset.url, Duration::from_secs(30 * 60))?;
+    let mut file = fs::File::create(dest).with_context(|| format!("create {}", dest.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 64 * 1024];
+    let mut done = 0u64;
+    progress(0, total);
+    loop {
+        let n = reader.read(&mut buf).context("download interrupted")?;
+        if n == 0 {
+            break;
         }
-        file.sync_all()?;
-        drop(file);
-        ensure!(
-            total == 0 || done == total,
-            "download truncated: {done} of {total} bytes"
+        hasher.update(&buf[..n]);
+        file.write_all(&buf[..n])?;
+        done += n as u64;
+        progress(done, total);
+    }
+    file.sync_all()?;
+    drop(file);
+    ensure!(
+        total == 0 || done == total,
+        "download truncated: {done} of {total} bytes"
+    );
+    let actual = hex(&hasher.finalize());
+    if !actual.eq_ignore_ascii_case(&asset.sha256) {
+        bail!(
+            "SHA-256 mismatch for {}: expected {}, got {actual}",
+            asset.url,
+            asset.sha256
         );
+    }
+    Ok(())
+}
 
-        let actual = hex(&hasher.finalize());
-        if !actual.eq_ignore_ascii_case(&release.sha256) {
-            bail!(
-                "SHA-256 mismatch for {}: expected {}, got {actual}",
-                release.url,
-                release.sha256
-            );
+/// Extracts the first regular file named [`LINUX_EXE_NAME`] (any directory) of a `.tar.gz` to
+/// `dest`, executable.
+pub fn extract_tar_exe(tgz: &Path, dest: &Path) -> Result<()> {
+    let file = fs::File::open(tgz).with_context(|| format!("open {}", tgz.display()))?;
+    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(file));
+    for entry in archive.entries().context("invalid release tarball")? {
+        let mut entry = entry.context("invalid release tarball")?;
+        let is_exe = entry.header().entry_type().is_file()
+            && entry
+                .path()
+                .ok()
+                .and_then(|p| p.file_name().map(|n| n == LINUX_EXE_NAME))
+                .unwrap_or(false);
+        if !is_exe {
+            continue;
         }
+        let tmp = with_suffix(dest, ".tmp");
+        {
+            let mut out =
+                fs::File::create(&tmp).with_context(|| format!("create {}", tmp.display()))?;
+            std::io::copy(&mut entry, &mut out).context("extract executable")?;
+            out.sync_all()?;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&tmp, fs::Permissions::from_mode(0o755))?;
+        }
+        return replace_file(&tmp, dest);
+    }
+    bail!("{LINUX_EXE_NAME} not found in release tarball")
+}
 
-        let exe = dir.join(format!("gitkwaken-{version}.exe"));
-        extract_exe(&zip_path, &exe)?;
-        Ok(exe)
-    })();
-    let _ = fs::remove_file(&zip_path);
-    result
+/// Installs a staged Arch package with `pkexec pacman -U` (polkit asks for the password).
+///
+/// Blocking: waits for the authentication dialog and pacman.
+pub fn install_package(pkg: &Path) -> Result<()> {
+    let out = std::process::Command::new("pkexec")
+        .args(["pacman", "-U", "--noconfirm"])
+        .arg(pkg)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .context("start pkexec (polkit) to run pacman")?;
+    let _ = fs::remove_file(pkg);
+    match out.status.code() {
+        Some(0) => Ok(()),
+        // pkexec: dialog dismissed / not authorized.
+        Some(126 | 127) => bail!("administrator authorization was cancelled or denied"),
+        _ => {
+            let err = String::from_utf8_lossy(&out.stderr);
+            let err = err.trim();
+            bail!(
+                "pacman -U failed{}",
+                if err.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {err}")
+                }
+            )
+        }
+    }
 }
 
 /// Extracts the first entry named [`EXE_NAME`] (any directory, case-insensitive) to `dest`.

@@ -105,8 +105,8 @@ jobs:
             dist/SHA256SUMS.txt
 
   # Built on the oldest Ubuntu runner so the binary needs only glibc 2.35 and runs on newer
-  # distributions (Manjaro / Arch, Fedora, Debian 12+, Ubuntu 22.04+). No self-update on Linux:
-  # nothing is added to update.json.
+  # distributions (Manjaro / Arch, Fedora, Debian 12+, Ubuntu 22.04+). The tarball and the Arch
+  # package below are added to update.json (`linux`) for the self-updater.
   linux:
     name: Linux x86_64 release
     runs-on: ubuntu-22.04
@@ -157,20 +157,66 @@ jobs:
             dist/GitKwaken-${{ env.VERSION }}-x86_64-linux.tar.gz.sha256
             dist/PKGBUILD
 
+  # The release's PKGBUILD built into a pacman package on Arch (what `makepkg` does on a
+  # desktop) and installed once as a check. pacman installs update themselves with it.
+  arch:
+    name: Arch package
+    needs: linux
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    env:
+      VERSION: ${{ needs.linux.outputs.version }}
+    steps:
+      - name: Install tools
+        run: pacman -Syu --noconfirm --needed base-devel
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: GitKwaken-${{ needs.linux.outputs.version }}-x86_64-linux
+          path: dist
+
+      - name: makepkg (as an unprivileged user) and pacman -U
+        run: |
+          useradd -m builder
+          mkdir /home/builder/pkg
+          cp dist/PKGBUILD dist/*.tar.gz /home/builder/pkg/
+          chown -R builder /home/builder/pkg
+          # --nodeps: nothing is compiled; pacman -U pulls the runtime depends.
+          su builder -c 'cd ~/pkg && makepkg --nodeps --noconfirm'
+          mkdir -p out
+          cp /home/builder/pkg/gitkwaken-bin-*.pkg.tar.zst out/
+          pacman -U --noconfirm out/gitkwaken-bin-*.pkg.tar.zst
+          pacman -Qi gitkwaken-bin
+          cd out
+          p="$(ls gitkwaken-bin-*.pkg.tar.zst)"
+          sha256sum "$p" > "$p.sha256"
+          ls -l
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gitkwaken-bin-${{ env.VERSION }}-pkg
+          path: out/*
+
   # Attaches the Linux files to the release the Windows job created (one writer at a time:
-  # two jobs creating the same release in parallel race).
+  # two jobs creating the same release in parallel race), then adds them to its update.json.
   publish-linux:
     name: Publish Linux assets
     if: ${{ !inputs.dry_run }}
-    needs: [windows, linux]
+    needs: [windows, linux, arch]
     runs-on: ubuntu-latest
     env:
       TAG: ${{ github.event.inputs.tag || github.ref_name }}
       VERSION: ${{ needs.linux.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: GitKwaken-${{ needs.linux.outputs.version }}-x86_64-linux
+          path: dist
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: gitkwaken-bin-${{ needs.linux.outputs.version }}-pkg
           path: dist
 
       - name: Attach to the GitHub release
@@ -182,3 +228,19 @@ jobs:
             dist/GitKwaken-${{ env.VERSION }}-x86_64-linux.tar.gz
             dist/GitKwaken-${{ env.VERSION }}-x86_64-linux.tar.gz.sha256
             dist/PKGBUILD
+            dist/gitkwaken-bin-*.pkg.tar.zst
+            dist/gitkwaken-bin-*.pkg.tar.zst.sha256
+
+      - name: Add the Linux files to update.json
+        run: |
+          set -euo pipefail
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
+          tarball="GitKwaken-$VERSION-x86_64-linux.tar.gz"
+          pkg="$(cd dist && ls gitkwaken-bin-*.pkg.tar.zst)"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern update.json --dir manifest
+          jq --arg tu "$base/$tarball" --arg ts "$(cut -d' ' -f1 "dist/$tarball.sha256")" \
+             --arg pu "$base/$pkg" --arg ps "$(cut -d' ' -f1 "dist/$pkg.sha256")" \
+             '.linux = {tarball: {url: $tu, sha256: $ts}, pacman: {url: $pu, sha256: $ps}}' \
+             manifest/update.json > update.json
+          cat update.json
+          gh release upload "$TAG" update.json --repo "$GITHUB_REPOSITORY" --clobber
