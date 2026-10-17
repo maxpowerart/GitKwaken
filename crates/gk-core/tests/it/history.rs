@@ -1,6 +1,7 @@
 use crate::common::*;
 use gk_core::ObjectId;
 use gk_core::history::{self, History, MetaCache, Scope};
+use gk_core::log_filter::{Filter, Pickaxe};
 use gk_core::refs;
 use std::sync::atomic::AtomicBool;
 
@@ -220,4 +221,162 @@ fn tags_to_trees_and_blobs_are_skipped() {
     assert_eq!(h.len(), 1);
     let h = build(&t, &Scope::Revs(vec![s("tree-tag"), s("main")]));
     assert_eq!(h.len(), 1);
+}
+
+// ------------------------------------------------------------------ filters
+
+/// Commits with a fixed author and date (author and committer).
+fn commit_as(t: &TestRepo, path: &str, content: &str, msg: &str, who: &str, day: &str) -> String {
+    t.write(path, content);
+    t.git(&["add", "--", path]);
+    let date = format!("{day}T12:00:00 +0000");
+    t.repo
+        .git()
+        .env("GIT_AUTHOR_DATE", &date)
+        .env("GIT_COMMITTER_DATE", &date)
+        .read(&["commit", "-q", "-m", msg, &format!("--author={who}")])
+        .unwrap();
+    t.head()
+}
+
+/// Runs the History filter's `git log` arguments, like the History view does.
+fn filtered(t: &TestRepo, f: &Filter, revs: &[&str]) -> Vec<String> {
+    let revs: Vec<String> = revs.iter().map(|r| r.to_string()).collect();
+    let args = f.args(&revs);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    t.git(&args).lines().map(str::to_string).collect()
+}
+
+#[test]
+fn history_filters_select_exact_commits() {
+    let t = TestRepo::new();
+    let alice = "Alice Doe <alice@example.com>";
+    let bob = "Bob Roe <bob@example.com>";
+    let carol = "Carol Poe <carol@example.com>";
+    let src = "src/parser.rs";
+    let c1 = commit_as(
+        &t,
+        src,
+        "fn parse() {}\n",
+        "Add parser",
+        alice,
+        "2026-01-10",
+    );
+    let c2 = commit_as(
+        &t,
+        src,
+        "fn parse() { fixed() }\n",
+        "Fix parser bug",
+        bob,
+        "2026-02-10",
+    );
+    let c3 = commit_as(
+        &t,
+        "docs/README.md",
+        "a needle here\n",
+        "Docs: readme",
+        alice,
+        "2026-03-10",
+    );
+    let c4 = commit_as(
+        &t,
+        "docs/README.md",
+        "gone\n",
+        "Remove the word",
+        carol,
+        "2026-04-10",
+    );
+    let c5 = commit_as(
+        &t,
+        src,
+        "fn parse() { fixed(); more() }\n",
+        "Refactor parser",
+        bob,
+        "2026-05-10",
+    );
+    t.git(&["checkout", "-q", "-b", "side", &c2]);
+    let c6 = commit_as(
+        &t,
+        "src/side.rs",
+        "fn side() {}\n",
+        "Side parser tweak",
+        carol,
+        "2026-06-10",
+    );
+    t.git(&["checkout", "-q", "main"]);
+
+    let run = |f: Filter| filtered(&t, &f, &[]);
+    let ids = |v: &[&String]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+
+    // Message text: --grep, case-insensitive, trimmed.
+    let text = |s: &str| Filter {
+        text: s.into(),
+        ..Default::default()
+    };
+    assert_eq!(run(text("parser")), ids(&[&c5, &c2, &c1]));
+    assert_eq!(run(text("  PARSER BUG ")), ids(&[&c2]));
+    assert_eq!(run(text("no such message")), Vec::<String>::new());
+
+    // Author: name or email, case-insensitive.
+    let author = |s: &str| Filter {
+        author: s.into(),
+        ..Default::default()
+    };
+    assert_eq!(run(author("alice")), ids(&[&c3, &c1]));
+    assert_eq!(run(author("BOB@example")), ids(&[&c5, &c2]));
+
+    // Dates: --since / --until on the committer date.
+    let dates = |since: &str, until: &str| Filter {
+        since: since.into(),
+        until: until.into(),
+        ..Default::default()
+    };
+    assert_eq!(run(dates("2026-03-01", "")), ids(&[&c5, &c4, &c3]));
+    assert_eq!(run(dates("", "2026-02-15")), ids(&[&c2, &c1]));
+    assert_eq!(run(dates("2026-02-01", "2026-03-31")), ids(&[&c3, &c2]));
+
+    // Path: a folder or a file; Windows separators are converted.
+    let path = |s: &str| Filter {
+        path: s.into(),
+        ..Default::default()
+    };
+    assert_eq!(run(path("docs")), ids(&[&c4, &c3]));
+    assert_eq!(run(path("src\\parser.rs")), ids(&[&c5, &c2, &c1]));
+
+    // Pickaxe: -S counts occurrences, -G matches changed lines.
+    let pickaxe = |s: &str, mode| Filter {
+        pickaxe: s.into(),
+        pickaxe_mode: mode,
+        ..Default::default()
+    };
+    assert_eq!(run(pickaxe("fixed", Pickaxe::String)), ids(&[&c2]));
+    assert_eq!(run(pickaxe("fixed", Pickaxe::Regex)), ids(&[&c5, &c2]));
+    assert_eq!(run(pickaxe("needle", Pickaxe::String)), ids(&[&c4, &c3]));
+    assert_eq!(run(pickaxe("fixed[(][)];", Pickaxe::Regex)), ids(&[&c5]));
+
+    // Fields combine (AND).
+    let f = Filter {
+        author: "alice".into(),
+        path: "src".into(),
+        ..Default::default()
+    };
+    assert_eq!(run(f), ids(&[&c1]));
+    let f = Filter {
+        text: "parser".into(),
+        since: "2026-02-01".into(),
+        pickaxe: "fixed".into(),
+        pickaxe_mode: Pickaxe::Regex,
+        ..Default::default()
+    };
+    assert_eq!(run(f), ids(&[&c5, &c2]));
+
+    // Revisions: HEAD by default, else the History scope's arguments.
+    assert_eq!(
+        filtered(&t, &text("parser"), &["side"]),
+        ids(&[&c6, &c2, &c1])
+    );
+    assert_eq!(
+        filtered(&t, &text("parser"), &["--branches"]),
+        ids(&[&c6, &c5, &c2, &c1])
+    );
 }

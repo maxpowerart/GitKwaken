@@ -424,6 +424,39 @@ impl Repo {
         Ok(())
     }
 
+    // ---------------------------------------------------------------- notes
+
+    /// The `git notes` note of `rev` (refs/notes/commits), without the
+    /// trailing newline; `None` when it has none.
+    pub fn note(&self, rev: &str) -> Result<Option<String>> {
+        plain(&[rev])?;
+        let o = self.git().run_raw(&["notes", "show", rev], None)?;
+        Ok((o.code == Some(0))
+            .then(|| o.stdout_str().trim_end().to_string())
+            .filter(|s| !s.is_empty()))
+    }
+
+    /// Adds or replaces the note of `rev`; blank text removes it.
+    pub fn set_note(&self, rev: &str, text: &str) -> Result<()> {
+        plain(&[rev])?;
+        if text.trim().is_empty() {
+            return self.remove_note(rev);
+        }
+        let mut text = text.trim_end().to_string();
+        text.push('\n');
+        self.git()
+            .run_stdin(&["notes", "add", "-f", "-F", "-", rev], text.as_bytes())?;
+        Ok(())
+    }
+
+    /// Removes the note of `rev` (no error when it has none).
+    pub fn remove_note(&self, rev: &str) -> Result<()> {
+        plain(&[rev])?;
+        self.git()
+            .run(&["notes", "remove", "--ignore-missing", rev])?;
+        Ok(())
+    }
+
     // ---------------------------------------------------------------- history rewriting
 
     pub fn merge(&self, rev: &str, opts: &MergeOptions) -> Result<String> {

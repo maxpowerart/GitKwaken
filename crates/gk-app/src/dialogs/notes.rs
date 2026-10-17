@@ -10,27 +10,22 @@ use std::sync::atomic::Ordering;
 
 /// Loads the current note of `id` ("" when none).
 fn load_note(ctx: &Context, tab: &RepoTab, id: &str) -> Task<Result<String, String>> {
-    let git = tab.session.repo().git().clone();
+    let repo = tab.session.repo().clone();
     let id = id.to_string();
     Task::spawn(ctx, move || {
-        let o = git
-            .run_raw(&["notes", "show", id.as_str()], None)
-            .map_err(|e| format!("{e:#}"))?;
-        Ok(if o.code == Some(0) {
-            o.stdout_str().trim_end().to_string()
-        } else {
-            String::new()
-        })
+        repo.note(&id)
+            .map(Option::unwrap_or_default)
+            .map_err(|e| format!("{e:#}"))
     })
 }
 
-/// Queues `git notes <args>` (with `stdin`), then makes the details reload notes.
-fn run_notes(tab: &RepoTab, label: &str, args: Vec<String>, stdin: Option<String>) {
+/// Queues saving `text` as the note of `id` (`None` removes it), then makes
+/// the details reload notes.
+fn run_notes(tab: &RepoTab, label: &str, id: String, text: Option<String>) {
     tab.session.run_op(label.to_string(), move |r, _, _| {
-        let a: Vec<&str> = args.iter().map(String::as_str).collect();
-        let res = match &stdin {
-            Some(s) => r.git().run_stdin(&a, s.as_bytes()),
-            None => r.git().run(&a),
+        let res = match &text {
+            Some(t) => r.set_note(&id, t),
+            None => r.remove_note(&id),
         };
         crate::views::details::NOTES_GEN.fetch_add(1, Ordering::SeqCst);
         res?;
@@ -122,18 +117,9 @@ impl TabDialog for EditNote {
         finish(out, || {
             let id = self.id.clone();
             if self.text.trim().is_empty() {
-                let args = ["notes", "remove", "--ignore-missing", id.as_str()];
-                run_notes(tab, "Remove note", args.map(String::from).to_vec(), None);
+                run_notes(tab, "Remove note", id, None);
             } else {
-                let args = ["notes", "add", "-f", "-F", "-", id.as_str()];
-                let mut text = self.text.trim_end().to_string();
-                text.push('\n');
-                run_notes(
-                    tab,
-                    "Save note",
-                    args.map(String::from).to_vec(),
-                    Some(text),
-                );
+                run_notes(tab, "Save note", id, Some(self.text.clone()));
             }
         })
     }
@@ -199,8 +185,7 @@ impl TabDialog for RemoveNote {
             },
         );
         finish(out, || {
-            let args = ["notes", "remove", "--ignore-missing", self.id.as_str()];
-            run_notes(tab, "Remove note", args.map(String::from).to_vec(), None);
+            run_notes(tab, "Remove note", self.id.clone(), None);
         })
     }
 }

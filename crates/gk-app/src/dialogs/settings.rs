@@ -588,6 +588,11 @@ impl AppDialog for SettingsDialog {
                                 ui.checkbox(&mut df.syntax_highlight, "Syntax highlighting");
                                 ui.checkbox(&mut df.renames, "Detect renames in commit file lists");
                                 hint(ui, "Files larger than the maximum size show a \"Show anyway\" button instead of the diff.");
+                                ui.horizontal(|ui| {
+                                    ui.label("Rename similarity:");
+                                    ui.add(egui::Slider::new(&mut df.rename_similarity, 1..=100).suffix("%"));
+                                });
+                                hint(ui, "How similar a deleted and an added file must be to count as a rename, in File Status and in commit file lists (git's default: 50%).");
                             }
                             Section::History => {
                                 let h = &mut d.history;

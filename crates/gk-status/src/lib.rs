@@ -15,6 +15,28 @@ pub use cli_engine::compute as compute_cli;
 pub use gix_engine::compute as compute_gix;
 pub use path::{PathStr, StatusBuilder};
 
+static RENAME_SIMILARITY: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(50);
+
+/// Minimum similarity in percent (1-100, git's default is 50) for a deleted
+/// and an added file to count as a rename, in both status engines
+/// (`git status --find-renames=<n>%`) and, through `gk-core`, in commit
+/// file lists. Settings: diff.rename_similarity.
+pub fn set_rename_similarity(percent: u8) {
+    RENAME_SIMILARITY.store(percent.clamp(1, 100), std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn rename_similarity() -> u8 {
+    RENAME_SIMILARITY.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// [`rename_similarity`] as gitoxide rename tracking options.
+pub fn rewrites() -> gix::diff::Rewrites {
+    gix::diff::Rewrites {
+        percentage: Some(f32::from(rename_similarity()) / 100.0),
+        ..Default::default()
+    }
+}
+
 /// Which side of a conflict did what, mirroring `git status` short codes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Conflict {

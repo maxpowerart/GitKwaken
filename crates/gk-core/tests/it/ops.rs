@@ -399,6 +399,126 @@ fn tags() {
     assert!(t.repo.delete_tag("light").is_err());
 }
 
+/// `ssh-keygen`: the one bundled with Git for Windows (next to the git that
+/// runs the tests), else the one on PATH.
+fn find_ssh_keygen(t: &TestRepo) -> Option<std::path::PathBuf> {
+    let exec = t.git(&["--exec-path"]);
+    let bundled = std::path::Path::new(&exec)
+        .ancestors()
+        .map(|a| a.join("usr/bin/ssh-keygen.exe"))
+        .find(|p| p.is_file());
+    bundled
+        .or_else(|| Some("ssh-keygen".into()))
+        .filter(|p| std::process::Command::new(p).arg("-?").output().is_ok())
+}
+
+#[test]
+fn signed_tag_with_ssh_key() {
+    let t = TestRepo::new();
+    let head = t.commit_file("a.txt", "1\n", "one");
+    let Some(keygen) = find_ssh_keygen(&t) else {
+        eprintln!("ssh-keygen not found: skipping signed_tag_with_ssh_key");
+        return;
+    };
+    let keys = tempfile::tempdir().unwrap();
+    let key = keys.path().join("id_test");
+    let out = std::process::Command::new(&keygen)
+        .args(["-q", "-t", "ed25519", "-N", "", "-C", "test", "-f"])
+        .arg(&key)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "ssh-keygen: {out:?}");
+    let public = std::fs::read_to_string(key.with_extension("pub")).unwrap();
+    let allowed = keys.path().join("allowed_signers");
+    std::fs::write(
+        &allowed,
+        format!("test@example.com namespaces=\"git\" {}\n", public.trim()),
+    )
+    .unwrap();
+    let fwd = |p: &std::path::Path| p.to_string_lossy().replace('\\', "/");
+    for (k, v) in [
+        ("gpg.format", "ssh".to_string()),
+        ("gpg.ssh.program", fwd(&keygen)),
+        ("user.signingkey", fwd(&key)),
+        ("gpg.ssh.allowedSignersFile", fwd(&allowed)),
+    ] {
+        t.git(&["config", k, &v]);
+    }
+
+    t.repo
+        .create_tag("v1.0", "HEAD", Some("Signed release"), true)
+        .unwrap();
+    let raw = t.git(&["cat-file", "tag", "v1.0"]);
+    assert!(raw.contains("-----BEGIN SSH SIGNATURE-----"), "{raw}");
+    let v = t.git_raw(&["tag", "-v", "v1.0"]);
+    assert_eq!(v.code, Some(0), "git tag -v: {}", v.stderr_str());
+    assert!(
+        v.stderr_str()
+            .contains("Good \"git\" signature for test@example.com"),
+        "{}",
+        v.stderr_str()
+    );
+    assert_eq!(
+        t.git(&["tag", "-l", "--format=%(contents:subject)", "v1.0"]),
+        "Signed release"
+    );
+    // The app has no signature status of its own; the listing shows an
+    // annotated tag on HEAD.
+    let r = refs::load(&t.repo).unwrap();
+    let tag = r.tags.iter().find(|t| t.name == "v1.0").unwrap();
+    assert!(tag.annotated);
+    assert_eq!(tag.target, head);
+
+    // An unsigned annotated tag does not verify.
+    t.repo
+        .create_tag("v1.1", "HEAD", Some("Unsigned"), false)
+        .unwrap();
+    assert_ne!(t.git_raw(&["tag", "-v", "v1.1"]).code, Some(0));
+}
+
+// ------------------------------------------------------------------ notes
+
+#[test]
+fn notes_round_trip() {
+    let t = TestRepo::new();
+    let c1 = t.commit_file("a.txt", "1\n", "one");
+    let c2 = t.commit_file("a.txt", "2\n", "two");
+    let shown = |rev: &str| {
+        let o = t.git_raw(&["notes", "show", rev]);
+        (o.code == Some(0)).then(|| o.stdout_str().to_string())
+    };
+    assert_eq!(t.repo.note(&c1).unwrap(), None);
+
+    // Add: trailing blank lines are dropped, git stores one final newline.
+    t.repo.set_note(&c1, "First note\n\n").unwrap();
+    assert_eq!(shown(&c1).as_deref(), Some("First note\n"));
+    assert_eq!(t.repo.note(&c1).unwrap().as_deref(), Some("First note"));
+    assert_eq!(shown(&c2), None);
+
+    // Edit replaces the note (multi-line), by id or by revision name.
+    t.repo.set_note(&c1, "Edited\n\nsecond paragraph").unwrap();
+    assert_eq!(shown(&c1).as_deref(), Some("Edited\n\nsecond paragraph\n"));
+    t.repo.set_note("HEAD", "Note on two").unwrap();
+    assert_eq!(t.repo.note(&c2).unwrap().as_deref(), Some("Note on two"));
+    assert_eq!(t.git(&["notes", "list"]).lines().count(), 2);
+    assert_eq!(
+        t.git(&["log", "-1", "--format=%N", &c1]),
+        "Edited\n\nsecond paragraph"
+    );
+
+    // Remove, also by saving blank text; removing again is not an error.
+    t.repo.remove_note(&c1).unwrap();
+    assert_eq!(shown(&c1), None);
+    assert_eq!(t.repo.note(&c1).unwrap(), None);
+    t.repo.remove_note(&c1).unwrap();
+    t.repo.set_note(&c2, "  \n").unwrap();
+    assert_eq!(shown(&c2), None);
+    assert_eq!(t.git(&["notes", "list"]), "");
+
+    assert!(t.repo.set_note("--all", "x").is_err());
+    assert!(t.repo.note("-x").is_err());
+}
+
 // ------------------------------------------------------------------ merge
 
 fn merge_opts(ff: FastForward) -> MergeOptions {

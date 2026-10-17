@@ -7,6 +7,7 @@ pub mod blame;
 pub mod cache;
 pub mod content;
 pub mod history;
+pub mod log_filter;
 pub mod ops;
 mod packwrite;
 pub mod pool;

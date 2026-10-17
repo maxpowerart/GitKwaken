@@ -164,6 +164,9 @@ pub struct DiffSettings {
     pub max_file_kb: u64,
     /// Rename detection in tree diffs (commit file lists).
     pub renames: bool,
+    /// Minimum similarity in percent (1-100) for a rename, in status and in
+    /// commit file lists (`--find-renames=<n>%`).
+    pub rename_similarity: u8,
 }
 
 impl Default for DiffSettings {
@@ -177,6 +180,7 @@ impl Default for DiffSettings {
             syntax_highlight: true,
             max_file_kb: 20480,
             renames: true,
+            rename_similarity: 50,
         }
     }
 }
@@ -349,6 +353,10 @@ impl Settings {
         if self.diff.max_file_kb == 0 {
             self.diff.max_file_kb = d.diff.max_file_kb;
         }
+        self.diff.rename_similarity = match self.diff.rename_similarity {
+            0 => d.diff.rename_similarity,
+            n => n.min(100),
+        };
         if self.mono_font_family.trim().is_empty() {
             self.mono_font_family = d.mono_font_family;
         }
