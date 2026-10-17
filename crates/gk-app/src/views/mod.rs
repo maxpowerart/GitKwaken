@@ -5,6 +5,7 @@ pub mod diff;
 pub mod file_status;
 pub mod history;
 pub mod log;
+pub mod palette;
 pub mod search;
 pub mod sidebar;
 pub mod statusbar;

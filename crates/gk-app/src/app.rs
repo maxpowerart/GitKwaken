@@ -42,6 +42,7 @@ pub struct GkApp {
     actions: Vec<Action>,
     show_log: bool,
     errors: Vec<String>,
+    command_palette: views::palette::PaletteState,
 }
 
 impl GkApp {
@@ -63,6 +64,7 @@ impl GkApp {
             actions: Vec::new(),
             show_log: false,
             errors: Vec::new(),
+            command_palette: Default::default(),
         };
         let mut to_open: Vec<PathBuf> = initial;
         if to_open.is_empty() {
@@ -73,6 +75,7 @@ impl GkApp {
             app.open_repo(ctx, p);
         }
         app.active = active.min(app.tabs.len().saturating_sub(1));
+        dialogs::set_askpass_env(app.askpass_env());
         app
     }
 
@@ -121,6 +124,20 @@ impl GkApp {
                 Action::ApplySettings => {
                     self.palette =
                         theme::apply(ctx, self.settings.theme, self.settings.ui_scale, self.settings.font_size);
+                    // Status options apply to open tabs right away.
+                    for t in &self.tabs {
+                        let mut o = t.session.options();
+                        o.status.engine = match self.settings.status_engine {
+                            gk_settings::StatusEngine::Gix => gk_status::Engine::Gix,
+                            gk_settings::StatusEngine::Cli => gk_status::Engine::Cli,
+                        };
+                        o.status.untracked = if self.settings.show_untracked {
+                            gk_status::Untracked::All
+                        } else {
+                            gk_status::Untracked::No
+                        };
+                        t.session.set_options(o);
+                    }
                 }
             }
         }
@@ -221,13 +238,17 @@ impl GkApp {
     }
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
-        let (open, close, next) = ctx.input_mut(|i| {
+        let (open, close, next, palette) = ctx.input_mut(|i| {
             (
                 i.consume_key(egui::Modifiers::COMMAND, egui::Key::O),
                 i.consume_key(egui::Modifiers::COMMAND, egui::Key::W),
                 i.consume_key(egui::Modifiers::CTRL, egui::Key::Tab),
+                i.consume_key(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, egui::Key::P),
             )
         });
+        if palette {
+            self.command_palette.toggle();
+        }
         if open {
             self.actions.push(Action::OpenRepoDialog);
         }
@@ -288,6 +309,18 @@ impl gk_dx11::App for GkApp {
             if close {
                 self.errors.clear();
             }
+        }
+        {
+            let mut shared = Shared {
+                settings: &mut self.settings,
+                palette,
+                log: &self.log,
+                actions: &mut self.actions,
+                show_log: &mut self.show_log,
+            };
+            let i = self.active.min(self.tabs.len().saturating_sub(1));
+            let tab = self.tabs.get_mut(i);
+            views::palette::show(&ctx, &mut self.command_palette, tab, &mut shared);
         }
         self.askpass_prompt(&ctx);
         self.handle_actions(&ctx);

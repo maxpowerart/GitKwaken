@@ -149,11 +149,12 @@ impl RepoTab {
         self.auto_fetch(&snap, shared.settings.auto_fetch_minutes);
         views::toolbar::show(ui, self, &snap, shared);
         views::statusbar::show(ui, self, &snap, shared);
-        egui::Panel::left(egui::Id::new(("sidebar", &self.path)))
+        let side = egui::Panel::left(egui::Id::new(("sidebar", &self.path)))
             .resizable(true)
             .default_size(self.state.layout.sidebar_width.max(160.0))
             .size_range(140.0..=480.0)
             .show(ui, |ui| views::sidebar::show(ui, self, &snap, shared));
+        self.state.layout.sidebar_width = side.response.rect.width();
         egui::CentralPanel::default().show(ui, |ui| match self.view {
             View::FileStatus => views::file_status::show(ui, self, &snap, shared),
             View::History => views::history::show(ui, self, &snap, shared),
