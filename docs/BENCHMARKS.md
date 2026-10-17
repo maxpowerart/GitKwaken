@@ -62,20 +62,22 @@ sub-millisecond metrics cannot flap on timer noise. A run prints a Markdown
 table (also appended to the GitHub job summary) and exits 1 on a regression.
 Two consecutive local runs against a fresh baseline stayed within -30%..+8%.
 
-Baseline: `bench/baseline-<os>.json` (`bench/baseline-windows.json` in CI). It
-must be recorded on the machine type that compares against it, so no baseline
-from a workstation is committed:
+Baseline in CI: the `Benchmarks` workflow (`.github/workflows/bench.yml`,
+windows-latest) builds `gk-bench` twice, from the base commit (the PR's merge
+base, or the previous commit on a push to main) and from the current commit,
+and runs both on the same runner, each on its own generated data. The base
+run records `target/bench-results/base.json`; the current run compares against
+it and fails the job on a regression. Same runner, same minute: no committed
+baseline is needed, and runner hardware differences do not matter.
 
-- **First run**: the `Benchmarks` workflow (`.github/workflows/bench.yml`,
-  windows-latest) finds no baseline, records one, passes, and uploads it as the
-  `bench-baseline` artifact. Download it and commit it as
-  `bench/baseline-windows.json`; from then on the job gates.
-- **Update after an intended change** (faster code, new metric, runner image
-  change): run the workflow manually with `record: true` (Actions > Benchmarks >
-  Run workflow), download the `bench-baseline` artifact and commit it. Locally:
-  `gk-bench regress --record` writes `bench/baseline-windows.json` for this machine.
+- **Committed baseline** (optional): `gk-bench regress --record` writes
+  `bench/baseline-<os>.json` for the machine it runs on; useful locally to
+  compare a working tree against an earlier state on the same workstation. Run
+  the workflow manually with `use_committed: true` to compare against a
+  committed `bench/baseline-windows.json` instead of the base commit.
 - Changing what a metric measures: bump `SCHEMA` in `crates/gk-bench/src/regress.rs`;
-  an old-schema baseline is then re-recorded instead of compared.
+  an old-schema baseline is then re-recorded instead of compared (the A/B job
+  then passes once and gates again from the next commit).
 
 Shared CI runners are noisy; if the gate flaps, raise `--runs` first, then
 `--threshold`.

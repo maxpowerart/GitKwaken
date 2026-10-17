@@ -2,14 +2,15 @@ name: Benchmarks
 
 # Performance regression gate: `gk-bench regress` measures a fixed set of
 # operations (status on 50k files, fast path, history of a 50k-commit DAG,
-# 50k-line diff, 1M-row graph layout) as the median of 5 runs and compares
-# them with bench/baseline-windows.json. A metric fails when it is more than
-# 10% slower AND more than 2 ms slower than the baseline.
+# 50k-line diff, 1M-row graph layout) as the median of 5 runs. A metric fails
+# when it is more than 10% slower AND more than 2 ms slower than the baseline.
 #
-# No committed baseline yet (first run) -> the job records one and uploads it
-# as the `bench-baseline` artifact; commit it as bench/baseline-windows.json.
-# To refresh it on purpose run this workflow manually with `record: true`
-# (see docs/BENCHMARKS.md, "Regression gate").
+# The baseline is measured in the same job, on the same runner: gk-bench is
+# built from the base commit (the PR's merge base, or the previous commit on a
+# push) and run first, then the current build compares against its results.
+# Shared runners differ too much between machines for a committed baseline.
+# With a committed bench/baseline-windows.json and `use_committed: true` the
+# job compares against that file instead (see docs/BENCHMARKS.md).
 
 on:
   push:
@@ -17,8 +18,8 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
-      record:
-        description: 'Record a new baseline instead of comparing'
+      use_committed:
+        description: 'Compare against bench/baseline-windows.json instead of the base commit'
         type: boolean
         default: false
 
@@ -34,9 +35,11 @@ jobs:
   regress:
     name: gk-bench regress (windows)
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -54,32 +57,66 @@ jobs:
       - name: Build gk-bench (release)
         run: cargo build --release --locked -p gk-bench
 
+      - name: Pick base commit
+        id: base
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base=$(git merge-base "${{ github.event.pull_request.base.sha }}" HEAD)
+          else
+            base=$(git rev-parse HEAD~1 2>/dev/null || true)
+          fi
+          # The base must already have the regress command.
+          if [ -n "$base" ] && git cat-file -e "$base:crates/gk-bench/src/regress.rs" 2>/dev/null \
+             && [ "${{ github.event.inputs.use_committed }}" != "true" ]; then
+            echo "sha=$base" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build gk-bench at the base commit
+        if: steps.base.outputs.sha != ''
+        shell: bash
+        run: |
+          git worktree add --detach target/bench-base-src "${{ steps.base.outputs.sha }}"
+          cargo build --release --locked -p gk-bench \
+            --manifest-path target/bench-base-src/Cargo.toml \
+            --target-dir target/bench-base
+
       # Generated data is deterministic; caching it saves ~1 min per run.
       - name: Cache generated repositories
         uses: actions/cache@v4
         with:
           path: target/bench-regress
-          key: bench-regress-data-v1-${{ hashFiles('crates/gk-bench/src/regress.rs', 'crates/gk-bench/src/main.rs') }}
+          key: bench-regress-data-v2-${{ hashFiles('crates/gk-bench/src/regress.rs', 'crates/gk-bench/src/main.rs') }}
 
       - name: Run regression gate
         shell: bash
         run: |
           # Generated repos live under target/; never let git walk up into the checkout.
-          mkdir -p target/bench-regress
+          mkdir -p target/bench-regress target/bench-results
           export GIT_CEILING_DIRECTORIES="$(cygpath -m "$GITHUB_WORKSPACE/target/bench-regress")"
-          args=(--runs 5 --out target/bench-results/current.json)
-          if [ "${{ github.event.inputs.record }}" = "true" ]; then args+=(--record); fi
-          had_baseline=0; [ -f bench/baseline-windows.json ] && had_baseline=1
-          ./target/release/gk-bench.exe regress "${args[@]}"
-          if [ "$had_baseline" = 0 ] || [ "${{ github.event.inputs.record }}" = "true" ]; then
-            mkdir -p target/bench-results && cp bench/baseline-windows.json target/bench-results/
+          if [ -n "${{ steps.base.outputs.sha }}" ]; then
+            # Separate data dirs: the base build may generate older data.
+            ./target/bench-base/release/gk-bench.exe regress --runs 5 --record \
+              --data target/bench-regress/base \
+              --baseline target/bench-results/base.json
+            ./target/release/gk-bench.exe regress --runs 5 \
+              --data target/bench-regress/current \
+              --baseline target/bench-results/base.json \
+              --out target/bench-results/current.json
+          else
+            # No usable base (first commit, or use_committed): committed file,
+            # or record one when there is none.
+            ./target/release/gk-bench.exe regress --runs 5 \
+              --data target/bench-regress/current \
+              --out target/bench-results/current.json
+            [ -f bench/baseline-windows.json ] && cp bench/baseline-windows.json target/bench-results/ || true
           fi
 
-      - name: Upload results (and new baseline, if recorded)
+      - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: bench-baseline
+          name: bench-results
           path: target/bench-results/
           if-no-files-found: ignore
           retention-days: 90
