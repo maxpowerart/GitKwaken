@@ -2,5 +2,24 @@
 name = "gk-app"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+description = "GitKwaken: a fast, lightweight git client."
+
+[[bin]]
+name = "gitkwaken"
+path = "src/main.rs"
 
 [dependencies]
+anyhow = { workspace = true }
+parking_lot = { workspace = true }
+egui = "0.35"
+rfd = "0.17"
+open = "5"
+gk-cli = { path = "../gk-cli" }
+gk-core = { path = "../gk-core" }
+gk-diff = { path = "../gk-diff" }
+gk-graph = { path = "../gk-graph" }
+gk-status = { path = "../gk-status" }
+gk-settings = { path = "../gk-settings" }
+gk-askpass = { path = "../gk-askpass" }
+gk-dx11 = { path = "../gk-dx11" }
