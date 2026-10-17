@@ -15,7 +15,7 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::platform::windows::WindowAttributesExtWindows as _;
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use winit::window::{Icon, Window, WindowId};
+use winit::window::{CursorIcon, Icon, ResizeDirection, Window, WindowId};
 
 use crate::textures::TextureMirror;
 use crate::{App, MakeApp, Options, WindowGeometry};
@@ -89,6 +89,50 @@ struct Running {
     menu_keys: u32,
     close_requested: bool,
     closed: bool,
+    /// No system frame ([`Options::custom_frame`]): the host resizes from the edges.
+    custom_frame: bool,
+    /// Window edge under the pointer (resize cursor shown, a press starts resizing).
+    edge: Option<ResizeDirection>,
+}
+
+/// Resize grip along the window border, logical points (Windows' own is about this wide).
+const EDGE: f64 = 5.0;
+/// Corner grips reach further along each side.
+const CORNER: f64 = 12.0;
+
+/// Edge of a `size` window at `pos` (both physical pixels), if within the grip.
+fn edge_at(pos: (f64, f64), size: (f64, f64), scale: f64) -> Option<ResizeDirection> {
+    let (x, y) = pos;
+    let (w, h) = size;
+    let (e, c) = (EDGE * scale, CORNER * scale);
+    let left = x < e;
+    let right = x >= w - e;
+    let top = y < e;
+    let bottom = y >= h - e;
+    let near_left = x < c;
+    let near_right = x >= w - c;
+    let near_top = y < c;
+    let near_bottom = y >= h - c;
+    Some(match () {
+        _ if (top && near_left) || (left && near_top) => ResizeDirection::NorthWest,
+        _ if (top && near_right) || (right && near_top) => ResizeDirection::NorthEast,
+        _ if (bottom && near_left) || (left && near_bottom) => ResizeDirection::SouthWest,
+        _ if (bottom && near_right) || (right && near_bottom) => ResizeDirection::SouthEast,
+        _ if top => ResizeDirection::North,
+        _ if bottom => ResizeDirection::South,
+        _ if left => ResizeDirection::West,
+        _ if right => ResizeDirection::East,
+        _ => return None,
+    })
+}
+
+fn resize_cursor(dir: ResizeDirection) -> CursorIcon {
+    match dir {
+        ResizeDirection::North | ResizeDirection::South => CursorIcon::NsResize,
+        ResizeDirection::East | ResizeDirection::West => CursorIcon::EwResize,
+        ResizeDirection::NorthWest | ResizeDirection::SouthEast => CursorIcon::NwseResize,
+        ResizeDirection::NorthEast | ResizeDirection::SouthWest => CursorIcon::NeswResize,
+    }
 }
 
 impl Host<'_> {
@@ -102,6 +146,11 @@ impl Host<'_> {
             .with_visible(false);
         if let Some([x, y]) = o.position {
             attrs = attrs.with_position(LogicalPosition::new(x as f64, y as f64));
+        }
+        if o.custom_frame {
+            // The client area covers the whole window; DWM still draws the shadow.
+            attrs = attrs.with_decorations(false).with_undecorated_shadow(true);
+            crate::CUSTOM_FRAME.store(true, std::sync::atomic::Ordering::Relaxed);
         }
         if let Some((rgba, w, h)) = &o.icon_rgba {
             match Icon::from_rgba(rgba.clone(), *w, *h) {
@@ -156,6 +205,8 @@ impl Host<'_> {
             menu_keys: 0,
             close_requested: false,
             closed: false,
+            custom_frame: o.custom_frame,
+            edge: None,
         };
         r.track_geometry();
         r.redraw(el, &self.ctx)?;
@@ -206,6 +257,36 @@ impl ApplicationHandler<UserEvent> for Host<'_> {
                 return;
             }
             WindowEvent::Resized(_) | WindowEvent::Moved(_) => r.track_geometry(),
+            WindowEvent::CursorMoved { position, .. } if r.custom_frame => {
+                let w = &r.window;
+                let size = w.inner_size();
+                let edge = if w.is_maximized() {
+                    None
+                } else {
+                    edge_at(
+                        (position.x, position.y),
+                        (size.width as f64, size.height as f64),
+                        w.scale_factor(),
+                    )
+                };
+                if edge != r.edge {
+                    // Leaving the grip: egui sets its own cursor again on the next change.
+                    w.set_cursor(edge.map_or(CursorIcon::Default, resize_cursor));
+                    r.edge = edge;
+                }
+            }
+            WindowEvent::CursorLeft { .. } => r.edge = None,
+            WindowEvent::MouseInput {
+                state: winit::event::ElementState::Pressed,
+                button: winit::event::MouseButton::Left,
+                ..
+            } if r.edge.is_some() => {
+                if let Some(dir) = r.edge {
+                    let _ = r.window.drag_resize_window(dir);
+                }
+                // The press belongs to the frame, not to the widget under the border.
+                return;
+            }
             WindowEvent::KeyboardInput { event: k, .. }
                 if k.state.is_pressed()
                     && k.logical_key
@@ -488,5 +569,33 @@ fn frame_stats(ui_time: std::time::Duration) {
             sum_ui: 0.0,
             worst_ui: 0.0,
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn edges_and_corners_of_a_frameless_window() {
+        let size = (1000.0, 600.0);
+        let at = |x, y| edge_at((x, y), size, 1.0);
+        assert_eq!(at(500.0, 300.0), None);
+        assert_eq!(at(500.0, 2.0), Some(ResizeDirection::North));
+        assert_eq!(at(500.0, 598.0), Some(ResizeDirection::South));
+        assert_eq!(at(1.0, 300.0), Some(ResizeDirection::West));
+        assert_eq!(at(999.0, 300.0), Some(ResizeDirection::East));
+        assert_eq!(at(2.0, 2.0), Some(ResizeDirection::NorthWest));
+        // Corner grips reach further along the sides than the border is wide.
+        assert_eq!(at(10.0, 2.0), Some(ResizeDirection::NorthWest));
+        assert_eq!(at(998.0, 590.0), Some(ResizeDirection::SouthEast));
+        assert_eq!(at(990.0, 2.0), Some(ResizeDirection::NorthEast));
+        assert_eq!(at(2.0, 595.0), Some(ResizeDirection::SouthWest));
+        // Grip width follows the DPI scale.
+        assert_eq!(
+            edge_at((8.0, 300.0), size, 2.0),
+            Some(ResizeDirection::West)
+        );
+        assert_eq!(edge_at((8.0, 300.0), size, 1.0), None);
     }
 }

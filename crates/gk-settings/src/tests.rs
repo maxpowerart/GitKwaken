@@ -291,6 +291,15 @@ fn repo_state_roundtrip_and_path() {
     st.save(&wd).unwrap();
     assert_eq!(RepoState::load(&wd), st);
 
+    // The history branch filter and the pinned branches survive a restart.
+    st.history_scope = "revs:main feature/x origin/main".into();
+    st.pinned_branches = vec!["main".into(), "feature/x".into()];
+    st.save(&wd).unwrap();
+    assert_eq!(RepoState::load(&wd), st);
+    st.history_scope = "local".into();
+    st.save(&wd).unwrap();
+    assert_eq!(RepoState::load(&wd).history_scope, "local");
+
     // Path: <config>/repos/<16 hex>.toml, stable across calls and spellings.
     let p = RepoState::path_for(&wd);
     assert!(p.exists());

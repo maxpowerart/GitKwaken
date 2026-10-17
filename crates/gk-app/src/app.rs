@@ -268,6 +268,7 @@ impl GkApp {
             active: i,
             tabs,
             update: self.updater.menu_entry(),
+            caption: gk_dx11::custom_frame(),
         };
         let mut shared = Shared {
             settings: &mut self.settings,
@@ -667,6 +668,8 @@ impl gk_dx11::App for GkApp {
         let ctx = ui.ctx().clone();
         self.publish_keymap(&ctx);
         self.shortcuts(&ctx);
+        // First: the dialog takes Enter / Escape before lists and views read keys.
+        self.updater.dialog(&ctx);
         let chrome = egui::Frame::new().fill(self.palette.chrome);
         egui::Panel::top("menubar")
             .frame(chrome.inner_margin(egui::Margin {

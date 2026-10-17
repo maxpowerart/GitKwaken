@@ -31,6 +31,7 @@ const ICON_W: f32 = 18.0;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Section {
     Workspace,
+    Pinned,
     Branches,
     Remotes,
     Tags,
@@ -41,8 +42,9 @@ enum Section {
 
 impl Section {
     /// SourceTree's order, then our extras.
-    const ALL: [Section; 7] = [
+    const ALL: [Section; 8] = [
         Section::Workspace,
+        Section::Pinned,
         Section::Branches,
         Section::Tags,
         Section::Remotes,
@@ -54,6 +56,7 @@ impl Section {
     fn title(self) -> &'static str {
         match self {
             Section::Workspace => "WORKSPACE",
+            Section::Pinned => "PINNED",
             Section::Branches => "BRANCHES",
             Section::Remotes => "REMOTES",
             Section::Tags => "TAGS",
@@ -67,6 +70,7 @@ impl Section {
     fn key(self) -> &'static str {
         match self {
             Section::Workspace => "section:workspace",
+            Section::Pinned => "section:pinned",
             Section::Branches => "section:branches",
             Section::Remotes => "section:remotes",
             Section::Tags => "section:tags",
@@ -96,6 +100,10 @@ struct Derived {
     remotes: Vec<RemoteGroup>,
     tags: Vec<u32>,
     stashes: Vec<u32>,
+    /// `RepoState::pinned_branches` these were derived from.
+    pinned_names: Vec<String>,
+    /// Pinned branches that exist and match the filter, in pin order.
+    pinned: Vec<u32>,
 }
 
 type Slot<T> = Arc<Mutex<Option<Result<Vec<T>, String>>>>;
@@ -225,6 +233,8 @@ enum RowKind {
     /// Index into `Derived::remotes`.
     Remote(u32),
     Branch(u32),
+    /// A branch of the PINNED section (index into `refs.branches`).
+    PinnedBranch(u32),
     RemoteBranch(u32),
     Tag(u32),
     Stash(u32),
@@ -250,8 +260,14 @@ impl Row {
     }
 }
 
-fn derive(refs: &Arc<Refs>, needle: &str, tag_order: &[u32]) -> Derived {
+fn derive(refs: &Arc<Refs>, needle: &str, tag_order: &[u32], pinned_names: &[String]) -> Derived {
     use model::{build_tree, matches};
+    let pinned = pinned_names
+        .iter()
+        .filter(|n| matches(n, needle))
+        .filter_map(|n| refs.branches.iter().position(|b| &b.name == n))
+        .map(|i| i as u32)
+        .collect();
     let branches: Vec<(u32, &str)> = refs
         .branches
         .iter()
@@ -309,6 +325,8 @@ fn derive(refs: &Arc<Refs>, needle: &str, tag_order: &[u32]) -> Derived {
         remotes,
         tags,
         stashes,
+        pinned_names: pinned_names.to_vec(),
+        pinned,
     }
 }
 
@@ -387,6 +405,10 @@ fn build_rows(st: &SidebarState, collapsed: &BTreeSet<String>) -> Vec<Row> {
     let needle = d.needle.as_str();
     let mut out = Vec::new();
     for s in Section::ALL {
+        if s == Section::Pinned && d.pinned.is_empty() {
+            // Appears with the first pinned branch.
+            continue;
+        }
         let open = !collapsed.contains(s.key());
         out.push(Row {
             depth: 0,
@@ -402,6 +424,11 @@ fn build_rows(st: &SidebarState, collapsed: &BTreeSet<String>) -> Vec<Row> {
                     out.push(Row::new(1, RowKind::Workspace(v)));
                 }
             }
+            Section::Pinned => out.extend(
+                d.pinned
+                    .iter()
+                    .map(|&i| Row::new(1, RowKind::PinnedBranch(i))),
+            ),
             Section::Branches => flatten(
                 &d.branches,
                 1,
@@ -509,6 +536,11 @@ enum Cmd {
         src: String,
         dst: String,
     },
+    /// Pins or unpins a local branch.
+    Pin(String),
+    /// Adds a branch (local, or `remote/branch`) to the history filter or removes it.
+    Filter(String),
+    UnpinAll,
 }
 
 fn dialog(d: Dialog) -> Cmd {
@@ -652,6 +684,23 @@ fn apply(cmd: Cmd, ui: &Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Sha
         }
         Cmd::ShowStash(id) => crate::views::stash_view::open(tab, &id),
         Cmd::DropBranch { src, dst } => st.modal = Some(SidebarModal::DropBranch { src, dst }),
+        Cmd::Pin(name) => {
+            let pins = &mut tab.state.pinned_branches;
+            if pins.contains(&name) {
+                pins.retain(|p| *p != name);
+            } else {
+                pins.push(name);
+            }
+            // Rows rebuild from the new pins.
+            st.derived = None;
+            ui.ctx().request_repaint();
+        }
+        Cmd::Filter(name) => crate::views::history::toggle_branch_filter(tab, &name),
+        Cmd::UnpinAll => {
+            tab.state.pinned_branches.clear();
+            st.derived = None;
+            ui.ctx().request_repaint();
+        }
     }
 }
 
@@ -670,6 +719,123 @@ struct Cx<'a> {
     strong: Color32,
     /// Shift+F10 was pressed: open the selected row's menu this frame.
     kb_menu: bool,
+    /// Branches in the history filter (`Scope::Revs`); empty when it shows all / current.
+    filter: Vec<String>,
+    /// `RepoState::pinned_branches`.
+    pins: &'a [String],
+}
+
+/// Width kept free at the right of a branch row for its pin / filter buttons.
+const REF_BUTTONS_W: f32 = 40.0;
+
+impl Cx<'_> {
+    fn filtered(&self, name: &str) -> bool {
+        self.filter.iter().any(|f| f == name)
+    }
+
+    fn pinned(&self, name: &str) -> bool {
+        self.pins.iter().any(|p| p == name)
+    }
+}
+
+/// The pin (local branches only) and history-filter buttons at the right of a branch row.
+/// An active button always shows; inactive ones only while the pointer is over the row.
+/// Returns (pin clicked, filter clicked).
+fn ref_buttons(
+    ui: &mut Ui,
+    cx: &Cx,
+    rect: Rect,
+    key: &str,
+    pinned: Option<bool>,
+    filtered: bool,
+    selected: bool,
+) -> (bool, bool) {
+    let over_row = ui.rect_contains_pointer(rect);
+    let size = vec2(18.0, rect.height());
+    let filter_rect = Rect::from_min_size(pos2(rect.right() - 2.0 - size.x, rect.top()), size);
+    let pin_rect = filter_rect.translate(vec2(-size.x - 2.0, 0.0));
+    let mut clicked = (false, false);
+    let buttons = [
+        pinned.map(|on| (pin_rect, on, "pin")),
+        Some((filter_rect, filtered, "filter")),
+    ];
+    for (rect, on, kind) in buttons.into_iter().flatten() {
+        if !on && !over_row {
+            continue;
+        }
+        let r = ui.interact(
+            rect,
+            ui.id().with(("ref-button", kind, key)),
+            Sense::click(),
+        );
+        let color = if r.hovered() {
+            if selected {
+                cx.pal.on_accent
+            } else {
+                cx.strong
+            }
+        } else if on {
+            if selected {
+                cx.pal.on_accent
+            } else {
+                cx.pal.accent
+            }
+        } else {
+            cx.pal.muted
+        };
+        if r.hovered() {
+            ui.painter().rect_filled(
+                rect.shrink2(vec2(0.0, 1.0)),
+                2.0,
+                ui.visuals().widgets.hovered.weak_bg_fill,
+            );
+        }
+        let p = ui.painter_at(rect);
+        let c = rect.center();
+        let stroke = Stroke::new(1.2, color);
+        if kind == "pin" {
+            // Push pin, upright: cap, body, collar, needle.
+            let body = Rect::from_min_max(c + vec2(-2.0, -4.5), c + vec2(2.0, 0.5));
+            p.line_segment([c + vec2(-3.5, -5.0), c + vec2(3.5, -5.0)], stroke);
+            if on {
+                p.rect_filled(body, 0.0, color);
+            } else {
+                p.rect_stroke(body, 0.0, stroke, egui::StrokeKind::Inside);
+            }
+            p.line_segment([c + vec2(-4.5, 0.5), c + vec2(4.5, 0.5)], stroke);
+            p.line_segment([c + vec2(0.0, 0.5), c + vec2(0.0, 5.5)], stroke);
+        } else {
+            // Funnel.
+            let cup = vec![
+                c + vec2(-5.0, -4.5),
+                c + vec2(5.0, -4.5),
+                c + vec2(1.2, 0.5),
+                c + vec2(-1.2, 0.5),
+            ];
+            let stem = Rect::from_min_max(c + vec2(-1.2, 0.5), c + vec2(1.2, 5.0));
+            if on {
+                p.add(egui::Shape::convex_polygon(cup, color, Stroke::NONE));
+                p.rect_filled(stem, 0.0, color);
+            } else {
+                p.add(egui::Shape::closed_line(cup, stroke));
+                p.line_segment([stem.center_top(), stem.center_bottom()], stroke);
+            }
+        }
+        let tip = match (kind, on) {
+            ("pin", true) => "Unpin",
+            ("pin", false) => "Pin to the top of the sidebar",
+            (_, true) => "Remove from the history filter",
+            (_, false) => "Show in the history filter (All branches ▾)",
+        };
+        if r.on_hover_text(tip).clicked() {
+            if kind == "pin" {
+                clicked.0 = true;
+            } else {
+                clicked.1 = true;
+            }
+        }
+    }
+    clicked
 }
 
 impl Cx<'_> {
@@ -755,6 +921,8 @@ struct Look<'a> {
     bold: bool,
     badges: Vec<(String, Color32)>,
     selected: bool,
+    /// Space left free at the right edge (row buttons).
+    reserve: f32,
 }
 
 fn paint_row(ui: &Ui, cx: &Cx, rect: Rect, depth: u8, hovered: bool, mut look: Look) {
@@ -790,7 +958,7 @@ fn paint_row(ui: &Ui, cx: &Cx, rect: Rect, depth: u8, hovered: bool, mut look: L
         x += ICON_W;
     }
     // Badges from the right.
-    let mut right = rect.right() - 4.0;
+    let mut right = rect.right() - 4.0 - look.reserve;
     for (b, color) in look.badges.iter().rev() {
         let g = p.layout_no_wrap(b.clone(), cx.small.clone(), *color);
         let w = g.size().x;
@@ -834,11 +1002,13 @@ fn row_ui(ui: &mut Ui, cx: &Cx, row: &Row, h: f32, cmds: &mut Vec<Cmd>) {
         bold: false,
         badges: Vec::new(),
         selected: false,
+        reserve: 0.0,
     };
     match &row.kind {
         RowKind::Header(s) => {
             let count = match s {
                 Section::Workspace => None,
+                Section::Pinned => Some(cx.d.pinned.len()),
                 Section::Branches => Some(cx.d.branch_count),
                 Section::Remotes => Some(cx.d.remotes.len()),
                 Section::Tags => Some(cx.d.tags.len()),
@@ -1028,9 +1198,17 @@ fn row_ui(ui: &mut Ui, cx: &Cx, row: &Row, h: f32, cmds: &mut Vec<Cmd>) {
                 }
             });
         }
-        RowKind::Branch(i) => {
+        RowKind::Branch(i) | RowKind::PinnedBranch(i) => {
+            let in_pins = matches!(row.kind, RowKind::PinnedBranch(_));
             let b = &refs.branches[*i as usize];
-            let key = format!("b:{}", b.name);
+            // Pinned rows select separately, so one branch never highlights twice.
+            let key = if in_pins {
+                format!("pb:{}", b.name)
+            } else {
+                format!("b:{}", b.name)
+            };
+            let pinned = cx.pinned(&b.name);
+            let filtered = cx.filtered(&b.name);
             let mut badges = Vec::new();
             if b.upstream_gone {
                 badges.push(("gone".to_string(), pal.removed_fg));
@@ -1042,23 +1220,40 @@ fn row_ui(ui: &mut Ui, cx: &Cx, row: &Row, h: f32, cmds: &mut Vec<Cmd>) {
                     badges.push((format!("↓{}", b.behind), pal.modified));
                 }
             }
+            // The row stays highlighted while the pointer is on one of its buttons.
+            let over_row = hovered || ui.rect_contains_pointer(rect);
             paint_row(
                 ui,
                 cx,
                 rect,
                 row.depth,
-                hovered,
+                over_row,
                 Look {
                     marker: b.is_head.then_some(pal.head),
                     icon: Some(("⑂", if b.is_head { pal.head } else { pal.branch })),
-                    text: model::leaf_name(&b.name),
+                    // Pinned rows have no folders around them: full name.
+                    text: if in_pins {
+                        &b.name
+                    } else {
+                        model::leaf_name(&b.name)
+                    },
                     color: if b.is_head { cx.strong } else { cx.text },
                     bold: b.is_head,
                     badges,
                     selected: sel(&key),
+                    reserve: REF_BUTTONS_W,
                     ..base
                 },
             );
+            let (pin_clicked, filter_clicked) =
+                ref_buttons(ui, cx, rect, &key, Some(pinned), filtered, sel(&key));
+            if pin_clicked {
+                cmds.push(Cmd::Pin(b.name.clone()));
+            }
+            if filter_clicked {
+                cmds.push(Cmd::Filter(b.name.clone()));
+            }
+            let on_button = pin_clicked || filter_clicked;
             let resp = if hovered {
                 let up = match &b.upstream {
                     Some(u) if b.upstream_gone => format!("\nupstream: {u} (gone)"),
@@ -1093,47 +1288,75 @@ fn row_ui(ui: &mut Ui, cx: &Cx, row: &Row, h: f32, cmds: &mut Vec<Cmd>) {
                     dst: b.name.clone(),
                 });
             }
-            if resp.clicked() {
+            if resp.clicked() && !on_button {
                 cmds.push(Cmd::Select(key.clone()));
                 cmds.push(Cmd::Jump(b.target.clone()));
             }
-            if resp.double_clicked() {
+            if resp.double_clicked() && !on_button {
                 cmds.push(Cmd::Checkout(b.name.clone()));
             }
             cx.menus(&resp, &key, rect, cmds, |ui, cmds| {
-                branch_menu(ui, b, snap, cmds)
+                branch_menu(ui, b, snap, cmds);
+                ui.separator();
+                let pin = if pinned { "Unpin" } else { "Pin to top" };
+                if menu_item(ui, true, pin) {
+                    cmds.push(Cmd::Pin(b.name.clone()));
+                }
+                let filter = if filtered {
+                    "Remove from history filter"
+                } else {
+                    "Add to history filter"
+                };
+                if menu_item(ui, true, filter) {
+                    cmds.push(Cmd::Filter(b.name.clone()));
+                }
             });
         }
         RowKind::RemoteBranch(i) => {
             let rb = &refs.remote_branches[*i as usize];
             let full = rb.full();
             let key = format!("rb:{full}");
+            let filtered = cx.filtered(&full);
             paint_row(
                 ui,
                 cx,
                 rect,
                 row.depth,
-                hovered,
+                hovered || ui.rect_contains_pointer(rect),
                 Look {
                     icon: Some(("⑂", pal.remote)),
                     text: model::leaf_name(&rb.name),
                     selected: sel(&key),
+                    reserve: REF_BUTTONS_W,
                     ..base
                 },
             );
+            let (_, filter_clicked) = ref_buttons(ui, cx, rect, &key, None, filtered, sel(&key));
+            if filter_clicked {
+                cmds.push(Cmd::Filter(full.clone()));
+            }
             let resp = if hovered {
                 resp.on_hover_text(format!("{full}\n{}", crate::util::short_id(&rb.target)))
             } else {
                 resp
             };
-            if resp.clicked() {
+            if resp.clicked() && !filter_clicked {
                 cmds.push(Cmd::Select(key.clone()));
                 cmds.push(Cmd::Jump(rb.target.clone()));
             }
-            if resp.double_clicked() {
+            if resp.double_clicked() && !filter_clicked {
                 cmds.push(dialog(Dialog::checkout_remote(full.clone())));
             }
             cx.menus(&resp, &key, rect, cmds, |ui, cmds| {
+                let filter = if filtered {
+                    "Remove from history filter"
+                } else {
+                    "Add to history filter"
+                };
+                if menu_item(ui, true, filter) {
+                    cmds.push(Cmd::Filter(full.clone()));
+                }
+                ui.separator();
                 if keys::menu_item(ui, true, "Checkout as tracking branch…", keys::CHECKOUT_KEY) {
                     cmds.push(dialog(Dialog::checkout_remote(full.clone())));
                 }
@@ -1435,6 +1658,11 @@ fn row_ui(ui: &mut Ui, cx: &Cx, row: &Row, h: f32, cmds: &mut Vec<Cmd>) {
 
 fn header_menu(ui: &mut Ui, s: Section, snap: &Snapshot, cmds: &mut Vec<Cmd>) {
     match s {
+        Section::Pinned => {
+            if menu_item(ui, true, "Unpin all") {
+                cmds.push(Cmd::UnpinAll);
+            }
+        }
         Section::Branches => {
             if menu_item(ui, true, "New branch…") {
                 cmds.push(dialog(Dialog::branch(snap, None)));
@@ -1539,7 +1767,7 @@ fn key_cmds(
     let (kind, name) = sel.split_once(':').unwrap_or(("", sel));
     let name = name.to_string();
     match kind {
-        "b" => {
+        "b" | "pb" => {
             let is_head = refs.branch(&name).is_some_and(|b| b.is_head);
             if k.enter && !is_head {
                 cmds.push(Cmd::Checkout(name.clone()));
@@ -1831,6 +2059,8 @@ fn rows_ui(
         text: ui.visuals().text_color(),
         strong: ui.visuals().strong_text_color(),
         kb_menu,
+        filter: crate::views::history::filtered_branches(&tab.session.options().scope).to_vec(),
+        pins: &tab.state.pinned_branches,
     };
     let rows = &st.rows[range];
 
@@ -1862,15 +2092,15 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
         }
     }
 
-    // Derived trees: rebuilt when refs or the filter change.
+    // Derived trees: rebuilt when refs, the filter or the pins change.
     let refs = &snap.refs;
     let needle = tab.sidebar.filter.trim().to_lowercase();
     {
+        let pins = &tab.state.pinned_branches;
         let st = &mut tab.sidebar;
-        let stale = st
-            .derived
-            .as_ref()
-            .is_none_or(|d| !Arc::ptr_eq(&d.refs, refs) || d.needle != needle);
+        let stale = st.derived.as_ref().is_none_or(|d| {
+            !Arc::ptr_eq(&d.refs, refs) || d.needle != needle || d.pinned_names != *pins
+        });
         if stale {
             let order = match &st.tag_order {
                 Some((r, o)) if Arc::ptr_eq(r, refs) => o.clone(),
@@ -1885,7 +2115,7 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
                     o
                 }
             };
-            st.derived = Some(derive(refs, &needle, &order));
+            st.derived = Some(derive(refs, &needle, &order, pins));
             st.rows_valid = false;
         }
     }

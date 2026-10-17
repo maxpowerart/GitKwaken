@@ -55,6 +55,8 @@ pub struct Updater {
     state: Arc<Mutex<State>>,
     staged: Staged,
     url: Option<String>,
+    /// The "update available" dialog (changelog, install or not) is open.
+    asking: Mutex<bool>,
 }
 
 impl Updater {
@@ -69,6 +71,7 @@ impl Updater {
             state: Arc::new(Mutex::new(State::Idle)),
             staged,
             url,
+            asking: Mutex::new(false),
         };
         // Local builds have no built-in channel; release builds get it at build time.
         let enabled =
@@ -180,11 +183,10 @@ impl Updater {
         match action {
             UpdateAction::Check => self.check_now(ctx),
             UpdateAction::Install => {
-                let rel = match &*self.state.lock() {
-                    State::Available(rel) => rel.clone(),
-                    _ => return,
-                };
-                self.install(rel, ctx);
+                if matches!(*self.state.lock(), State::Available(_)) {
+                    *self.asking.lock() = true;
+                    ctx.request_repaint();
+                }
             }
             UpdateAction::Restart => {
                 if matches!(*self.state.lock(), State::Ready(_)) {
@@ -192,6 +194,95 @@ impl Updater {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             }
+        }
+    }
+
+    /// The "update available" dialog: version, changelog, and Install / Not now. "Not now"
+    /// (also Escape or a click outside) only closes it; the update button stays. Enter installs.
+    pub fn dialog(&self, ctx: &egui::Context) {
+        if !*self.asking.lock() {
+            return;
+        }
+        let rel = match &*self.state.lock() {
+            State::Available(rel) => rel.clone(),
+            _ => {
+                *self.asking.lock() = false;
+                return;
+            }
+        };
+        let how = match gk_update::method(&rel) {
+            Ok(gk_update::Method::Pacman(_)) => {
+                "The package is installed with pacman; the system asks for the administrator \
+                 password. Restart GitKwaken afterwards."
+            }
+            Ok(_) => {
+                "The download runs in the background; the update installs when GitKwaken \
+                      restarts."
+            }
+            Err(_) => "",
+        };
+        // Taken before anything else reads the keyboard this frame.
+        let (mut install, mut close) = ctx.input_mut(|i| {
+            (
+                i.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+                i.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
+            )
+        });
+        let modal = egui::Modal::new(egui::Id::new("update-available")).show(ctx, |ui| {
+            ui.set_width(520.0);
+            ui.heading(format!("GitKwaken {} is available", rel.version));
+            let published = rel
+                .published
+                .as_deref()
+                .map(|d| format!("Released {d}. "))
+                .unwrap_or_default();
+            ui.label(
+                egui::RichText::new(format!(
+                    "{published}You have {}.",
+                    env!("CARGO_PKG_VERSION")
+                ))
+                .weak(),
+            );
+            ui.add_space(6.0);
+            ui.label(egui::RichText::new("What's new").strong());
+            egui::Frame::new()
+                .fill(ui.visuals().extreme_bg_color)
+                .corner_radius(4.0)
+                .inner_margin(8.0)
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height(320.0)
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| changelog_ui(ui, &rel.notes));
+                });
+            if !how.is_empty() {
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new(how).weak());
+            }
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Not now").clicked() {
+                        close = true;
+                    }
+                    let b = egui::Button::new(
+                        egui::RichText::new("Install update").color(egui::Color32::WHITE),
+                    )
+                    .fill(ui.visuals().selection.bg_fill);
+                    if ui.add(b).clicked() {
+                        install = true;
+                    }
+                });
+            });
+        });
+        if modal.should_close() {
+            close = true;
+        }
+        if install {
+            *self.asking.lock() = false;
+            self.install(rel, ctx);
+        } else if close {
+            *self.asking.lock() = false;
         }
     }
 
@@ -216,13 +307,9 @@ impl Updater {
             State::Available(rel) => {
                 let b = ui
                     .button(format!("⬆ Update to {}", rel.version))
-                    .on_hover_text(if rel.notes.is_empty() {
-                        "A new version is available".to_string()
-                    } else {
-                        rel.notes.clone()
-                    });
+                    .on_hover_text("See what's new and install");
                 if b.clicked() {
-                    self.install(rel, ui.ctx());
+                    *self.asking.lock() = true;
                 }
             }
             State::Installing => {
@@ -251,6 +338,80 @@ impl Updater {
             State::Failed(e) => {
                 ui.label("Update failed").on_hover_text(e);
             }
+        }
+    }
+}
+
+/// Release notes as written in CHANGELOG.md: `#` headings bold, `-` / `*` items as bullets,
+/// links clickable; anything else as plain text.
+fn changelog_ui(ui: &mut egui::Ui, notes: &str) {
+    let notes = notes.trim();
+    if notes.is_empty() {
+        ui.label(egui::RichText::new("No release notes.").weak());
+        return;
+    }
+    ui.spacing_mut().item_spacing.y = 3.0;
+    // Indented lines that are not list items continue the previous line (wrapped source).
+    let mut lines: Vec<String> = Vec::new();
+    for line in notes.lines() {
+        let t = line.trim_end();
+        let rest = t.trim_start();
+        let continues = t.len() != rest.len()
+            && !rest.is_empty()
+            && !rest.starts_with("- ")
+            && !rest.starts_with("* ");
+        match lines.last_mut() {
+            Some(prev) if continues && !prev.trim().is_empty() => {
+                prev.push(' ');
+                prev.push_str(rest);
+            }
+            _ => lines.push(t.to_string()),
+        }
+    }
+    for t in &lines {
+        let t = t.as_str();
+        if t.trim().is_empty() {
+            ui.add_space(4.0);
+        } else if let Some(h) = t.strip_prefix('#') {
+            ui.add_space(2.0);
+            ui.label(egui::RichText::new(h.trim_start_matches('#').trim()).strong());
+        } else if let Some(item) = t
+            .trim_start()
+            .strip_prefix("- ")
+            .or_else(|| t.trim_start().strip_prefix("* "))
+        {
+            let indent = (t.len() - t.trim_start().len()) as f32 * 4.0;
+            ui.horizontal_wrapped(|ui| {
+                ui.add_space(indent);
+                ui.label("•");
+                rich_line(ui, item);
+            });
+        } else {
+            ui.horizontal_wrapped(|ui| rich_line(ui, t));
+        }
+    }
+}
+
+/// One changelog line: `**bold**` markers dropped, http(s) links as hyperlinks.
+fn rich_line(ui: &mut egui::Ui, text: &str) {
+    let text = text.replace("**", "").replace('`', "");
+    if !text.contains("http") {
+        ui.label(text);
+        return;
+    }
+    ui.spacing_mut().item_spacing.x = 0.0;
+    let mut first = true;
+    for word in text.split(' ') {
+        if !first {
+            ui.label(" ");
+        }
+        first = false;
+        let url = word.trim_end_matches(['.', ',', ')', ';']);
+        if url.starts_with("https://") || url.starts_with("http://") {
+            ui.hyperlink(url);
+            ui.label(&word[url.len()..]);
+        } else {
+            ui.label(word);
         }
     }
 }

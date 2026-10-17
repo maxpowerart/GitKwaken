@@ -18,6 +18,130 @@ pub struct MenuOut {
     pub update: Option<crate::update::UpdateAction>,
 }
 
+/// A top-level menu; its button is collected for [`switch_on_hover`].
+fn top<R>(
+    ui: &mut Ui,
+    bar: &mut Vec<egui::Response>,
+    label: &str,
+    content: impl FnOnce(&mut Ui) -> R,
+) {
+    bar.push(ui.menu_button(label, content).response);
+}
+
+/// Windows-style menu bar: while one menu is open, pointing at another
+/// top-level button opens that one instead (egui only switches on click).
+fn switch_on_hover(ctx: &egui::Context, bar: &[egui::Response]) {
+    use egui::containers::Popup;
+    let ids: Vec<egui::Id> = bar.iter().map(Popup::default_response_id).collect();
+    if !ids.iter().any(|&id| Popup::is_id_open(ctx, id)) {
+        return;
+    }
+    if let Some((_, &id)) = bar
+        .iter()
+        .zip(&ids)
+        .find(|(r, id)| r.contains_pointer() && !Popup::is_id_open(ctx, **id))
+    {
+        Popup::open_id(ctx, id);
+        ctx.request_repaint();
+    }
+}
+
+/// Width of one caption button (minimize, maximize, close), as on Windows 11.
+const CAPTION_W: f32 = 46.0;
+
+/// Caption of a window without system decorations: the free part of the menu
+/// bar drags the window (double click maximizes / restores), then minimize,
+/// maximize / restore and close on the right, flush with the window corner.
+fn caption(ui: &mut Ui) {
+    use egui::{Sense, Stroke, ViewportCommand, pos2, vec2};
+    let ctx = ui.ctx().clone();
+    let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+    let row = ui.max_rect();
+    // The panel's top / right margin belongs to the caption too.
+    let top = row.top() - 2.0;
+    let right = row.right() + 6.0;
+    let buttons_left = right - 3.0 * CAPTION_W;
+    let drag = egui::Rect::from_min_max(
+        pos2(ui.cursor().left() + 8.0, top),
+        pos2(buttons_left, row.bottom()),
+    );
+    if drag.width() > 0.0 {
+        let r = ui.interact(drag, ui.id().with("caption-drag"), Sense::click_and_drag());
+        if r.double_clicked() {
+            ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized));
+        } else if r.drag_started_by(egui::PointerButton::Primary) {
+            ctx.send_viewport_cmd(ViewportCommand::StartDrag);
+        }
+    }
+    let painter = ui.painter().with_clip_rect(ctx.content_rect());
+    let text = ui.visuals().text_color();
+    for (i, kind) in ["min", "max", "close"].into_iter().enumerate() {
+        let rect = egui::Rect::from_min_max(
+            pos2(buttons_left + i as f32 * CAPTION_W, top),
+            pos2(buttons_left + (i + 1) as f32 * CAPTION_W, row.bottom()),
+        );
+        let r = ui.interact(rect, ui.id().with(("caption", kind)), Sense::click());
+        let close = kind == "close";
+        let (fill, fg) = match (r.hovered(), r.is_pointer_button_down_on(), close) {
+            (true, _, true) => (
+                egui::Color32::from_rgb(0xC4, 0x2B, 0x1C),
+                egui::Color32::WHITE,
+            ),
+            (true, true, false) => (ui.visuals().widgets.active.weak_bg_fill, text),
+            (true, false, false) => (ui.visuals().widgets.hovered.weak_bg_fill, text),
+            _ => (egui::Color32::TRANSPARENT, text),
+        };
+        painter.rect_filled(rect, 0.0, fill);
+        let c = rect.center();
+        let s = Stroke::new(1.0, fg);
+        let h = 5.0;
+        match kind {
+            "min" => {
+                painter.line_segment([pos2(c.x - h, c.y), pos2(c.x + h, c.y)], s);
+            }
+            "max" if maximized => {
+                let front = egui::Rect::from_center_size(c + vec2(-1.0, 1.0), vec2(8.0, 8.0));
+                painter.rect_stroke(front, 0.0, s, egui::StrokeKind::Inside);
+                painter.line_segment(
+                    [
+                        pos2(front.left() + 2.0, front.top() - 2.0),
+                        pos2(front.right() + 2.0, front.top() - 2.0),
+                    ],
+                    s,
+                );
+                painter.line_segment(
+                    [
+                        pos2(front.right() + 2.0, front.top() - 2.0),
+                        pos2(front.right() + 2.0, front.bottom() - 2.0),
+                    ],
+                    s,
+                );
+            }
+            "max" => {
+                let sq = egui::Rect::from_center_size(c, vec2(10.0, 10.0));
+                painter.rect_stroke(sq, 0.0, s, egui::StrokeKind::Inside);
+            }
+            _ => {
+                painter.line_segment([pos2(c.x - h, c.y - h), pos2(c.x + h, c.y + h)], s);
+                painter.line_segment([pos2(c.x - h, c.y + h), pos2(c.x + h, c.y - h)], s);
+            }
+        }
+        let tip = match kind {
+            "min" => "Minimize",
+            "max" if maximized => "Restore",
+            "max" => "Maximize",
+            _ => "Close",
+        };
+        if r.on_hover_text(tip).clicked() {
+            ctx.send_viewport_cmd(match kind {
+                "min" => ViewportCommand::Minimized(true),
+                "max" => ViewportCommand::Maximized(!maximized),
+                _ => ViewportCommand::Close,
+            });
+        }
+    }
+}
+
 /// One menu entry with its shortcut; closes the menu when clicked.
 fn item(ui: &mut Ui, label: &str, shortcut: String, enabled: bool) -> bool {
     let mut b = egui::Button::new(label);
@@ -43,6 +167,8 @@ pub struct MenuCtx<'a> {
     pub tabs: usize,
     /// Help-menu update entry (label, enabled, action): one fixed slot.
     pub update: (String, bool, crate::update::UpdateAction),
+    /// The window has no system title bar: the menu bar is the caption.
+    pub caption: bool,
 }
 
 pub fn show(ui: &mut Ui, mc: MenuCtx, shared: &mut Shared) -> MenuOut {
@@ -52,7 +178,9 @@ pub fn show(ui: &mut Ui, mc: MenuCtx, shared: &mut Shared) -> MenuOut {
         active,
         tabs,
         update,
+        caption: with_caption,
     } = mc;
+    let mut bar = Vec::new();
     let k = |a: Act| km.text(a);
     let none = String::new;
     let repo = tab.is_some();
@@ -62,7 +190,7 @@ pub fn show(ui: &mut Ui, mc: MenuCtx, shared: &mut Shared) -> MenuOut {
     let current = tab.as_ref().map(|t| t.path.clone());
 
     egui::MenuBar::new().ui(ui, |ui| {
-        ui.menu_button("File", |ui| {
+        top(ui, &mut bar, "File", |ui| {
             if item(ui, "New tab / Open repository…", k(Act::OpenRepo), true) {
                 set(Cmd::App(|| Action::OpenRepoDialog));
             }
@@ -94,7 +222,7 @@ pub fn show(ui: &mut Ui, mc: MenuCtx, shared: &mut Shared) -> MenuOut {
             }
         });
 
-        ui.menu_button("Edit", |ui| {
+        top(ui, &mut bar, "Edit", |ui| {
             if item(ui, "Undo last operation…", none(), repo) {
                 set(Cmd::Dialog(|_| Dialog::undo()));
             }
@@ -117,7 +245,7 @@ pub fn show(ui: &mut Ui, mc: MenuCtx, shared: &mut Shared) -> MenuOut {
             }
         });
 
-        ui.menu_button("View", |ui| {
+        top(ui, &mut bar, "View", |ui| {
             let view = tab.as_ref().map(|t| t.view);
             for (label, v, act) in [
                 ("File Status", View::FileStatus, Some(Act::ViewStatus)),
@@ -159,7 +287,7 @@ pub fn show(ui: &mut Ui, mc: MenuCtx, shared: &mut Shared) -> MenuOut {
             }
         });
 
-        ui.menu_button("Repository", |ui| {
+        top(ui, &mut bar, "Repository", |ui| {
             ui.add_enabled_ui(repo, |ui| {
                 if item(ui, "Fetch…", k(Act::Fetch), true) {
                     set(Cmd::Dialog(Dialog::fetch));
@@ -236,7 +364,7 @@ pub fn show(ui: &mut Ui, mc: MenuCtx, shared: &mut Shared) -> MenuOut {
             });
         });
 
-        ui.menu_button("Actions", |ui| {
+        top(ui, &mut bar, "Actions", |ui| {
             ui.add_enabled_ui(repo, |ui| {
                 if item(ui, "Commit…", k(Act::Commit), true) {
                     set(Cmd::Commit);
@@ -303,7 +431,7 @@ pub fn show(ui: &mut Ui, mc: MenuCtx, shared: &mut Shared) -> MenuOut {
             });
         });
 
-        ui.menu_button("Tools", |ui| {
+        top(ui, &mut bar, "Tools", |ui| {
             if item(ui, "Options…", k(Act::Settings), true) {
                 set(Cmd::Global(GlobalDialog::settings));
             }
@@ -322,7 +450,7 @@ pub fn show(ui: &mut Ui, mc: MenuCtx, shared: &mut Shared) -> MenuOut {
             }
         });
 
-        ui.menu_button("Help", |ui| {
+        top(ui, &mut bar, "Help", |ui| {
             if item(ui, "Command palette…", k(Act::Palette), true) {
                 out.toggle_palette = true;
             }
@@ -335,7 +463,11 @@ pub fn show(ui: &mut Ui, mc: MenuCtx, shared: &mut Shared) -> MenuOut {
                 set(Cmd::Global(GlobalDialog::about));
             }
         });
+        if with_caption {
+            caption(ui);
+        }
     });
+    switch_on_hover(ui.ctx(), &bar);
 
     if let Some(c) = cmd {
         let snap = tab.as_ref().map(|t| t.session.snapshot());

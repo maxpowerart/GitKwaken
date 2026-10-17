@@ -40,6 +40,11 @@ pub struct Options {
     /// Wayland app id / X11 `WM_CLASS` (Linux: must match the `.desktop` file name so the
     /// desktop shows the right icon). Unused on Windows.
     pub app_id: Option<String>,
+    /// Windows: no system title bar. The app draws its own caption (drag area via
+    /// `ViewportCommand::StartDrag`, minimize / maximize / close buttons); the host
+    /// keeps the drop shadow and resizes from the window edges. Ignored elsewhere.
+    /// [`custom_frame`] tells the app whether it is in effect.
+    pub custom_frame: bool,
 }
 
 impl Default for Options {
@@ -53,8 +58,17 @@ impl Default for Options {
             maximized: false,
             position: None,
             app_id: None,
+            custom_frame: false,
         }
     }
+}
+
+static CUSTOM_FRAME: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the window runs without a system title bar ([`Options::custom_frame`] on Windows):
+/// the app must then draw the caption itself.
+pub fn custom_frame() -> bool {
+    CUSTOM_FRAME.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Restored (non-maximized) window placement at close time, logical points.
