@@ -14,16 +14,27 @@ pub fn run(options: Options, make_app: MakeApp<'_>) -> Result<()> {
         viewport = viewport.with_position(pos);
     }
     if let Some((rgba, width, height)) = options.icon_rgba.clone() {
-        viewport = viewport.with_icon(egui::IconData { rgba, width, height });
+        viewport = viewport.with_icon(egui::IconData {
+            rgba,
+            width,
+            height,
+        });
     }
-    let mut native = eframe::NativeOptions { viewport, ..Default::default() };
+    let mut native = eframe::NativeOptions {
+        viewport,
+        ..Default::default()
+    };
     native.wgpu_options.surface.present_mode = if options.vsync {
         eframe::wgpu::PresentMode::AutoVsync
     } else {
         eframe::wgpu::PresentMode::AutoNoVsync
     };
 
-    let normal = WindowGeometry { position: options.position, size: options.size, maximized: false };
+    let normal = WindowGeometry {
+        position: options.position,
+        size: options.size,
+        maximized: false,
+    };
     eframe::run_native(
         &options.title,
         native,
@@ -36,7 +47,11 @@ pub fn run(options: Options, make_app: MakeApp<'_>) -> Result<()> {
                 None => "eframe".to_owned(),
             };
             crate::set_backend_info(info);
-            Ok(Box::new(Adapter { app: make_app(&cc.egui_ctx), normal, closed: false }))
+            Ok(Box::new(Adapter {
+                app: make_app(&cc.egui_ctx),
+                normal,
+                closed: false,
+            }))
         }),
     )
     .map_err(|e| anyhow!("eframe: {e}"))
@@ -72,7 +87,10 @@ impl eframe::App for Adapter {
         }
         if close && !self.closed {
             self.closed = true;
-            self.app.on_close(WindowGeometry { maximized, ..self.normal });
+            self.app.on_close(WindowGeometry {
+                maximized,
+                ..self.normal
+            });
         }
     }
 

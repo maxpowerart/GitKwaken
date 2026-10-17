@@ -90,7 +90,12 @@ pub struct Git {
 
 impl Git {
     pub fn new(cwd: impl Into<PathBuf>, log: CommandLog) -> Self {
-        Self { exe: find_git(), cwd: cwd.into(), env: Vec::new(), log }
+        Self {
+            exe: find_git(),
+            cwd: cwd.into(),
+            env: Vec::new(),
+            log,
+        }
     }
 
     pub fn exe(&self) -> &Path {
@@ -150,9 +155,13 @@ impl Git {
     pub fn run_raw(&self, args: &[&str], stdin: Option<&[u8]>) -> Result<Output> {
         let started = Instant::now();
         let mut cmd = self.command(args);
-        cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        cmd.stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
         let mut child = cmd
             .spawn()
             .with_context(|| format!("failed to start git ({})", self.exe.display()))?;
@@ -167,7 +176,11 @@ impl Git {
         if let Some(w) = writer {
             let _ = w.join();
         }
-        let output = Output { code: out.status.code(), stdout: out.stdout, stderr: out.stderr };
+        let output = Output {
+            code: out.status.code(),
+            stdout: out.stdout,
+            stderr: out.stderr,
+        };
         self.log.push(&self.cwd, args, started.elapsed(), &output);
         Ok(output)
     }
@@ -198,9 +211,13 @@ impl Git {
     ) -> Result<Output> {
         let started = Instant::now();
         let mut cmd = self.command(args);
-        cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        cmd.stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
         let mut child = cmd
             .spawn()
             .with_context(|| format!("failed to start git ({})", self.exe.display()))?;
@@ -251,13 +268,21 @@ impl Git {
             let _ = r.join();
         }
         if !pending_out.is_empty() {
-            on_line(Line::Stdout(String::from_utf8_lossy(&pending_out).into_owned()));
+            on_line(Line::Stdout(
+                String::from_utf8_lossy(&pending_out).into_owned(),
+            ));
         }
         if !pending_err.is_empty() {
-            on_line(Line::Stderr(String::from_utf8_lossy(&pending_err).into_owned()));
+            on_line(Line::Stderr(
+                String::from_utf8_lossy(&pending_err).into_owned(),
+            ));
         }
         let status = child.wait()?;
-        let output = Output { code: status.code(), stdout, stderr };
+        let output = Output {
+            code: status.code(),
+            stdout,
+            stderr,
+        };
         self.log.push(&self.cwd, args, started.elapsed(), &output);
         if cancelled {
             return Err(anyhow!("cancelled"));
@@ -317,7 +342,9 @@ fn drain_lines(buf: &mut Vec<u8>, mut emit: impl FnMut(String)) {
 
 pub fn parse_version(s: &str) -> Option<(u32, u32, u32)> {
     let v = s.trim().strip_prefix("git version ")?;
-    let mut it = v.split(|c: char| !c.is_ascii_digit()).filter(|p| !p.is_empty());
+    let mut it = v
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|p| !p.is_empty());
     let major = it.next()?.parse().ok()?;
     let minor = it.next()?.parse().ok()?;
     let patch = it.next().and_then(|p| p.parse().ok()).unwrap_or(0);
@@ -387,8 +414,14 @@ mod tests {
 
     #[test]
     fn version_parsing() {
-        assert_eq!(parse_version("git version 2.45.1.windows.1"), Some((2, 45, 1)));
-        assert_eq!(parse_version("git version 2.39.3 (Apple Git-146)"), Some((2, 39, 3)));
+        assert_eq!(
+            parse_version("git version 2.45.1.windows.1"),
+            Some((2, 45, 1))
+        );
+        assert_eq!(
+            parse_version("git version 2.39.3 (Apple Git-146)"),
+            Some((2, 39, 3))
+        );
         assert_eq!(parse_version("nope"), None);
     }
 
@@ -397,7 +430,10 @@ mod tests {
         let mut buf = b"Receiving objects:  10%\rReceiving objects:  20%\rdone\npartial".to_vec();
         let mut lines = Vec::new();
         drain_lines(&mut buf, |l| lines.push(l));
-        assert_eq!(lines, ["Receiving objects:  10%", "Receiving objects:  20%", "done"]);
+        assert_eq!(
+            lines,
+            ["Receiving objects:  10%", "Receiving objects:  20%", "done"]
+        );
         assert_eq!(buf, b"partial");
     }
 

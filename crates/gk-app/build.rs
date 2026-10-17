@@ -32,7 +32,10 @@ fn main() {
         .set("InternalName", "gitkwaken")
         .set("OriginalFilename", "gitkwaken.exe")
         .set("CompanyName", "GitKwaken contributors")
-        .set("LegalCopyright", "Copyright (c) GitKwaken contributors. MIT OR Apache-2.0")
+        .set(
+            "LegalCopyright",
+            "Copyright (c) GitKwaken contributors. MIT OR Apache-2.0",
+        )
         .set("FileVersion", &version)
         .set("ProductVersion", &version)
         .set_version_info(winresource::VersionInfo::FILEVERSION, packed)
@@ -46,7 +49,9 @@ fn main() {
 /// "1.2.3-beta.1" -> 0x0001_0002_0003_0000 (major.minor.patch.0).
 fn pack_version(v: &str) -> u64 {
     let core = v.split(['-', '+']).next().unwrap_or(v);
-    let mut parts = core.split('.').map(|p| p.parse::<u64>().unwrap_or(0) & 0xFFFF);
+    let mut parts = core
+        .split('.')
+        .map(|p| p.parse::<u64>().unwrap_or(0) & 0xFFFF);
     let (ma, mi, pa) = (
         parts.next().unwrap_or(0),
         parts.next().unwrap_or(0),

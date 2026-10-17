@@ -16,7 +16,11 @@ fn default_parent(shared: &Shared) -> String {
         .first()
         .and_then(|p| p.parent())
         .map(Path::to_path_buf)
-        .or_else(|| std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(PathBuf::from))
+        .or_else(|| {
+            std::env::var_os("USERPROFILE")
+                .or_else(|| std::env::var_os("HOME"))
+                .map(PathBuf::from)
+        })
         .map(|p| p.display().to_string())
         .unwrap_or_default()
 }
@@ -48,7 +52,9 @@ pub fn check_folder_name(name: &str) -> Result<(), String> {
 }
 
 fn dir_is_empty(p: &Path) -> bool {
-    std::fs::read_dir(p).map(|mut d| d.next().is_none()).unwrap_or(false)
+    std::fs::read_dir(p)
+        .map(|mut d| d.next().is_none())
+        .unwrap_or(false)
 }
 
 // ---------------------------------------------------------------- clone
@@ -148,7 +154,13 @@ impl CloneRepo {
             }
         });
         self.error = None;
-        self.run = Some(CloneRun { cancel, lines, task, dest, created });
+        self.run = Some(CloneRun {
+            cancel,
+            lines,
+            task,
+            dest,
+            created,
+        });
     }
 }
 
@@ -163,7 +175,11 @@ impl AppDialog for CloneRepo {
                 }
                 Some(Err(e)) => {
                     let cancelled = run.cancel.is_cancelled();
-                    self.error = Some(if cancelled { "Clone cancelled.".into() } else { e });
+                    self.error = Some(if cancelled {
+                        "Clone cancelled.".into()
+                    } else {
+                        e
+                    });
                     // A cancelled or failed clone leaves a partial folder behind; git removes it
                     // itself on failure, but not when killed.
                     if cancelled && run.created && run.dest.is_dir() {
@@ -176,84 +192,119 @@ impl AppDialog for CloneRepo {
         }
         let running = self.run.is_some();
         let mut cancel_clone = false;
-        let (out, ()) = modal(ctx, "clone", "Clone repository", 600.0, "Clone", |ui, ctl| {
-            ui.add_enabled_ui(!running, |ui| {
-                egui::Grid::new("clone-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                    ui.label("Source URL / path:");
-                    let r = ui.add(
-                        egui::TextEdit::singleline(&mut self.url)
-                            .desired_width(420.0)
-                            .hint_text("https://github.com/user/repo.git"),
+        let (out, ()) = modal(
+            ctx,
+            "clone",
+            "Clone repository",
+            600.0,
+            "Clone",
+            |ui, ctl| {
+                ui.add_enabled_ui(!running, |ui| {
+                    egui::Grid::new("clone-grid")
+                        .num_columns(2)
+                        .spacing([12.0, 6.0])
+                        .show(ui, |ui| {
+                            ui.label("Source URL / path:");
+                            let r = ui.add(
+                                egui::TextEdit::singleline(&mut self.url)
+                                    .desired_width(420.0)
+                                    .hint_text("https://github.com/user/repo.git"),
+                            );
+                            ctl.focus(&r);
+                            if r.changed() && !self.name_edited {
+                                self.name = folder_from_url(&self.url);
+                            }
+                            ui.end_row();
+                            ui.label("Parent folder:");
+                            ui.vertical(|ui| {
+                                ui.set_width(420.0);
+                                folder_picker(ui, parent, "Clone into folder");
+                            });
+                            ui.end_row();
+                            ui.label("Folder name:");
+                            if ui
+                                .add(
+                                    egui::TextEdit::singleline(&mut self.name).desired_width(420.0),
+                                )
+                                .changed()
+                            {
+                                self.name_edited = !self.name.is_empty();
+                            }
+                            ui.end_row();
+                            ui.label("Branch:");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.branch)
+                                    .desired_width(200.0)
+                                    .hint_text("default"),
+                            );
+                            ui.end_row();
+                        });
+                    ui.collapsing("Advanced options", |ui| {
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut self.shallow, "Shallow clone, depth");
+                            ui.add_enabled(
+                                self.shallow,
+                                egui::DragValue::new(&mut self.depth).range(1..=100_000),
+                            );
+                        });
+                        ui.checkbox(
+                            &mut self.partial,
+                            "Partial clone (download file contents on demand: --filter=blob:none)",
+                        );
+                        ui.checkbox(&mut self.submodules, "Recurse submodules");
+                    });
+                });
+                let dest = Path::new(parent.trim()).join(self.name.trim());
+                if self.url.trim().is_empty() || self.name.trim().is_empty() {
+                    ctl.invalid();
+                } else if let Err(e) = check_folder_name(self.name.trim()) {
+                    error(ui, e);
+                    ctl.invalid();
+                } else if self.url.trim().starts_with('-') {
+                    error(ui, "The URL cannot start with '-'.");
+                    ctl.invalid();
+                } else if !Path::new(parent.trim()).is_dir() {
+                    error(ui, "The parent folder does not exist.");
+                    ctl.invalid();
+                } else if dest.exists() && !(dest.is_dir() && dir_is_empty(&dest)) && !running {
+                    error(
+                        ui,
+                        format!("{} already exists and is not empty.", dest.display()),
                     );
-                    ctl.focus(&r);
-                    if r.changed() && !self.name_edited {
-                        self.name = folder_from_url(&self.url);
-                    }
-                    ui.end_row();
-                    ui.label("Parent folder:");
-                    ui.vertical(|ui| {
-                        ui.set_width(420.0);
-                        folder_picker(ui, parent, "Clone into folder");
-                    });
-                    ui.end_row();
-                    ui.label("Folder name:");
-                    if ui.add(egui::TextEdit::singleline(&mut self.name).desired_width(420.0)).changed() {
-                        self.name_edited = !self.name.is_empty();
-                    }
-                    ui.end_row();
-                    ui.label("Branch:");
-                    ui.add(egui::TextEdit::singleline(&mut self.branch).desired_width(200.0).hint_text("default"));
-                    ui.end_row();
-                });
-                ui.collapsing("Advanced options", |ui| {
+                    ctl.invalid();
+                } else if !running {
+                    hint(ui, format!("Clone into {}", dest.display()));
+                }
+                if let Some(e) = &self.error {
+                    error(ui, e.clone());
+                }
+                if let Some(run) = &self.run {
+                    ui.separator();
                     ui.horizontal(|ui| {
-                        ui.checkbox(&mut self.shallow, "Shallow clone, depth");
-                        ui.add_enabled(self.shallow, egui::DragValue::new(&mut self.depth).range(1..=100_000));
-                    });
-                    ui.checkbox(&mut self.partial, "Partial clone (download file contents on demand: --filter=blob:none)");
-                    ui.checkbox(&mut self.submodules, "Recurse submodules");
-                });
-            });
-            let dest = Path::new(parent.trim()).join(self.name.trim());
-            if self.url.trim().is_empty() || self.name.trim().is_empty() {
-                ctl.invalid();
-            } else if let Err(e) = check_folder_name(self.name.trim()) {
-                error(ui, e);
-                ctl.invalid();
-            } else if self.url.trim().starts_with('-') {
-                error(ui, "The URL cannot start with '-'.");
-                ctl.invalid();
-            } else if !Path::new(parent.trim()).is_dir() {
-                error(ui, "The parent folder does not exist.");
-                ctl.invalid();
-            } else if dest.exists() && !(dest.is_dir() && dir_is_empty(&dest)) && !running {
-                error(ui, format!("{} already exists and is not empty.", dest.display()));
-                ctl.invalid();
-            } else if !running {
-                hint(ui, format!("Clone into {}", dest.display()));
-            }
-            if let Some(e) = &self.error {
-                error(ui, e.clone());
-            }
-            if let Some(run) = &self.run {
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label("Cloning…");
-                    if ui.button("Cancel clone").clicked() {
-                        cancel_clone = true;
-                    }
-                });
-                egui::Frame::new().fill(ui.visuals().extreme_bg_color).inner_margin(4).show(ui, |ui| {
-                    egui::ScrollArea::vertical().max_height(160.0).auto_shrink([false, true]).stick_to_bottom(true).show(ui, |ui| {
-                        for l in run.lines.lock().iter() {
-                            ui.label(RichText::new(l).monospace().small());
+                        ui.spinner();
+                        ui.label("Cloning…");
+                        if ui.button("Cancel clone").clicked() {
+                            cancel_clone = true;
                         }
                     });
-                });
-                ctl.invalid();
-            }
-        });
+                    egui::Frame::new()
+                        .fill(ui.visuals().extreme_bg_color)
+                        .inner_margin(4)
+                        .show(ui, |ui| {
+                            egui::ScrollArea::vertical()
+                                .max_height(160.0)
+                                .auto_shrink([false, true])
+                                .stick_to_bottom(true)
+                                .show(ui, |ui| {
+                                    for l in run.lines.lock().iter() {
+                                        ui.label(RichText::new(l).monospace().small());
+                                    }
+                                });
+                        });
+                    ctl.invalid();
+                }
+            },
+        );
         if cancel_clone && let Some(r) = &self.run {
             r.cancel.cancel();
         }
@@ -300,25 +351,38 @@ impl AppDialog for InitRepo {
             }
         }
         let busy = self.task.is_some();
-        let (out, ()) = modal(ctx, "init", "Create new repository", 540.0, "Create", |ui, ctl| {
-            ui.label("Folder (created if missing):");
-            folder_picker(ui, &mut self.path, "Create repository in");
-            let p = Path::new(self.path.trim());
-            if self.path.trim().is_empty() {
-                ctl.invalid();
-            } else if p.join(".git").exists() {
-                warning(ui, "This folder already is a git repository; it will just be opened.");
-            } else if p.is_dir() && !dir_is_empty(p) {
-                hint(ui, "The folder is not empty: existing files stay untracked.");
-            }
-            if let Some(e) = &self.error {
-                error(ui, e.clone());
-            }
-            if busy {
-                ui.spinner();
-                ctl.invalid();
-            }
-        });
+        let (out, ()) = modal(
+            ctx,
+            "init",
+            "Create new repository",
+            540.0,
+            "Create",
+            |ui, ctl| {
+                ui.label("Folder (created if missing):");
+                folder_picker(ui, &mut self.path, "Create repository in");
+                let p = Path::new(self.path.trim());
+                if self.path.trim().is_empty() {
+                    ctl.invalid();
+                } else if p.join(".git").exists() {
+                    warning(
+                        ui,
+                        "This folder already is a git repository; it will just be opened.",
+                    );
+                } else if p.is_dir() && !dir_is_empty(p) {
+                    hint(
+                        ui,
+                        "The folder is not empty: existing files stay untracked.",
+                    );
+                }
+                if let Some(e) = &self.error {
+                    error(ui, e.clone());
+                }
+                if busy {
+                    ui.spinner();
+                    ctl.invalid();
+                }
+            },
+        );
         match out {
             Outcome::None => true,
             Outcome::Cancel => busy,
@@ -331,7 +395,9 @@ impl AppDialog for InitRepo {
                 let log = shared.log.clone();
                 self.error = None;
                 self.task = Some(Task::spawn(ctx, move || {
-                    gk_core::init(&path, log).map(|_| path).map_err(|e| format!("{e:#}"))
+                    gk_core::init(&path, log)
+                        .map(|_| path)
+                        .map_err(|e| format!("{e:#}"))
                 }));
                 true
             }
@@ -350,8 +416,16 @@ pub struct Bookmark {
 
 impl Bookmark {
     pub fn new(path: PathBuf) -> Self {
-        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        Self { path, name, group: String::new(), new_group: String::new() }
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        Self {
+            path,
+            name,
+            group: String::new(),
+            new_group: String::new(),
+        }
     }
 }
 
@@ -363,31 +437,43 @@ impl AppDialog for Bookmark {
         let groups = shared.settings.groups.clone();
         let (out, ()) = modal(ctx, "bookmark", "Add bookmark", 480.0, "Add", |ui, ctl| {
             hint(ui, self.path.display().to_string());
-            egui::Grid::new("bookmark-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                ui.label("Name:");
-                let r = ui.add(egui::TextEdit::singleline(&mut self.name).desired_width(300.0));
-                ctl.focus(&r);
-                ui.end_row();
-                ui.label("Group:");
-                let shown = match self.group.as_str() {
-                    "" => "(none)",
-                    NEW_GROUP => "New group…",
-                    g => g,
-                };
-                egui::ComboBox::from_id_salt("bookmark-group").width(300.0).selected_text(shown).show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.group, String::new(), "(none)");
-                    for g in &groups {
-                        ui.selectable_value(&mut self.group, g.clone(), g);
-                    }
-                    ui.selectable_value(&mut self.group, NEW_GROUP.to_string(), "New group…");
-                });
-                ui.end_row();
-                if self.group == NEW_GROUP {
-                    ui.label("New group:");
-                    ui.add(egui::TextEdit::singleline(&mut self.new_group).desired_width(300.0));
+            egui::Grid::new("bookmark-grid")
+                .num_columns(2)
+                .spacing([12.0, 6.0])
+                .show(ui, |ui| {
+                    ui.label("Name:");
+                    let r = ui.add(egui::TextEdit::singleline(&mut self.name).desired_width(300.0));
+                    ctl.focus(&r);
                     ui.end_row();
-                }
-            });
+                    ui.label("Group:");
+                    let shown = match self.group.as_str() {
+                        "" => "(none)",
+                        NEW_GROUP => "New group…",
+                        g => g,
+                    };
+                    egui::ComboBox::from_id_salt("bookmark-group")
+                        .width(300.0)
+                        .selected_text(shown)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.group, String::new(), "(none)");
+                            for g in &groups {
+                                ui.selectable_value(&mut self.group, g.clone(), g);
+                            }
+                            ui.selectable_value(
+                                &mut self.group,
+                                NEW_GROUP.to_string(),
+                                "New group…",
+                            );
+                        });
+                    ui.end_row();
+                    if self.group == NEW_GROUP {
+                        ui.label("New group:");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.new_group).desired_width(300.0),
+                        );
+                        ui.end_row();
+                    }
+                });
             if exists {
                 error(ui, "This repository is already bookmarked.");
                 ctl.invalid();
@@ -402,7 +488,9 @@ impl AppDialog for Bookmark {
                 NEW_GROUP => Some(self.new_group.trim().to_string()),
                 g => Some(g.to_string()),
             };
-            shared.settings.add_bookmark(self.name.trim(), self.path.clone(), group);
+            shared
+                .settings
+                .add_bookmark(self.name.trim(), self.path.clone(), group);
         })
     }
 }
@@ -426,7 +514,11 @@ impl AppDialog for About {
                     Ok((a, b, c)) => {
                         let old = (a, b) < gk_cli::MIN_VERSION;
                         let note = if old {
-                            format!("  (GitKwaken needs {}.{}+)", gk_cli::MIN_VERSION.0, gk_cli::MIN_VERSION.1)
+                            format!(
+                                "  (GitKwaken needs {}.{}+)",
+                                gk_cli::MIN_VERSION.0,
+                                gk_cli::MIN_VERSION.1
+                            )
                         } else {
                             String::new()
                         };
@@ -442,24 +534,31 @@ impl AppDialog for About {
         let (out, ()) = modal(ctx, "about", "About GitKwaken", 460.0, "OK", |ui, ctl| {
             ctl.show_ok = false;
             ctl.cancel_label = "Close";
-            ui.label(RichText::new(format!("GitKwaken {}", env!("CARGO_PKG_VERSION"))).strong().size(18.0));
+            ui.label(
+                RichText::new(format!("GitKwaken {}", env!("CARGO_PKG_VERSION")))
+                    .strong()
+                    .size(18.0),
+            );
             ui.label("A fast git client.");
             ui.add_space(6.0);
-            egui::Grid::new("about-grid").num_columns(2).spacing([12.0, 4.0]).show(ui, |ui| {
-                ui.label("Renderer:");
-                ui.label(gk_dx11::backend_info());
-                ui.end_row();
-                ui.label("Git:");
-                if self.git_text.is_empty() {
-                    ui.spinner();
-                } else {
-                    ui.label(&self.git_text);
-                }
-                ui.end_row();
-                ui.label("Settings:");
-                ui.label(gk_settings::Settings::path().display().to_string());
-                ui.end_row();
-            });
+            egui::Grid::new("about-grid")
+                .num_columns(2)
+                .spacing([12.0, 4.0])
+                .show(ui, |ui| {
+                    ui.label("Renderer:");
+                    ui.label(gk_dx11::backend_info());
+                    ui.end_row();
+                    ui.label("Git:");
+                    if self.git_text.is_empty() {
+                        ui.spinner();
+                    } else {
+                        ui.label(&self.git_text);
+                    }
+                    ui.end_row();
+                    ui.label("Settings:");
+                    ui.label(gk_settings::Settings::path().display().to_string());
+                    ui.end_row();
+                });
         });
         // About has no OK button: Enter closes too.
         out == Outcome::None && !ctx.input(|i| i.key_pressed(egui::Key::Enter))

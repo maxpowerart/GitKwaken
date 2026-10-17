@@ -46,15 +46,27 @@ pub struct Sparse {
 
 impl Sparse {
     pub fn new(_snap: &Snapshot) -> Self {
-        Self { task: None, current: None, text: String::new() }
+        Self {
+            task: None,
+            current: None,
+            text: String::new(),
+        }
     }
 }
 
 impl TabDialog for Sparse {
-    fn show(&mut self, ctx: &Context, tab: &mut RepoTab, snap: &Snapshot, _shared: &mut Shared) -> bool {
+    fn show(
+        &mut self,
+        ctx: &Context,
+        tab: &mut RepoTab,
+        snap: &Snapshot,
+        _shared: &mut Shared,
+    ) -> bool {
         if self.current.is_none() && self.task.is_none() {
             let repo = tab.session.repo().clone();
-            self.task = Some(Task::spawn(ctx, move || repo.sparse_list().map_err(|e| format!("{e:#}"))));
+            self.task = Some(Task::spawn(ctx, move || {
+                repo.sparse_list().map_err(|e| format!("{e:#}"))
+            }));
         }
         if let Some(t) = &mut self.task
             && let Some(r) = t.take()
@@ -66,70 +78,106 @@ impl TabDialog for Sparse {
             self.current = Some(r);
         }
         let mut disable = false;
-        let (out, ()) = modal(ctx, "sparse", "Sparse checkout", 560.0, "Apply", |ui, ctl| {
-            let enabled = match &self.current {
-                None => {
-                    ui.spinner();
-                    ctl.invalid();
-                    return;
-                }
-                Some(Err(e)) => {
-                    error(ui, e.clone());
-                    ctl.invalid();
-                    return;
-                }
-                Some(Ok(c)) => c.clone(),
-            };
-            match &enabled {
-                Some(_) => {
-                    ui.label(RichText::new("● Sparse checkout is enabled").color(GOOD).strong());
-                }
-                None => {
-                    ui.label(RichText::new("○ Sparse checkout is disabled: the whole tree is checked out").strong());
-                }
-            }
-            ui.label("Only these directories (and every file at the top level) are checked out. One directory per line:");
-            let r = ui.add(
-                egui::TextEdit::multiline(&mut self.text)
-                    .font(egui::TextStyle::Monospace)
-                    .hint_text("src/app\ndocs")
-                    .desired_rows(8)
-                    .desired_width(f32::INFINITY),
-            );
-            ctl.multiline(&r);
-            ctl.focus(&r);
-            let dirs = parse_sparse_dirs(&self.text);
-            if non_cone(&dirs) {
-                warning(ui, "Wildcards are not supported: cone mode takes plain directory paths.");
-                ctl.invalid();
-            }
-            if let Some(cur) = &enabled
-                && non_cone(cur)
-            {
-                hint(ui, "The current patterns use non-cone mode; applying switches to cone mode.");
-            }
-            ui.add_space(4.0);
-            warning(ui, "Files outside these directories are removed from the working copy (they stay in the repository and come back when you widen the list or disable sparse checkout).");
-            if worktree_dirty(snap) {
-                hint(ui, "Modified files outside the list are kept until you commit or discard them.");
-            }
-            if enabled.is_some() {
-                ui.horizontal(|ui| {
-                    if ui.button("Disable sparse checkout").on_hover_text("Check out the full tree again").clicked() {
-                        disable = true;
+        let (out, ()) = modal(
+            ctx,
+            "sparse",
+            "Sparse checkout",
+            560.0,
+            "Apply",
+            |ui, ctl| {
+                let enabled = match &self.current {
+                    None => {
+                        ui.spinner();
+                        ctl.invalid();
+                        return;
                     }
-                });
-            } else {
-                ctl.ok_label = "Enable".into();
-            }
-        });
+                    Some(Err(e)) => {
+                        error(ui, e.clone());
+                        ctl.invalid();
+                        return;
+                    }
+                    Some(Ok(c)) => c.clone(),
+                };
+                match &enabled {
+                    Some(_) => {
+                        ui.label(
+                            RichText::new("● Sparse checkout is enabled")
+                                .color(GOOD)
+                                .strong(),
+                        );
+                    }
+                    None => {
+                        ui.label(
+                            RichText::new(
+                                "○ Sparse checkout is disabled: the whole tree is checked out",
+                            )
+                            .strong(),
+                        );
+                    }
+                }
+                ui.label("Only these directories (and every file at the top level) are checked out. One directory per line:");
+                let r = ui.add(
+                    egui::TextEdit::multiline(&mut self.text)
+                        .font(egui::TextStyle::Monospace)
+                        .hint_text("src/app\ndocs")
+                        .desired_rows(8)
+                        .desired_width(f32::INFINITY),
+                );
+                ctl.multiline(&r);
+                ctl.focus(&r);
+                let dirs = parse_sparse_dirs(&self.text);
+                if non_cone(&dirs) {
+                    warning(
+                        ui,
+                        "Wildcards are not supported: cone mode takes plain directory paths.",
+                    );
+                    ctl.invalid();
+                }
+                if let Some(cur) = &enabled
+                    && non_cone(cur)
+                {
+                    hint(
+                        ui,
+                        "The current patterns use non-cone mode; applying switches to cone mode.",
+                    );
+                }
+                ui.add_space(4.0);
+                warning(
+                    ui,
+                    "Files outside these directories are removed from the working copy (they stay in the repository and come back when you widen the list or disable sparse checkout).",
+                );
+                if worktree_dirty(snap) {
+                    hint(
+                        ui,
+                        "Modified files outside the list are kept until you commit or discard them.",
+                    );
+                }
+                if enabled.is_some() {
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button("Disable sparse checkout")
+                            .on_hover_text("Check out the full tree again")
+                            .clicked()
+                        {
+                            disable = true;
+                        }
+                    });
+                } else {
+                    ctl.ok_label = "Enable".into();
+                }
+            },
+        );
         if disable {
-            tab.session.run_op("Disable sparse checkout", |repo, _, _| repo.sparse_disable().map(|_| String::new()));
+            tab.session.run_op("Disable sparse checkout", |repo, _, _| {
+                repo.sparse_disable().map(|_| String::new())
+            });
             return false;
         }
         finish(out, || {
             let dirs = parse_sparse_dirs(&self.text);
-            tab.session.run_op("Sparse checkout", move |repo, _, _| repo.sparse_set(&dirs).map(|_| String::new()));
+            tab.session.run_op("Sparse checkout", move |repo, _, _| {
+                repo.sparse_set(&dirs).map(|_| String::new())
+            });
         })
     }
 }
@@ -149,17 +197,34 @@ pub struct Clean {
 
 impl Clean {
     pub fn new() -> Self {
-        Self { ignored: false, dirs: true, task: None, loaded: None, items: None, confirm: false }
+        Self {
+            ignored: false,
+            dirs: true,
+            task: None,
+            loaded: None,
+            items: None,
+            confirm: false,
+        }
     }
 }
 
 /// Selected paths of the preview list.
 pub fn selected_paths(items: &[(String, bool)]) -> Vec<String> {
-    items.iter().filter(|(_, s)| *s).map(|(p, _)| p.clone()).collect()
+    items
+        .iter()
+        .filter(|(_, s)| *s)
+        .map(|(p, _)| p.clone())
+        .collect()
 }
 
 impl TabDialog for Clean {
-    fn show(&mut self, ctx: &Context, tab: &mut RepoTab, _snap: &Snapshot, _shared: &mut Shared) -> bool {
+    fn show(
+        &mut self,
+        ctx: &Context,
+        tab: &mut RepoTab,
+        _snap: &Snapshot,
+        _shared: &mut Shared,
+    ) -> bool {
         let want = (self.ignored, self.dirs);
         // Reload when the options change.
         let key_changed = self.loaded != Some(want);
@@ -167,7 +232,10 @@ impl TabDialog for Clean {
             let repo = tab.session.repo().clone();
             let (ignored, dirs) = want;
             self.loaded = Some(want);
-            self.task = Some(Task::spawn(ctx, move || repo.clean_preview(ignored, dirs).map_err(|e| format!("{e:#}"))));
+            self.task = Some(Task::spawn(ctx, move || {
+                repo.clean_preview(ignored, dirs)
+                    .map_err(|e| format!("{e:#}"))
+            }));
         }
         if let Some(t) = &mut self.task
             && let Some(r) = t.take()
@@ -175,67 +243,94 @@ impl TabDialog for Clean {
             self.task = None;
             self.items = Some(r.map(|v| v.into_iter().map(|p| (p, true)).collect()));
         }
-        let (out, ()) = modal(ctx, "clean", "Clean working copy", 600.0, "Delete selected", |ui, ctl| {
-            ctl.danger = true;
-            if self.confirm {
-                let n = self.items.as_ref().and_then(|r| r.as_ref().ok()).map(|v| selected_paths(v).len()).unwrap_or(0);
-                ui.label(RichText::new(format!("Permanently delete {n} untracked item(s)?")).strong());
-                warning(ui, "They are not in git: this cannot be undone.");
-                ctl.ok_label = format!("Delete {n} item(s)");
-                if ui.small_button("◀ Back").clicked() {
-                    self.confirm = false;
+        let (out, ()) = modal(
+            ctx,
+            "clean",
+            "Clean working copy",
+            600.0,
+            "Delete selected",
+            |ui, ctl| {
+                ctl.danger = true;
+                if self.confirm {
+                    let n = self
+                        .items
+                        .as_ref()
+                        .and_then(|r| r.as_ref().ok())
+                        .map(|v| selected_paths(v).len())
+                        .unwrap_or(0);
+                    ui.label(
+                        RichText::new(format!("Permanently delete {n} untracked item(s)?"))
+                            .strong(),
+                    );
+                    warning(ui, "They are not in git: this cannot be undone.");
+                    ctl.ok_label = format!("Delete {n} item(s)");
+                    if ui.small_button("◀ Back").clicked() {
+                        self.confirm = false;
+                    }
+                    return;
                 }
-                return;
-            }
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut self.dirs, "Include untracked directories");
-                ui.checkbox(&mut self.ignored, "Include ignored files");
-            });
-            if self.ignored {
-                warning(ui, "Ignored files include build outputs, local settings and secrets such as .env files.");
-            }
-            ui.separator();
-            match &mut self.items {
-                _ if self.task.is_some() => {
-                    ui.spinner();
-                    ctl.invalid();
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut self.dirs, "Include untracked directories");
+                    ui.checkbox(&mut self.ignored, "Include ignored files");
+                });
+                if self.ignored {
+                    warning(
+                        ui,
+                        "Ignored files include build outputs, local settings and secrets such as .env files.",
+                    );
                 }
-                None => ctl.invalid(),
-                Some(Err(e)) => {
-                    error(ui, e.clone());
-                    ctl.invalid();
-                }
-                Some(Ok(items)) if items.is_empty() => {
-                    ui.label(RichText::new("Nothing to clean.").weak());
-                    ctl.invalid();
-                }
-                Some(Ok(items)) => {
-                    let n = items.iter().filter(|(_, s)| *s).count();
-                    let mut all = n == items.len();
-                    ui.horizontal(|ui| {
-                        if ui.checkbox(&mut all, "Select all").changed() {
-                            items.iter_mut().for_each(|(_, s)| *s = all);
-                        }
-                        hint(ui, format!("{n} of {} selected", items.len()));
-                    });
-                    egui::Frame::new().fill(ui.visuals().extreme_bg_color).inner_margin(6).show(ui, |ui| {
-                        egui::ScrollArea::vertical().max_height(300.0).auto_shrink([false, true]).show_rows(
-                            ui,
-                            ui.spacing().interact_size.y,
-                            items.len(),
-                            |ui, range| {
-                                for (path, sel) in &mut items[range] {
-                                    ui.checkbox(sel, RichText::new(path.as_str()).monospace());
-                                }
-                            },
-                        );
-                    });
-                    if n == 0 {
+                ui.separator();
+                match &mut self.items {
+                    _ if self.task.is_some() => {
+                        ui.spinner();
                         ctl.invalid();
                     }
+                    None => ctl.invalid(),
+                    Some(Err(e)) => {
+                        error(ui, e.clone());
+                        ctl.invalid();
+                    }
+                    Some(Ok(items)) if items.is_empty() => {
+                        ui.label(RichText::new("Nothing to clean.").weak());
+                        ctl.invalid();
+                    }
+                    Some(Ok(items)) => {
+                        let n = items.iter().filter(|(_, s)| *s).count();
+                        let mut all = n == items.len();
+                        ui.horizontal(|ui| {
+                            if ui.checkbox(&mut all, "Select all").changed() {
+                                items.iter_mut().for_each(|(_, s)| *s = all);
+                            }
+                            hint(ui, format!("{n} of {} selected", items.len()));
+                        });
+                        egui::Frame::new()
+                            .fill(ui.visuals().extreme_bg_color)
+                            .inner_margin(6)
+                            .show(ui, |ui| {
+                                egui::ScrollArea::vertical()
+                                    .max_height(300.0)
+                                    .auto_shrink([false, true])
+                                    .show_rows(
+                                        ui,
+                                        ui.spacing().interact_size.y,
+                                        items.len(),
+                                        |ui, range| {
+                                            for (path, sel) in &mut items[range] {
+                                                ui.checkbox(
+                                                    sel,
+                                                    RichText::new(path.as_str()).monospace(),
+                                                );
+                                            }
+                                        },
+                                    );
+                            });
+                        if n == 0 {
+                            ctl.invalid();
+                        }
+                    }
                 }
-            }
-        });
+            },
+        );
         match out {
             Outcome::None => true,
             Outcome::Cancel => false,
@@ -244,9 +339,16 @@ impl TabDialog for Clean {
                 true
             }
             Outcome::Ok => {
-                let paths = self.items.as_ref().and_then(|r| r.as_ref().ok()).map(|v| selected_paths(v)).unwrap_or_default();
+                let paths = self
+                    .items
+                    .as_ref()
+                    .and_then(|r| r.as_ref().ok())
+                    .map(|v| selected_paths(v))
+                    .unwrap_or_default();
                 let label = format!("Clean {} item(s)", paths.len());
-                tab.session.run_op(label, move |repo, _, _| repo.clean(&paths).map(|_| String::new()));
+                tab.session.run_op(label, move |repo, _, _| {
+                    repo.clean(&paths).map(|_| String::new())
+                });
                 false
             }
         }
@@ -295,7 +397,12 @@ pub struct Optimize {
 
 impl Optimize {
     pub fn new(_snap: &Snapshot) -> Self {
-        Self { task: None, status: None, pending: None, result: None }
+        Self {
+            task: None,
+            status: None,
+            pending: None,
+            result: None,
+        }
     }
 
     fn load(&mut self, ctx: &Context, tab: &RepoTab) {
@@ -305,7 +412,13 @@ impl Optimize {
 }
 
 impl TabDialog for Optimize {
-    fn show(&mut self, ctx: &Context, tab: &mut RepoTab, snap: &Snapshot, _shared: &mut Shared) -> bool {
+    fn show(
+        &mut self,
+        ctx: &Context,
+        tab: &mut RepoTab,
+        snap: &Snapshot,
+        _shared: &mut Shared,
+    ) -> bool {
         if self.status.is_none() && self.task.is_none() {
             self.load(ctx, tab);
         }
@@ -323,54 +436,75 @@ impl TabDialog for Optimize {
             self.load(ctx, tab);
         }
         let busy = self.pending.is_some();
-        let (out, ()) = modal(ctx, "optimize", "Optimize repository", 600.0, "Optimize now", |ui, ctl| {
-            ctl.cancel_label = "Close";
-            let Some(st) = &self.status else {
-                ui.spinner();
-                ctl.invalid();
-                return;
-            };
-            ui.label("Settings that make git (and GitKwaken) fast in large repositories:");
-            ui.add_space(4.0);
-            for (on, title, text) in optimization_rows(st) {
-                ui.horizontal_top(|ui| {
-                    let (icon, color) = if on { ("✔", GOOD) } else { ("✖", ui.visuals().weak_text_color()) };
-                    ui.label(RichText::new(icon).color(color).strong().size(15.0));
-                    ui.vertical(|ui| {
-                        ui.label(RichText::new(title).strong());
-                        hint(ui, text);
+        let (out, ()) = modal(
+            ctx,
+            "optimize",
+            "Optimize repository",
+            600.0,
+            "Optimize now",
+            |ui, ctl| {
+                ctl.cancel_label = "Close";
+                let Some(st) = &self.status else {
+                    ui.spinner();
+                    ctl.invalid();
+                    return;
+                };
+                ui.label("Settings that make git (and GitKwaken) fast in large repositories:");
+                ui.add_space(4.0);
+                for (on, title, text) in optimization_rows(st) {
+                    ui.horizontal_top(|ui| {
+                        let (icon, color) = if on {
+                            ("✔", GOOD)
+                        } else {
+                            ("✖", ui.visuals().weak_text_color())
+                        };
+                        ui.label(RichText::new(icon).color(color).strong().size(15.0));
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new(title).strong());
+                            hint(ui, text);
+                        });
                     });
-                });
-                ui.add_space(2.0);
-            }
-            let all = optimization_rows(st).iter().all(|r| r.0);
-            ui.add_space(4.0);
-            if all {
-                ui.label(RichText::new("✔ This repository is fully optimized.").color(GOOD));
-            } else {
-                hint(ui, "\"Optimize now\" enables all of the above for this repository and writes the commit graph and multi-pack index (can take a while on big repositories).");
-            }
-            if cfg!(not(any(windows, target_os = "macos"))) && !st.fsmonitor {
-                hint(ui, "The built-in file system monitor is only available on Windows and macOS.");
-            }
-            if busy {
-                ctl.invalid();
-                op_progress(ui, snap);
-            }
-            match &self.result {
-                Some(Ok(())) => {
-                    ui.label(RichText::new("Optimization finished.").color(GOOD));
+                    ui.add_space(2.0);
                 }
-                Some(Err(e)) => error(ui, e.clone()),
-                None => {}
-            }
-        });
+                let all = optimization_rows(st).iter().all(|r| r.0);
+                ui.add_space(4.0);
+                if all {
+                    ui.label(RichText::new("✔ This repository is fully optimized.").color(GOOD));
+                } else {
+                    hint(
+                        ui,
+                        "\"Optimize now\" enables all of the above for this repository and writes the commit graph and multi-pack index (can take a while on big repositories).",
+                    );
+                }
+                if cfg!(not(any(windows, target_os = "macos"))) && !st.fsmonitor {
+                    hint(
+                        ui,
+                        "The built-in file system monitor is only available on Windows and macOS.",
+                    );
+                }
+                if busy {
+                    ctl.invalid();
+                    op_progress(ui, snap);
+                }
+                match &self.result {
+                    Some(Ok(())) => {
+                        ui.label(RichText::new("Optimization finished.").color(GOOD));
+                    }
+                    Some(Err(e)) => error(ui, e.clone()),
+                    None => {}
+                }
+            },
+        );
         match out {
             Outcome::None => true,
             Outcome::Cancel => false,
             Outcome::Ok => {
                 self.result = None;
-                self.pending = Some(TrackedOp::queue(tab, "Optimize repository", |repo, cancel, p| repo.optimize(cancel, p)));
+                self.pending = Some(TrackedOp::queue(
+                    tab,
+                    "Optimize repository",
+                    |repo, cancel, p| repo.optimize(cancel, p),
+                ));
                 true
             }
         }
@@ -388,56 +522,91 @@ pub struct SubmoduleAdd {
 }
 
 impl TabDialog for SubmoduleAdd {
-    fn show(&mut self, ctx: &Context, tab: &mut RepoTab, _snap: &Snapshot, _shared: &mut Shared) -> bool {
+    fn show(
+        &mut self,
+        ctx: &Context,
+        tab: &mut RepoTab,
+        _snap: &Snapshot,
+        _shared: &mut Shared,
+    ) -> bool {
         let root = tab.path.clone();
-        let (out, ()) = modal(ctx, "submodule-add", "Add submodule", 560.0, "Add", |ui, ctl| {
-            egui::Grid::new("submodule-add-grid").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-                ui.label("Repository URL:");
-                let r = ui.add(egui::TextEdit::singleline(&mut self.url).hint_text("https://host/user/lib.git").desired_width(400.0));
-                ctl.focus(&r);
-                if r.changed() && !self.path_edited {
-                    self.path = folder_from_url(&self.url);
+        let (out, ()) = modal(
+            ctx,
+            "submodule-add",
+            "Add submodule",
+            560.0,
+            "Add",
+            |ui, ctl| {
+                egui::Grid::new("submodule-add-grid")
+                    .num_columns(2)
+                    .spacing([8.0, 6.0])
+                    .show(ui, |ui| {
+                        ui.label("Repository URL:");
+                        let r = ui.add(
+                            egui::TextEdit::singleline(&mut self.url)
+                                .hint_text("https://host/user/lib.git")
+                                .desired_width(400.0),
+                        );
+                        ctl.focus(&r);
+                        if r.changed() && !self.path_edited {
+                            self.path = folder_from_url(&self.url);
+                        }
+                        ui.end_row();
+                        ui.label("Path:");
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add(
+                                    egui::TextEdit::singleline(&mut self.path).desired_width(310.0),
+                                )
+                                .changed()
+                            {
+                                self.path_edited = true;
+                            }
+                            if ui.button("Browse…").clicked()
+                                && let Some(p) =
+                                    rfd::FileDialog::new().set_directory(&root).pick_folder()
+                                && let Ok(rel) = p.strip_prefix(&root)
+                            {
+                                self.path = rel.to_string_lossy().replace('\\', "/");
+                                self.path_edited = true;
+                            }
+                        });
+                        ui.end_row();
+                    });
+                hint(
+                    ui,
+                    "Clones the repository into the path and records it in .gitmodules; commit both afterwards.",
+                );
+                let url = self.url.trim();
+                let path = self.path.trim();
+                if url.is_empty() || path.is_empty() {
+                    ctl.invalid();
+                    return;
                 }
-                ui.end_row();
-                ui.label("Path:");
-                ui.horizontal(|ui| {
-                    if ui.add(egui::TextEdit::singleline(&mut self.path).desired_width(310.0)).changed() {
-                        self.path_edited = true;
-                    }
-                    if ui.button("Browse…").clicked()
-                        && let Some(p) = rfd::FileDialog::new().set_directory(&root).pick_folder()
-                        && let Ok(rel) = p.strip_prefix(&root)
-                    {
-                        self.path = rel.to_string_lossy().replace('\\', "/");
-                        self.path_edited = true;
-                    }
-                });
-                ui.end_row();
-            });
-            hint(ui, "Clones the repository into the path and records it in .gitmodules; commit both afterwards.");
-            let url = self.url.trim();
-            let path = self.path.trim();
-            if url.is_empty() || path.is_empty() {
-                ctl.invalid();
-                return;
-            }
-            let abs = root.join(path);
-            let non_empty_dir = abs.is_dir() && std::fs::read_dir(&abs).map(|mut d| d.next().is_some()).unwrap_or(false);
-            if std::path::Path::new(path).is_absolute() || path.split(['/', '\\']).any(|c| c == "..") {
-                error(ui, "The path must be inside the repository.");
-                ctl.invalid();
-            } else if abs.is_file() || non_empty_dir {
-                error(ui, format!("'{path}' already exists."));
-                ctl.invalid();
-            }
-        });
+                let abs = root.join(path);
+                let non_empty_dir = abs.is_dir()
+                    && std::fs::read_dir(&abs)
+                        .map(|mut d| d.next().is_some())
+                        .unwrap_or(false);
+                if std::path::Path::new(path).is_absolute()
+                    || path.split(['/', '\\']).any(|c| c == "..")
+                {
+                    error(ui, "The path must be inside the repository.");
+                    ctl.invalid();
+                } else if abs.is_file() || non_empty_dir {
+                    error(ui, format!("'{path}' already exists."));
+                    ctl.invalid();
+                }
+            },
+        );
         finish(out, || {
             let url = self.url.trim().to_string();
             let path = self.path.trim().replace('\\', "/");
-            tab.session.run_op(format!("Add submodule {path}"), move |repo, cancel, p| {
-                repo.submodule_add(&url, &path, cancel, p)?;
-                Ok(String::new())
-            });
+            tab.session
+                .run_op(format!("Add submodule {path}"), move |repo, cancel, p| {
+                    repo.submodule_add(&url, &path, cancel, p)?;
+                    Ok(String::new())
+                });
         })
     }
 }
@@ -456,13 +625,21 @@ mod tests {
 
     #[test]
     fn clean_selection() {
-        let items = vec![("a".to_string(), true), ("b/".to_string(), false), ("c".to_string(), true)];
+        let items = vec![
+            ("a".to_string(), true),
+            ("b/".to_string(), false),
+            ("c".to_string(), true),
+        ];
         assert_eq!(selected_paths(&items), ["a", "c"]);
     }
 
     #[test]
     fn optimization_checklist() {
-        let o = Optimization { fsmonitor: true, commit_graph: true, ..Default::default() };
+        let o = Optimization {
+            fsmonitor: true,
+            commit_graph: true,
+            ..Default::default()
+        };
         let rows = optimization_rows(&o);
         assert_eq!(rows.iter().filter(|r| r.0).count(), 2);
         assert!(rows[0].0 && !rows[1].0 && rows[3].0);

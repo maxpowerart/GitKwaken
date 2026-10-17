@@ -2,10 +2,10 @@
 //! serialized operation queue, and lazily computed diffs and commit details.
 //! The UI only ever reads immutable snapshots.
 
+use crate::Repo;
 use crate::content::{self, CommitDetails, DiffTarget};
 use crate::history::{self, History, MetaCache, Scope};
 use crate::refs::{self, Refs};
-use crate::Repo;
 use bstr::BString;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use gix::ObjectId;
@@ -65,7 +65,11 @@ pub struct SessionOptions {
 
 impl Default for SessionOptions {
     fn default() -> Self {
-        Self { status: Default::default(), scope: Scope::All, watch: true }
+        Self {
+            status: Default::default(),
+            scope: Scope::All,
+            watch: true,
+        }
     }
 }
 
@@ -81,7 +85,12 @@ struct Refresh {
 
 impl Refresh {
     fn all() -> Self {
-        Self { refs: true, history: true, status_full: true, paths: Vec::new() }
+        Self {
+            refs: true,
+            history: true,
+            status_full: true,
+            paths: Vec::new(),
+        }
     }
     fn merge(&mut self, o: Refresh) {
         self.refs |= o.refs;
@@ -119,11 +128,17 @@ struct Loader<K, V> {
 
 impl<K, V> Default for Loader<K, V> {
     fn default() -> Self {
-        Self { key: None, value: None, ticket: 0 }
+        Self {
+            key: None,
+            value: None,
+            ticket: 0,
+        }
     }
 }
 
-type OpFn = Box<dyn FnOnce(&Repo, &CancelToken, &mut (dyn FnMut(Line) + Send)) -> anyhow::Result<String> + Send>;
+type OpFn = Box<
+    dyn FnOnce(&Repo, &CancelToken, &mut (dyn FnMut(Line) + Send)) -> anyhow::Result<String> + Send,
+>;
 
 struct OpJob {
     label: String,
@@ -177,7 +192,11 @@ impl Drop for CloseGuard {
 }
 
 impl Session {
-    pub fn open(repo: Repo, options: SessionOptions, repaint: impl Fn() + Send + Sync + 'static) -> Self {
+    pub fn open(
+        repo: Repo,
+        options: SessionOptions,
+        repaint: impl Fn() + Send + Sync + 'static,
+    ) -> Self {
         let (refresh_tx, refresh_rx) = unbounded();
         let (op_tx, op_rx) = unbounded();
         let meta = Arc::new(MetaCache::new(repo.clone()));
@@ -222,10 +241,18 @@ impl Session {
                         .spawn(move || event_loop(i, ev_rx))
                         .expect("spawn event thread");
                 }
-                Err(e) => push_message(&inner, MessageKind::Error, format!("file watcher unavailable: {e}")),
+                Err(e) => push_message(
+                    &inner,
+                    MessageKind::Error,
+                    format!("file watcher unavailable: {e}"),
+                ),
             }
         }
-        let s = Self { _close: Arc::new(CloseGuard(inner.clone())), inner, _watcher: watcher };
+        let s = Self {
+            _close: Arc::new(CloseGuard(inner.clone())),
+            inner,
+            _watcher: watcher,
+        };
         s.refresh_all();
         s
     }
@@ -245,7 +272,11 @@ impl Session {
     pub fn set_options(&self, o: SessionOptions) {
         let scope_changed = self.inner.options.read().scope != o.scope;
         *self.inner.options.write() = o;
-        let _ = self.inner.refresh_tx.send(Refresh { history: scope_changed, status_full: true, ..Default::default() });
+        let _ = self.inner.refresh_tx.send(Refresh {
+            history: scope_changed,
+            status_full: true,
+            ..Default::default()
+        });
     }
 
     pub fn refresh_all(&self) {
@@ -253,7 +284,10 @@ impl Session {
     }
 
     pub fn refresh_status(&self) {
-        let _ = self.inner.refresh_tx.send(Refresh { status_full: true, ..Default::default() });
+        let _ = self.inner.refresh_tx.send(Refresh {
+            status_full: true,
+            ..Default::default()
+        });
     }
 
     pub fn meta(&self) -> &Arc<MetaCache> {
@@ -281,17 +315,30 @@ impl Session {
     pub fn run_op(
         &self,
         label: impl Into<String>,
-        f: impl FnOnce(&Repo, &CancelToken, &mut (dyn FnMut(Line) + Send)) -> anyhow::Result<String> + Send + 'static,
+        f: impl FnOnce(&Repo, &CancelToken, &mut (dyn FnMut(Line) + Send)) -> anyhow::Result<String>
+        + Send
+        + 'static,
     ) {
-        let _ = self.inner.op_tx.send(OpJob { label: label.into(), run: Some(Box::new(f)), refresh: Refresh::all() });
+        let _ = self.inner.op_tx.send(OpJob {
+            label: label.into(),
+            run: Some(Box::new(f)),
+            refresh: Refresh::all(),
+        });
     }
 
     /// Like [`run_op`](Self::run_op) for quick index-only operations; refreshes status only.
-    pub fn run_index_op(&self, label: impl Into<String>, f: impl FnOnce(&Repo) -> anyhow::Result<()> + Send + 'static) {
+    pub fn run_index_op(
+        &self,
+        label: impl Into<String>,
+        f: impl FnOnce(&Repo) -> anyhow::Result<()> + Send + 'static,
+    ) {
         let _ = self.inner.op_tx.send(OpJob {
             label: label.into(),
             run: Some(Box::new(move |r, _, _| f(r).map(|_| String::new()))),
-            refresh: Refresh { status_full: true, ..Default::default() },
+            refresh: Refresh {
+                status_full: true,
+                ..Default::default()
+            },
         });
     }
 
@@ -303,23 +350,44 @@ impl Session {
 
     /// Diff for `target`, computed in the background. `status_gen` invalidates
     /// worktree diffs when files change.
-    pub fn diff(&self, target: &DiffTarget, status_gen: u64, ignore_ws: bool, context: u32) -> Load<FileDiff> {
+    pub fn diff(
+        &self,
+        target: &DiffTarget,
+        status_gen: u64,
+        ignore_ws: bool,
+        context: u32,
+    ) -> Load<FileDiff> {
         let key = (target.clone(), status_gen, ignore_ws, context);
         let repo = self.inner.repo.clone();
         let t = target.clone();
-        load(&self.inner, &self.inner.diff, key, move || {
-            let (old, new) = content::load_sides(&repo, &t)?;
-            Ok(gk_diff::diff(
-                old.as_deref().unwrap_or_default(),
-                new.as_deref().unwrap_or_default(),
-                gk_diff::Options { context, ignore_whitespace: ignore_ws },
-            ))
-        }, |s| &s.diff)
+        load(
+            &self.inner,
+            &self.inner.diff,
+            key,
+            move || {
+                let (old, new) = content::load_sides(&repo, &t)?;
+                Ok(gk_diff::diff(
+                    old.as_deref().unwrap_or_default(),
+                    new.as_deref().unwrap_or_default(),
+                    gk_diff::Options {
+                        context,
+                        ignore_whitespace: ignore_ws,
+                    },
+                ))
+            },
+            |s| &s.diff,
+        )
     }
 
     pub fn commit_details(&self, id: ObjectId) -> Load<CommitDetails> {
         let repo = self.inner.repo.clone();
-        load(&self.inner, &self.inner.details, id, move || content::commit_details(&repo, id), |s| &s.details)
+        load(
+            &self.inner,
+            &self.inner.details,
+            id,
+            move || content::commit_details(&repo, id),
+            |s| &s.details,
+        )
     }
 
     /// Rows of the current history matching `needle`.
@@ -328,9 +396,13 @@ impl Session {
         let hgen = self.inner.history_gen.load(Ordering::SeqCst);
         let repo = self.inner.repo.clone();
         let n = needle.to_string();
-        load(&self.inner, &self.inner.search, (needle.to_string(), hgen), move || {
-            Ok(history::search(&repo, &hist, &n, &AtomicBool::new(false)))
-        }, |s| &s.search)
+        load(
+            &self.inner,
+            &self.inner.search,
+            (needle.to_string(), hgen),
+            move || Ok(history::search(&repo, &hist, &n, &AtomicBool::new(false))),
+            |s| &s.search,
+        )
     }
 }
 
@@ -381,7 +453,11 @@ where
 
 fn push_message(inner: &Shared, kind: MessageKind, text: String) {
     let mut s = inner.snap.write();
-    s.messages.push(Message { kind, text, at: Instant::now() });
+    s.messages.push(Message {
+        kind,
+        text,
+        at: Instant::now(),
+    });
     if s.messages.len() > 20 {
         s.messages.remove(0);
     }
@@ -396,8 +472,14 @@ fn event_loop(inner: Arc<Shared>, rx: Receiver<watch::Event>) {
             return;
         }
         let r = match ev {
-            watch::Event::Worktree(paths) => Refresh { paths, ..Default::default() },
-            watch::Event::Overflow => Refresh { status_full: true, ..Default::default() },
+            watch::Event::Worktree(paths) => Refresh {
+                paths,
+                ..Default::default()
+            },
+            watch::Event::Overflow => Refresh {
+                status_full: true,
+                ..Default::default()
+            },
             watch::Event::GitDir(c) => Refresh {
                 refs: c.refs || c.head || c.state,
                 history: c.refs || c.head,
@@ -440,7 +522,11 @@ fn refresh_loop(inner: Arc<Shared>, rx: Receiver<Refresh>) {
                     s.refs = Arc::new(r);
                     s.generation += 1;
                 }
-                Err(e) => push_message(&inner, MessageKind::Error, format!("reading refs failed: {e:#}")),
+                Err(e) => push_message(
+                    &inner,
+                    MessageKind::Error,
+                    format!("reading refs failed: {e:#}"),
+                ),
             }
             (inner.repaint)();
         }
@@ -454,7 +540,11 @@ fn refresh_loop(inner: Arc<Shared>, rx: Receiver<Refresh>) {
                 s.generation += 1;
             }
             (inner.repaint)();
-            let patterns: Vec<BString> = if req.status_full { Vec::new() } else { req.paths.clone() };
+            let patterns: Vec<BString> = if req.status_full {
+                Vec::new()
+            } else {
+                req.paths.clone()
+            };
             // Watcher-reported paths: the in-memory fast path avoids re-reading
             // the whole index; it declines anything unusual.
             let quick = if req.status_full {
@@ -464,16 +554,29 @@ fn refresh_loop(inner: Arc<Shared>, rx: Receiver<Refresh>) {
                 if fast.is_none() {
                     fast = gk_status::fast::FastStatus::new(repo.workdir()).ok();
                 }
-                match fast.as_mut().map(|f| f.refresh(&patterns, opts.status.untracked)) {
+                match fast
+                    .as_mut()
+                    .map(|f| f.refresh(&patterns, opts.status.untracked))
+                {
                     Some(Ok(gk_status::fast::Outcome::Updated(unstaged))) => {
-                        Some(gk_status::Status { staged: Vec::new(), unstaged, took: start.elapsed() })
+                        Some(gk_status::Status {
+                            staged: Vec::new(),
+                            unstaged,
+                            took: start.elapsed(),
+                        })
                     }
                     _ => None,
                 }
             };
             let computed = match quick {
                 Some(s) => Ok(s),
-                None => gk_status::compute(repo.workdir(), repo.git(), &patterns, &opts.status, &interrupt),
+                None => gk_status::compute(
+                    repo.workdir(),
+                    repo.git(),
+                    &patterns,
+                    &opts.status,
+                    &interrupt,
+                ),
             };
             match computed {
                 Ok(new) => {
@@ -507,7 +610,11 @@ fn refresh_loop(inner: Arc<Shared>, rx: Receiver<Refresh>) {
             let tips = r.tips();
             let scope_changed = last_scope.as_ref() != Some(&opts.scope);
             let head_changed = matches!(opts.scope, Scope::Current);
-            if tips != last_tips || scope_changed || head_changed || inner.snap.read().history.is_empty() {
+            if tips != last_tips
+                || scope_changed
+                || head_changed
+                || inner.snap.read().history.is_empty()
+            {
                 {
                     let mut s = inner.snap.write();
                     s.history_loading = true;
@@ -527,7 +634,11 @@ fn refresh_loop(inner: Arc<Shared>, rx: Receiver<Refresh>) {
                     }
                     Err(e) => {
                         inner.snap.write().history_loading = false;
-                        push_message(&inner, MessageKind::Error, format!("reading history failed: {e:#}"));
+                        push_message(
+                            &inner,
+                            MessageKind::Error,
+                            format!("reading history failed: {e:#}"),
+                        );
                     }
                 }
                 (inner.repaint)();
@@ -577,13 +688,23 @@ fn op_loop(inner: Arc<Shared>, rx: Receiver<OpJob>) {
             Ok(text) => {
                 let t = text.trim();
                 if crate::ops::stopped_on_conflict(t) {
-                    push_message(&inner, MessageKind::Error, format!("{}: conflicts — resolve them, then continue.\n{t}", job.label));
+                    push_message(
+                        &inner,
+                        MessageKind::Error,
+                        format!(
+                            "{}: conflicts — resolve them, then continue.\n{t}",
+                            job.label
+                        ),
+                    );
                 }
             }
-            Err(e) => push_message(&inner, MessageKind::Error, format!("{} failed:\n{e:#}", job.label)),
+            Err(e) => push_message(
+                &inner,
+                MessageKind::Error,
+                format!("{} failed:\n{e:#}", job.label),
+            ),
         }
         let _ = inner.refresh_tx.send(job.refresh);
         (inner.repaint)();
     }
 }
-

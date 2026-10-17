@@ -17,7 +17,10 @@ fn head_text(snap: &Snapshot) -> String {
 }
 
 fn no_remotes(ui: &mut egui::Ui, ctl: &mut Ctl) {
-    error(ui, "This repository has no remotes. Add one first (Repository ▸ Add remote).");
+    error(
+        ui,
+        "This repository has no remotes. Add one first (Repository ▸ Add remote).",
+    );
     ctl.invalid();
 }
 
@@ -44,43 +47,69 @@ impl Pull {
         if remote.is_empty() {
             remote = default_remote(&remotes);
             if let Some(cur) = s.refs.head.branch()
-                && s.refs.remote_branches.iter().any(|rb| rb.remote == remote && rb.name == cur)
+                && s.refs
+                    .remote_branches
+                    .iter()
+                    .any(|rb| rb.remote == remote && rb.name == cur)
             {
                 branch = cur.to_string();
             }
         }
-        Self { remote, branch, rebase: false }
+        Self {
+            remote,
+            branch,
+            rebase: false,
+        }
     }
 }
 
 impl TabDialog for Pull {
-    fn show(&mut self, ctx: &Context, tab: &mut RepoTab, snap: &Snapshot, _shared: &mut Shared) -> bool {
+    fn show(
+        &mut self,
+        ctx: &Context,
+        tab: &mut RepoTab,
+        snap: &Snapshot,
+        _shared: &mut Shared,
+    ) -> bool {
         let remotes = remote_names(snap);
         let (out, ()) = modal(ctx, "pull", "Pull", 460.0, "Pull", |ui, ctl| {
-            egui::Grid::new("pull-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                ui.label("Pull from remote:");
-                if combo(ui, "pull-remote", &mut self.remote, &remotes, None, 260.0) {
-                    self.branch.clear();
-                }
-                ui.end_row();
-                ui.label("Remote branch to pull:");
-                let branches: Vec<String> = snap
-                    .refs
-                    .remote_branches
-                    .iter()
-                    .filter(|b| b.remote == self.remote)
-                    .map(|b| b.name.clone())
-                    .collect();
-                combo(ui, "pull-branch", &mut self.branch, &branches, Some("(tracked branch)"), 260.0);
-                ui.end_row();
-                ui.label("Pull into local branch:");
-                ui.label(RichText::new(head_text(snap)).strong());
-                ui.end_row();
-            });
+            egui::Grid::new("pull-grid")
+                .num_columns(2)
+                .spacing([12.0, 6.0])
+                .show(ui, |ui| {
+                    ui.label("Pull from remote:");
+                    if combo(ui, "pull-remote", &mut self.remote, &remotes, None, 260.0) {
+                        self.branch.clear();
+                    }
+                    ui.end_row();
+                    ui.label("Remote branch to pull:");
+                    let branches: Vec<String> = snap
+                        .refs
+                        .remote_branches
+                        .iter()
+                        .filter(|b| b.remote == self.remote)
+                        .map(|b| b.name.clone())
+                        .collect();
+                    combo(
+                        ui,
+                        "pull-branch",
+                        &mut self.branch,
+                        &branches,
+                        Some("(tracked branch)"),
+                        260.0,
+                    );
+                    ui.end_row();
+                    ui.label("Pull into local branch:");
+                    ui.label(RichText::new(head_text(snap)).strong());
+                    ui.end_row();
+                });
             ui.add_space(4.0);
             ui.checkbox(&mut self.rebase, "Rebase instead of merge");
             if self.rebase {
-                hint(ui, "Local commits are replayed on top of the remote branch (rewrites unpushed commits).");
+                hint(
+                    ui,
+                    "Local commits are replayed on top of the remote branch (rewrites unpushed commits).",
+                );
             }
             if remotes.is_empty() {
                 no_remotes(ui, ctl);
@@ -90,7 +119,10 @@ impl TabDialog for Pull {
                 ctl.invalid();
             }
             if snap.refs.state != gk_core::RepoState::Clean {
-                warning(ui, format!("An operation is in progress ({}).", snap.refs.state.label()));
+                warning(
+                    ui,
+                    format!("An operation is in progress ({}).", snap.refs.state.label()),
+                );
             }
         });
         finish(out, || {
@@ -101,7 +133,9 @@ impl TabDialog for Pull {
                 Some(b) => format!("Pull {remote}/{b}"),
                 None => format!("Pull {remote}"),
             };
-            tab.session.run_op(label, move |repo, cancel, p| repo.pull(Some(&remote), branch.as_deref(), rebase, cancel, p));
+            tab.session.run_op(label, move |repo, cancel, p| {
+                repo.pull(Some(&remote), branch.as_deref(), rebase, cancel, p)
+            });
         })
     }
 }
@@ -146,7 +180,13 @@ impl Push {
                 track: false,
             })
             .collect();
-        let mut p = Self { remote, rows, tags: false, force: false, force_confirmed: false };
+        let mut p = Self {
+            remote,
+            rows,
+            tags: false,
+            force: false,
+            force_confirmed: false,
+        };
         p.update_names(&remotes);
         p
     }
@@ -154,7 +194,11 @@ impl Push {
     /// Remote branch names: the upstream's name on the chosen remote, else the same name.
     fn update_names(&mut self, remotes: &[String]) {
         for r in &mut self.rows {
-            match r.upstream.as_deref().and_then(|u| split_remote_ref(remotes, u)) {
+            match r
+                .upstream
+                .as_deref()
+                .and_then(|u| split_remote_ref(remotes, u))
+            {
                 Some((rm, b)) if rm == self.remote => {
                     r.remote_name = b;
                     r.track = false;
@@ -169,7 +213,13 @@ impl Push {
 }
 
 impl TabDialog for Push {
-    fn show(&mut self, ctx: &Context, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared) -> bool {
+    fn show(
+        &mut self,
+        ctx: &Context,
+        tab: &mut RepoTab,
+        snap: &Snapshot,
+        shared: &mut Shared,
+    ) -> bool {
         let remotes = remote_names(snap);
         let confirm_force = shared.settings.confirmations.force_push;
         let (out, ()) = modal(ctx, "push", "Push", 600.0, "Push", |ui, ctl| {
@@ -179,7 +229,15 @@ impl TabDialog for Push {
                     self.update_names(&remotes);
                 }
                 if let Some(r) = snap.refs.remotes.iter().find(|r| r.name == self.remote) {
-                    hint(ui, if r.push_url.is_empty() { &r.fetch_url } else { &r.push_url }.clone());
+                    hint(
+                        ui,
+                        if r.push_url.is_empty() {
+                            &r.fetch_url
+                        } else {
+                            &r.push_url
+                        }
+                        .clone(),
+                    );
                 }
             });
             ui.add_space(4.0);
@@ -193,27 +251,44 @@ impl TabDialog for Push {
                 }
             });
             egui::Frame::group(ui.style()).show(ui, |ui| {
-                egui::ScrollArea::vertical().max_height(220.0).auto_shrink([false, true]).show(ui, |ui| {
-                    egui::Grid::new("push-rows").num_columns(4).striped(true).spacing([10.0, 4.0]).show(ui, |ui| {
-                        ui.label(RichText::new("Push").strong());
-                        ui.label(RichText::new("Local branch").strong());
-                        ui.label(RichText::new("Remote branch").strong());
-                        ui.label(RichText::new("Track").strong()).on_hover_text("Set as upstream (git push -u)");
-                        ui.end_row();
-                        for r in &mut self.rows {
-                            ui.checkbox(&mut r.push, "");
-                            let b = snap.refs.branch(&r.branch);
-                            let mut label = r.branch.clone();
-                            if let Some(b) = b.filter(|b| b.upstream.is_some() && b.ahead > 0) {
-                                label.push_str(&format!("  ↑{}", b.ahead));
-                            }
-                            ui.label(label);
-                            ui.add_enabled(r.push, egui::TextEdit::singleline(&mut r.remote_name).desired_width(200.0));
-                            ui.add_enabled(r.push, egui::Checkbox::without_text(&mut r.track));
-                            ui.end_row();
-                        }
+                egui::ScrollArea::vertical()
+                    .max_height(220.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        egui::Grid::new("push-rows")
+                            .num_columns(4)
+                            .striped(true)
+                            .spacing([10.0, 4.0])
+                            .show(ui, |ui| {
+                                ui.label(RichText::new("Push").strong());
+                                ui.label(RichText::new("Local branch").strong());
+                                ui.label(RichText::new("Remote branch").strong());
+                                ui.label(RichText::new("Track").strong())
+                                    .on_hover_text("Set as upstream (git push -u)");
+                                ui.end_row();
+                                for r in &mut self.rows {
+                                    ui.checkbox(&mut r.push, "");
+                                    let b = snap.refs.branch(&r.branch);
+                                    let mut label = r.branch.clone();
+                                    if let Some(b) =
+                                        b.filter(|b| b.upstream.is_some() && b.ahead > 0)
+                                    {
+                                        label.push_str(&format!("  ↑{}", b.ahead));
+                                    }
+                                    ui.label(label);
+                                    ui.add_enabled(
+                                        r.push,
+                                        egui::TextEdit::singleline(&mut r.remote_name)
+                                            .desired_width(200.0),
+                                    );
+                                    ui.add_enabled(
+                                        r.push,
+                                        egui::Checkbox::without_text(&mut r.track),
+                                    );
+                                    ui.end_row();
+                                }
+                            });
                     });
-                });
             });
             ui.checkbox(&mut self.tags, "Push all tags");
             ui.checkbox(&mut self.force, "Force push (--force-with-lease)");
@@ -224,7 +299,10 @@ impl TabDialog for Push {
                      that you have fetched but not integrated will be lost.",
                 );
                 if confirm_force {
-                    ui.checkbox(&mut self.force_confirmed, RichText::new("I understand, overwrite the remote history").color(DANGER));
+                    ui.checkbox(
+                        &mut self.force_confirmed,
+                        RichText::new("I understand, overwrite the remote history").color(DANGER),
+                    );
                     if !self.force_confirmed {
                         ctl.invalid();
                     }
@@ -247,7 +325,10 @@ impl TabDialog for Push {
                 }
             }
             if selected.iter().any(|r| r.track) {
-                hint(ui, "Tracked branches get the chosen remote branch as upstream.");
+                hint(
+                    ui,
+                    "Tracked branches get the chosen remote branch as upstream.",
+                );
             }
         });
         finish(out, || {
@@ -256,21 +337,44 @@ impl TabDialog for Push {
             let mut plain = Vec::new();
             for r in self.rows.iter().filter(|r| r.push) {
                 let spec = (r.branch.clone(), r.remote_name.trim().to_string());
-                if r.track { tracked.push(spec) } else { plain.push(spec) }
+                if r.track {
+                    tracked.push(spec)
+                } else {
+                    plain.push(spec)
+                }
             }
             let (force, tags) = (self.force, self.tags);
-            let label = if force { format!("Force push to {remote}") } else { format!("Push to {remote}") };
+            let label = if force {
+                format!("Force push to {remote}")
+            } else {
+                format!("Push to {remote}")
+            };
             tab.session.run_op(label, move |repo, cancel, p| {
                 let mut out = String::new();
                 for (refspecs, set_upstream) in [(tracked, true), (plain, false)] {
                     if refspecs.is_empty() {
                         continue;
                     }
-                    let o = PushOptions { remote: remote.clone(), refspecs, force, set_upstream, tags: false, no_verify: false };
+                    let o = PushOptions {
+                        remote: remote.clone(),
+                        refspecs,
+                        force,
+                        set_upstream,
+                        tags: false,
+                        no_verify: false,
+                    };
                     out.push_str(&repo.push(&o, cancel, &mut *p)?);
                 }
                 if tags {
-                    let o = repo.git().run_streaming(&["push", "--progress", &remote, "--tags"], None, cancel, &mut *p)?.check()?;
+                    let o = repo
+                        .git()
+                        .run_streaming(
+                            &["push", "--progress", &remote, "--tags"],
+                            None,
+                            cancel,
+                            &mut *p,
+                        )?
+                        .check()?;
                     out.push_str(&o.stderr_str());
                 }
                 Ok(out)
@@ -290,19 +394,39 @@ pub struct Fetch {
 
 impl Fetch {
     pub fn new(_s: &Snapshot) -> Self {
-        Self { remote: String::new(), prune: false, tags: false }
+        Self {
+            remote: String::new(),
+            prune: false,
+            tags: false,
+        }
     }
 }
 
 impl TabDialog for Fetch {
-    fn show(&mut self, ctx: &Context, tab: &mut RepoTab, snap: &Snapshot, _shared: &mut Shared) -> bool {
+    fn show(
+        &mut self,
+        ctx: &Context,
+        tab: &mut RepoTab,
+        snap: &Snapshot,
+        _shared: &mut Shared,
+    ) -> bool {
         let remotes = remote_names(snap);
         let (out, ()) = modal(ctx, "fetch", "Fetch", 420.0, "Fetch", |ui, ctl| {
             ui.horizontal(|ui| {
                 ui.label("Fetch from:");
-                combo(ui, "fetch-remote", &mut self.remote, &remotes, Some("All remotes"), 220.0);
+                combo(
+                    ui,
+                    "fetch-remote",
+                    &mut self.remote,
+                    &remotes,
+                    Some("All remotes"),
+                    220.0,
+                );
             });
-            ui.checkbox(&mut self.prune, "Prune tracking branches no longer on the remote");
+            ui.checkbox(
+                &mut self.prune,
+                "Prune tracking branches no longer on the remote",
+            );
             ui.checkbox(&mut self.tags, "Fetch all tags");
             if remotes.is_empty() {
                 no_remotes(ui, ctl);
@@ -310,12 +434,17 @@ impl TabDialog for Fetch {
         });
         finish(out, || {
             let remote = (!self.remote.is_empty()).then(|| self.remote.clone());
-            let opts = FetchOptions { prune: self.prune, tags: self.tags };
+            let opts = FetchOptions {
+                prune: self.prune,
+                tags: self.tags,
+            };
             let label = match &remote {
                 Some(r) => format!("Fetch {r}"),
                 None => "Fetch all remotes".to_string(),
             };
-            tab.session.run_op(label, move |repo, cancel, p| repo.fetch(remote.as_deref(), &opts, cancel, p));
+            tab.session.run_op(label, move |repo, cancel, p| {
+                repo.fetch(remote.as_deref(), &opts, cancel, p)
+            });
         })
     }
 }
@@ -330,25 +459,42 @@ pub struct AddRemote {
 
 impl Default for AddRemote {
     fn default() -> Self {
-        Self { name: String::new(), url: String::new(), fetch: true }
+        Self {
+            name: String::new(),
+            url: String::new(),
+            fetch: true,
+        }
     }
 }
 
 impl TabDialog for AddRemote {
-    fn show(&mut self, ctx: &Context, tab: &mut RepoTab, snap: &Snapshot, _shared: &mut Shared) -> bool {
+    fn show(
+        &mut self,
+        ctx: &Context,
+        tab: &mut RepoTab,
+        snap: &Snapshot,
+        _shared: &mut Shared,
+    ) -> bool {
         if self.name.is_empty() && snap.refs.remotes.is_empty() {
             self.name = "origin".into();
         }
         let (out, ()) = modal(ctx, "add-remote", "Add remote", 480.0, "Add", |ui, ctl| {
-            egui::Grid::new("add-remote-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                ui.label("Name:");
-                let r = ui.add(egui::TextEdit::singleline(&mut self.name).desired_width(320.0));
-                ctl.focus(&r);
-                ui.end_row();
-                ui.label("URL / path:");
-                ui.add(egui::TextEdit::singleline(&mut self.url).desired_width(320.0).hint_text("https://… or git@host:user/repo.git"));
-                ui.end_row();
-            });
+            egui::Grid::new("add-remote-grid")
+                .num_columns(2)
+                .spacing([12.0, 6.0])
+                .show(ui, |ui| {
+                    ui.label("Name:");
+                    let r = ui.add(egui::TextEdit::singleline(&mut self.name).desired_width(320.0));
+                    ctl.focus(&r);
+                    ui.end_row();
+                    ui.label("URL / path:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.url)
+                            .desired_width(320.0)
+                            .hint_text("https://… or git@host:user/repo.git"),
+                    );
+                    ui.end_row();
+                });
             ui.checkbox(&mut self.fetch, "Fetch immediately");
             let name = self.name.trim();
             if let Err(e) = check_remote_name(name) {
@@ -368,14 +514,19 @@ impl TabDialog for AddRemote {
             }
         });
         finish(out, || {
-            let (name, url, fetch) = (self.name.trim().to_string(), self.url.trim().to_string(), self.fetch);
-            tab.session.run_op(format!("Add remote {name}"), move |repo, cancel, p| {
-                repo.add_remote(&name, &url)?;
-                if fetch {
-                    return repo.fetch(Some(&name), &FetchOptions::default(), cancel, p);
-                }
-                Ok(String::new())
-            });
+            let (name, url, fetch) = (
+                self.name.trim().to_string(),
+                self.url.trim().to_string(),
+                self.fetch,
+            );
+            tab.session
+                .run_op(format!("Add remote {name}"), move |repo, cancel, p| {
+                    repo.add_remote(&name, &url)?;
+                    if fetch {
+                        return repo.fetch(Some(&name), &FetchOptions::default(), cancel, p);
+                    }
+                    Ok(String::new())
+                });
         })
     }
 }
@@ -389,28 +540,48 @@ pub struct EditRemote {
 
 impl EditRemote {
     pub fn new(name: String) -> Self {
-        Self { old: name.clone(), name, url: String::new(), old_url: None }
+        Self {
+            old: name.clone(),
+            name,
+            url: String::new(),
+            old_url: None,
+        }
     }
 }
 
 impl TabDialog for EditRemote {
-    fn show(&mut self, ctx: &Context, tab: &mut RepoTab, snap: &Snapshot, _shared: &mut Shared) -> bool {
+    fn show(
+        &mut self,
+        ctx: &Context,
+        tab: &mut RepoTab,
+        snap: &Snapshot,
+        _shared: &mut Shared,
+    ) -> bool {
         if self.old_url.is_none() {
-            let u = snap.refs.remotes.iter().find(|r| r.name == self.old).map(|r| r.fetch_url.clone()).unwrap_or_default();
+            let u = snap
+                .refs
+                .remotes
+                .iter()
+                .find(|r| r.name == self.old)
+                .map(|r| r.fetch_url.clone())
+                .unwrap_or_default();
             self.url = u.clone();
             self.old_url = Some(u);
         }
         let title = format!("Edit remote '{}'", self.old);
         let (out, ()) = modal(ctx, "edit-remote", &title, 480.0, "Save", |ui, ctl| {
-            egui::Grid::new("edit-remote-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                ui.label("Name:");
-                ui.add(egui::TextEdit::singleline(&mut self.name).desired_width(320.0));
-                ui.end_row();
-                ui.label("URL / path:");
-                let r = ui.add(egui::TextEdit::singleline(&mut self.url).desired_width(320.0));
-                ctl.focus(&r);
-                ui.end_row();
-            });
+            egui::Grid::new("edit-remote-grid")
+                .num_columns(2)
+                .spacing([12.0, 6.0])
+                .show(ui, |ui| {
+                    ui.label("Name:");
+                    ui.add(egui::TextEdit::singleline(&mut self.name).desired_width(320.0));
+                    ui.end_row();
+                    ui.label("URL / path:");
+                    let r = ui.add(egui::TextEdit::singleline(&mut self.url).desired_width(320.0));
+                    ctl.focus(&r);
+                    ui.end_row();
+                });
             let name = self.name.trim();
             if let Err(e) = check_remote_name(name) {
                 error(ui, e);
@@ -427,7 +598,10 @@ impl TabDialog for EditRemote {
                 ctl.invalid();
             }
             if name != self.old {
-                hint(ui, "Renaming also renames the remote-tracking branches and upstream settings.");
+                hint(
+                    ui,
+                    "Renaming also renames the remote-tracking branches and upstream settings.",
+                );
             }
         });
         finish(out, || {
@@ -438,15 +612,16 @@ impl TabDialog for EditRemote {
             if name == old && !url_changed {
                 return;
             }
-            tab.session.run_op(format!("Edit remote {old}"), move |repo, _, _| {
-                if name != old {
-                    repo.rename_remote(&old, &name)?;
-                }
-                if url_changed {
-                    repo.set_remote_url(&name, &url)?;
-                }
-                Ok(String::new())
-            });
+            tab.session
+                .run_op(format!("Edit remote {old}"), move |repo, _, _| {
+                    if name != old {
+                        repo.rename_remote(&old, &name)?;
+                    }
+                    if url_changed {
+                        repo.set_remote_url(&name, &url)?;
+                    }
+                    Ok(String::new())
+                });
         })
     }
 }
@@ -456,18 +631,35 @@ pub struct RemoveRemote {
 }
 
 impl TabDialog for RemoveRemote {
-    fn show(&mut self, ctx: &Context, tab: &mut RepoTab, _snap: &Snapshot, _shared: &mut Shared) -> bool {
-        let (out, ()) = modal(ctx, "remove-remote", "Remove remote", 420.0, "Remove", |ui, ctl| {
-            ui.label(format!("Remove the remote '{}'?", self.name));
-            hint(ui, "Its remote-tracking branches and configuration are deleted locally. Nothing changes on the server.");
-            ctl.danger = true;
-        });
+    fn show(
+        &mut self,
+        ctx: &Context,
+        tab: &mut RepoTab,
+        _snap: &Snapshot,
+        _shared: &mut Shared,
+    ) -> bool {
+        let (out, ()) = modal(
+            ctx,
+            "remove-remote",
+            "Remove remote",
+            420.0,
+            "Remove",
+            |ui, ctl| {
+                ui.label(format!("Remove the remote '{}'?", self.name));
+                hint(
+                    ui,
+                    "Its remote-tracking branches and configuration are deleted locally. Nothing changes on the server.",
+                );
+                ctl.danger = true;
+            },
+        );
         finish(out, || {
             let name = self.name.clone();
-            tab.session.run_op(format!("Remove remote {name}"), move |repo, _, _| {
-                repo.remove_remote(&name)?;
-                Ok(String::new())
-            });
+            tab.session
+                .run_op(format!("Remove remote {name}"), move |repo, _, _| {
+                    repo.remove_remote(&name)?;
+                    Ok(String::new())
+                });
         })
     }
 }
@@ -482,62 +674,90 @@ pub struct CheckoutRemote {
 
 impl CheckoutRemote {
     pub fn new(remote_branch: String) -> Self {
-        Self { remote_branch, local: None, track: true }
+        Self {
+            remote_branch,
+            local: None,
+            track: true,
+        }
     }
 }
 
 impl TabDialog for CheckoutRemote {
-    fn show(&mut self, ctx: &Context, tab: &mut RepoTab, snap: &Snapshot, _shared: &mut Shared) -> bool {
+    fn show(
+        &mut self,
+        ctx: &Context,
+        tab: &mut RepoTab,
+        snap: &Snapshot,
+        _shared: &mut Shared,
+    ) -> bool {
         let local = self.local.get_or_insert_with(|| {
-            split_remote_ref(&remote_names(snap), &self.remote_branch).map(|(_, b)| b).unwrap_or_else(|| self.remote_branch.clone())
+            split_remote_ref(&remote_names(snap), &self.remote_branch)
+                .map(|(_, b)| b)
+                .unwrap_or_else(|| self.remote_branch.clone())
         });
         let mut checkout_existing = false;
-        let (out, ()) = modal(ctx, "checkout-remote", "Checkout remote branch", 460.0, "Checkout", |ui, ctl| {
-            ui.horizontal(|ui| {
-                ui.label("Remote branch:");
-                ui.label(RichText::new(&self.remote_branch).strong());
-            });
-            ui.horizontal(|ui| {
-                ui.label("New local branch name:");
-                let r = ui.add(egui::TextEdit::singleline(local).desired_width(260.0));
-                ctl.focus(&r);
-            });
-            ui.checkbox(&mut self.track, "Track the remote branch (set upstream)");
-            let name = local.trim();
-            if let Err(e) = check_branch_name(name) {
-                error(ui, e);
-                ctl.invalid();
-            } else if snap.refs.branch(name).is_some() {
-                error(ui, format!("A local branch named '{name}' already exists."));
-                if ui.button(format!("Checkout existing '{name}' instead")).clicked() {
-                    checkout_existing = true;
-                    ctl.close = true;
+        let (out, ()) = modal(
+            ctx,
+            "checkout-remote",
+            "Checkout remote branch",
+            460.0,
+            "Checkout",
+            |ui, ctl| {
+                ui.horizontal(|ui| {
+                    ui.label("Remote branch:");
+                    ui.label(RichText::new(&self.remote_branch).strong());
+                });
+                ui.horizontal(|ui| {
+                    ui.label("New local branch name:");
+                    let r = ui.add(egui::TextEdit::singleline(local).desired_width(260.0));
+                    ctl.focus(&r);
+                });
+                ui.checkbox(&mut self.track, "Track the remote branch (set upstream)");
+                let name = local.trim();
+                if let Err(e) = check_branch_name(name) {
+                    error(ui, e);
+                    ctl.invalid();
+                } else if snap.refs.branch(name).is_some() {
+                    error(ui, format!("A local branch named '{name}' already exists."));
+                    if ui
+                        .button(format!("Checkout existing '{name}' instead"))
+                        .clicked()
+                    {
+                        checkout_existing = true;
+                        ctl.close = true;
+                    }
+                    ctl.invalid();
                 }
-                ctl.invalid();
-            }
-            if worktree_dirty(snap) {
-                warning(ui, "You have uncommitted changes; they are carried over unless they conflict.");
-            }
-        });
+                if worktree_dirty(snap) {
+                    warning(
+                        ui,
+                        "You have uncommitted changes; they are carried over unless they conflict.",
+                    );
+                }
+            },
+        );
         let local = local.trim().to_string();
         if checkout_existing {
-            tab.session.run_op(format!("Checkout {local}"), move |repo, _, _| {
-                repo.checkout(&local)?;
-                Ok(String::new())
-            });
+            tab.session
+                .run_op(format!("Checkout {local}"), move |repo, _, _| {
+                    repo.checkout(&local)?;
+                    Ok(String::new())
+                });
             return false;
         }
         finish(out, || {
             let rb = self.remote_branch.clone();
             let track = self.track;
-            tab.session.run_op(format!("Checkout {rb}"), move |repo, _, _| {
-                if track {
-                    repo.checkout_remote(&rb, &local)?;
-                } else {
-                    repo.git().run(&["checkout", "--no-track", "-b", &local, &rb])?;
-                }
-                Ok(String::new())
-            });
+            tab.session
+                .run_op(format!("Checkout {rb}"), move |repo, _, _| {
+                    if track {
+                        repo.checkout_remote(&rb, &local)?;
+                    } else {
+                        repo.git()
+                            .run(&["checkout", "--no-track", "-b", &local, &rb])?;
+                    }
+                    Ok(String::new())
+                });
         })
     }
 }
@@ -548,19 +768,38 @@ pub struct DeleteRemoteBranch {
 }
 
 impl TabDialog for DeleteRemoteBranch {
-    fn show(&mut self, ctx: &Context, tab: &mut RepoTab, _snap: &Snapshot, _shared: &mut Shared) -> bool {
-        let (out, ()) = modal(ctx, "delete-remote-branch", "Delete remote branch", 460.0, "Delete", |ui, ctl| {
-            ui.label("Delete this branch on the server?");
-            ui.label(RichText::new(format!("{}/{}", self.remote, self.branch)).strong());
-            ui.colored_label(DANGER, "This removes the branch for everyone using the remote.");
-            ctl.danger = true;
-        });
+    fn show(
+        &mut self,
+        ctx: &Context,
+        tab: &mut RepoTab,
+        _snap: &Snapshot,
+        _shared: &mut Shared,
+    ) -> bool {
+        let (out, ()) = modal(
+            ctx,
+            "delete-remote-branch",
+            "Delete remote branch",
+            460.0,
+            "Delete",
+            |ui, ctl| {
+                ui.label("Delete this branch on the server?");
+                ui.label(RichText::new(format!("{}/{}", self.remote, self.branch)).strong());
+                ui.colored_label(
+                    DANGER,
+                    "This removes the branch for everyone using the remote.",
+                );
+                ctl.danger = true;
+            },
+        );
         finish(out, || {
             let (remote, branch) = (self.remote.clone(), self.branch.clone());
-            tab.session.run_op(format!("Delete {remote}/{branch}"), move |repo, cancel, p| {
-                repo.delete_remote_branch(&remote, &branch, cancel, p)?;
-                Ok(String::new())
-            });
+            tab.session.run_op(
+                format!("Delete {remote}/{branch}"),
+                move |repo, cancel, p| {
+                    repo.delete_remote_branch(&remote, &branch, cancel, p)?;
+                    Ok(String::new())
+                },
+            );
         })
     }
 }

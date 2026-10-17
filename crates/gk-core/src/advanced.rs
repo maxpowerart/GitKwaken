@@ -2,8 +2,8 @@
 //! submodules, worktrees, cleaning and repository optimization.
 
 use crate::Repo;
-use anyhow::{Result, bail};
 use crate::ops::{literal_paths, plain};
+use anyhow::{Result, bail};
 use gk_cli::CancelToken;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -44,7 +44,10 @@ pub fn parse_blame_porcelain(data: &str) -> Blame {
     for line in data.lines() {
         if let Some(text) = line.strip_prefix('\t') {
             if let Some(c) = current {
-                blame.lines.push(BlameLine { commit: c, orig_line: orig });
+                blame.lines.push(BlameLine {
+                    commit: c,
+                    orig_line: orig,
+                });
                 blame.text.push(text.to_string());
             }
             continue;
@@ -67,7 +70,7 @@ pub fn parse_blame_porcelain(data: &str) -> Blame {
             continue;
         }
         let Some(c) = current else { continue };
-        let rest = line.splitn(2, ' ').nth(1).unwrap_or_default();
+        let rest = line.split_once(' ').map(|x| x.1).unwrap_or_default();
         let commit = &mut blame.commits[c];
         match first {
             "author" => commit.author = rest.to_string(),
@@ -118,7 +121,9 @@ pub fn parse_worktrees(data: &str) -> Vec<Worktree> {
                     any = true;
                 }
                 "HEAD" => wt.head = v.to_string(),
-                "branch" => wt.branch = Some(v.strip_prefix("refs/heads/").unwrap_or(v).to_string()),
+                "branch" => {
+                    wt.branch = Some(v.strip_prefix("refs/heads/").unwrap_or(v).to_string())
+                }
                 "bare" => wt.bare = true,
                 "detached" => wt.detached = true,
                 "locked" => wt.locked = true,
@@ -150,10 +155,17 @@ pub fn parse_submodule_status(data: &str) -> Vec<Submodule> {
             let rest = &l[1..];
             let (commit, rest) = rest.split_once(' ').unwrap_or((rest, ""));
             let (path, describe) = match rest.rfind(" (") {
-                Some(i) if rest.ends_with(')') => (&rest[..i], Some(rest[i + 2..rest.len() - 1].to_string())),
+                Some(i) if rest.ends_with(')') => {
+                    (&rest[..i], Some(rest[i + 2..rest.len() - 1].to_string()))
+                }
                 _ => (rest, None),
             };
-            Submodule { path: path.to_string(), commit: commit.to_string(), state, describe }
+            Submodule {
+                path: path.to_string(),
+                commit: commit.to_string(),
+                state,
+                describe,
+            }
         })
         .collect()
 }
@@ -212,10 +224,10 @@ impl FlowConfig {
     pub fn classify<'a>(&self, branch: &'a str) -> Option<(FlowKind, &'a str)> {
         for k in [FlowKind::Feature, FlowKind::Release, FlowKind::Hotfix] {
             let p = self.prefix(k);
-            if !p.is_empty() {
-                if let Some(rest) = branch.strip_prefix(p) {
-                    return Some((k, rest));
-                }
+            if !p.is_empty()
+                && let Some(rest) = branch.strip_prefix(p)
+            {
+                return Some((k, rest));
             }
         }
         None
@@ -248,10 +260,20 @@ impl Repo {
 
     // worktrees ------------------------------------------------------------
     pub fn worktrees(&self) -> Result<Vec<Worktree>> {
-        Ok(parse_worktrees(&self.git().run(&["worktree", "list", "--porcelain"])?.stdout_str()))
+        Ok(parse_worktrees(
+            &self
+                .git()
+                .run(&["worktree", "list", "--porcelain"])?
+                .stdout_str(),
+        ))
     }
 
-    pub fn worktree_add(&self, path: &std::path::Path, branch: &str, new_branch: bool) -> Result<()> {
+    pub fn worktree_add(
+        &self,
+        path: &std::path::Path,
+        branch: &str,
+        new_branch: bool,
+    ) -> Result<()> {
         plain(&[&path.to_string_lossy(), branch])?;
         let p = path.to_string_lossy().to_string();
         if new_branch {
@@ -283,19 +305,49 @@ impl Repo {
         if !self.abs(".gitmodules").exists() {
             return Ok(Vec::new());
         }
-        Ok(parse_submodule_status(&self.git().run(&["submodule", "status", "--recursive"])?.stdout_str()))
+        Ok(parse_submodule_status(
+            &self
+                .git()
+                .run(&["submodule", "status", "--recursive"])?
+                .stdout_str(),
+        ))
     }
 
-    pub fn submodule_update(&self, paths: &[String], cancel: &CancelToken, p: crate::ops::Progress) -> Result<()> {
-        let mut args = vec!["submodule", "update", "--init", "--recursive", "--progress", "--"];
+    pub fn submodule_update(
+        &self,
+        paths: &[String],
+        cancel: &CancelToken,
+        p: crate::ops::Progress,
+    ) -> Result<()> {
+        let mut args = vec![
+            "submodule",
+            "update",
+            "--init",
+            "--recursive",
+            "--progress",
+            "--",
+        ];
         args.extend(paths.iter().map(String::as_str));
         self.git().run_streaming(&args, None, cancel, p)?.check()?;
         Ok(())
     }
 
-    pub fn submodule_add(&self, url: &str, path: &str, cancel: &CancelToken, p: crate::ops::Progress) -> Result<()> {
+    pub fn submodule_add(
+        &self,
+        url: &str,
+        path: &str,
+        cancel: &CancelToken,
+        p: crate::ops::Progress,
+    ) -> Result<()> {
         plain(&[url, path])?;
-        self.git().run_streaming(&["submodule", "add", "--progress", url, path], None, cancel, p)?.check()?;
+        self.git()
+            .run_streaming(
+                &["submodule", "add", "--progress", url, path],
+                None,
+                cancel,
+                p,
+            )?
+            .check()?;
         Ok(())
     }
 
@@ -364,7 +416,9 @@ impl Repo {
     }
 
     pub fn lfs_pull(&self, cancel: &CancelToken, p: crate::ops::Progress) -> Result<()> {
-        self.git().run_streaming(&["lfs", "pull"], None, cancel, p)?.check()?;
+        self.git()
+            .run_streaming(&["lfs", "pull"], None, cancel, p)?
+            .check()?;
         Ok(())
     }
 
@@ -378,7 +432,10 @@ impl Repo {
     }
 
     pub fn sparse_set(&self, dirs: &[String]) -> Result<()> {
-        self.git().run_stdin(&["sparse-checkout", "set", "--cone", "--stdin"], dirs.join("\n").as_bytes())?;
+        self.git().run_stdin(
+            &["sparse-checkout", "set", "--cone", "--stdin"],
+            dirs.join("\n").as_bytes(),
+        )?;
         Ok(())
     }
 
@@ -398,7 +455,10 @@ impl Repo {
             args.push("-x");
         }
         let out = self.git().run(&args)?.stdout_str();
-        Ok(out.lines().filter_map(|l| l.strip_prefix("Would remove ").map(String::from)).collect())
+        Ok(out
+            .lines()
+            .filter_map(|l| l.strip_prefix("Would remove ").map(String::from))
+            .collect())
     }
 
     pub fn clean(&self, paths: &[String]) -> Result<()> {
@@ -406,7 +466,14 @@ impl Repo {
             return Ok(());
         }
         self.git().run_stdin(
-            &["clean", "-f", "-d", "-x", "--pathspec-from-file=-", "--pathspec-file-nul"],
+            &[
+                "clean",
+                "-f",
+                "-d",
+                "-x",
+                "--pathspec-from-file=-",
+                "--pathspec-file-nul",
+            ],
             &literal_paths(paths),
         )?;
         Ok(())
@@ -434,7 +501,11 @@ impl Repo {
         set("gitflow.prefix.release", &cfg.release)?;
         set("gitflow.prefix.hotfix", &cfg.hotfix)?;
         set("gitflow.prefix.versiontag", &cfg.version_tag)?;
-        let exists = |b: &str| self.git().run(&["rev-parse", "--verify", "-q", &format!("refs/heads/{b}")]).is_ok();
+        let exists = |b: &str| {
+            self.git()
+                .run(&["rev-parse", "--verify", "-q", &format!("refs/heads/{b}")])
+                .is_ok()
+        };
         if !exists(&cfg.develop) {
             if !exists(&cfg.master) {
                 bail!("branch '{}' does not exist", cfg.master);
@@ -444,25 +515,41 @@ impl Repo {
         Ok(())
     }
 
-    pub fn flow_start(&self, cfg: &FlowConfig, kind: FlowKind, name: &str, base: Option<&str>) -> Result<()> {
+    pub fn flow_start(
+        &self,
+        cfg: &FlowConfig,
+        kind: FlowKind,
+        name: &str,
+        base: Option<&str>,
+    ) -> Result<()> {
         plain(&[name, base.unwrap_or_default()])?;
         let branch = format!("{}{name}", cfg.prefix(kind));
         let default_base = match kind {
             FlowKind::Hotfix => &cfg.master,
             _ => &cfg.develop,
         };
-        self.git().run(&["checkout", "-b", &branch, base.unwrap_or(default_base)])?;
+        self.git()
+            .run(&["checkout", "-b", &branch, base.unwrap_or(default_base)])?;
         Ok(())
     }
 
     /// Finishes a flow branch: merges with --no-ff, tags releases/hotfixes,
     /// deletes the branch. Stops (Ok with text) on merge conflicts.
-    pub fn flow_finish(&self, cfg: &FlowConfig, kind: FlowKind, name: &str, tag_message: Option<&str>, keep: bool) -> Result<String> {
+    pub fn flow_finish(
+        &self,
+        cfg: &FlowConfig,
+        kind: FlowKind,
+        name: &str,
+        tag_message: Option<&str>,
+        keep: bool,
+    ) -> Result<String> {
         let branch = format!("{}{name}", cfg.prefix(kind));
         let mut log = String::new();
         let merge_into = |target: &str, log: &mut String| -> Result<bool> {
             self.git().run(&["checkout", target])?;
-            let out = self.git().run_raw(&["merge", "--no-ff", "--no-edit", &branch], None)?;
+            let out = self
+                .git()
+                .run_raw(&["merge", "--no-ff", "--no-edit", &branch], None)?;
             log.push_str(&out.stdout_str());
             if !out.success() {
                 log.push_str(&out.stderr_str());
@@ -507,8 +594,14 @@ impl Repo {
                 .git()
                 .run(&["config", "--global", "--get-all", "maintenance.repo"])
                 .map(|o| {
-                    let me = self.workdir().to_string_lossy().replace('\\', "/").to_lowercase();
-                    o.stdout_str().lines().any(|l| l.replace('\\', "/").to_lowercase() == me)
+                    let me = self
+                        .workdir()
+                        .to_string_lossy()
+                        .replace('\\', "/")
+                        .to_lowercase();
+                    o.stdout_str()
+                        .lines()
+                        .any(|l| l.replace('\\', "/").to_lowercase() == me)
                 })
                 .unwrap_or(false),
         }
@@ -521,9 +614,27 @@ impl Repo {
         self.config_set("feature.manyFiles", "true", false)?;
         self.config_set("fetch.writeCommitGraph", "true", false)?;
         self.git()
-            .run_streaming(&["commit-graph", "write", "--reachable", "--changed-paths", "--progress"], None, cancel, &mut *p)?
+            .run_streaming(
+                &[
+                    "commit-graph",
+                    "write",
+                    "--reachable",
+                    "--changed-paths",
+                    "--progress",
+                ],
+                None,
+                cancel,
+                &mut *p,
+            )?
             .check()?;
-        self.git().run_streaming(&["multi-pack-index", "write", "--progress"], None, cancel, p)?.check()?;
+        self.git()
+            .run_streaming(
+                &["multi-pack-index", "write", "--progress"],
+                None,
+                cancel,
+                p,
+            )?
+            .check()?;
         // Registers background maintenance (prefetch, commit-graph, loose objects).
         let _ = self.git().run(&["maintenance", "register"]);
         Ok(())
@@ -565,7 +676,10 @@ mod tests {
     #[test]
     fn flow_classify() {
         let c = FlowConfig::default();
-        assert_eq!(c.classify("feature/login"), Some((FlowKind::Feature, "login")));
+        assert_eq!(
+            c.classify("feature/login"),
+            Some((FlowKind::Feature, "login"))
+        );
         assert_eq!(c.classify("main"), None);
     }
 }

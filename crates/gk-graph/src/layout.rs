@@ -85,12 +85,12 @@ impl State {
         let mut node: Option<usize> = None;
         let mut color = 0;
         for (j, s) in self.lanes.iter().enumerate() {
-            if let Some(s) = s {
-                if s.expect == id {
-                    node = Some(j);
-                    color = s.color;
-                    break;
-                }
+            if let Some(s) = s
+                && s.expect == id
+            {
+                node = Some(j);
+                color = s.color;
+                break;
             }
         }
         let node = match node {
@@ -104,10 +104,20 @@ impl State {
         for j in 0..self.lanes.len() {
             if let Some(s) = self.lanes[j] {
                 if s.expect == id {
-                    edges.push(Edge { kind: EdgeKind::Up, from: j as u16, to: node as u16, color: s.color });
+                    edges.push(Edge {
+                        kind: EdgeKind::Up,
+                        from: j as u16,
+                        to: node as u16,
+                        color: s.color,
+                    });
                     self.lanes[j] = None;
                 } else {
-                    edges.push(Edge { kind: EdgeKind::Through, from: j as u16, to: j as u16, color: s.color });
+                    edges.push(Edge {
+                        kind: EdgeKind::Through,
+                        from: j as u16,
+                        to: j as u16,
+                        color: s.color,
+                    });
                 }
             }
         }
@@ -118,7 +128,10 @@ impl State {
                 continue;
             }
             real_parents += 1;
-            let existing = self.lanes.iter().position(|s| s.is_some_and(|s| s.expect == p));
+            let existing = self
+                .lanes
+                .iter()
+                .position(|s| s.is_some_and(|s| s.expect == p));
             if let Some(k) = existing {
                 let c = self.lanes[k].unwrap().color;
                 edges.push(Edge {
@@ -129,12 +142,25 @@ impl State {
                 });
             } else if first {
                 self.lanes[node] = Some(Slot { expect: p, color });
-                edges.push(Edge { kind: EdgeKind::Down, from: node as u16, to: node as u16, color });
+                edges.push(Edge {
+                    kind: EdgeKind::Down,
+                    from: node as u16,
+                    to: node as u16,
+                    color,
+                });
             } else {
                 let k = self.free_slot(node + 1);
                 let c = self.new_color();
-                self.lanes[k] = Some(Slot { expect: p, color: c });
-                edges.push(Edge { kind: EdgeKind::Down, from: node as u16, to: k as u16, color: c });
+                self.lanes[k] = Some(Slot {
+                    expect: p,
+                    color: c,
+                });
+                edges.push(Edge {
+                    kind: EdgeKind::Down,
+                    from: node as u16,
+                    to: k as u16,
+                    color: c,
+                });
             }
             first = false;
         }
@@ -147,7 +173,12 @@ impl State {
             .max()
             .unwrap_or(0)
             .max(node as u16 + 1);
-        Row { lane: node as u16, color, width, is_merge: real_parents > 1 }
+        Row {
+            lane: node as u16,
+            color,
+            width,
+            is_merge: real_parents > 1,
+        }
     }
 }
 
@@ -177,7 +208,7 @@ impl Layout {
     /// number); `parents` are display indices of its parents ([`NONE`] for unknown).
     pub fn push(&mut self, id: u32, parents: &[u32]) {
         let row = self.rows.len();
-        if row % BLOCK == 0 {
+        if row.is_multiple_of(BLOCK) {
             self.checkpoints.push(self.state.clone());
         }
         if self.parent_start.is_empty() {
@@ -223,7 +254,11 @@ impl Layout {
         self.rows.len() * std::mem::size_of::<Row>()
             + self.parents.len() * 4
             + self.parent_start.len() * 4
-            + self.checkpoints.iter().map(|c| c.lanes.len() * std::mem::size_of::<Option<Slot>>()).sum::<usize>()
+            + self
+                .checkpoints
+                .iter()
+                .map(|c| c.lanes.len() * std::mem::size_of::<Option<Slot>>())
+                .sum::<usize>()
     }
 }
 
@@ -253,7 +288,11 @@ mod tests {
         assert!(l.rows[0].is_merge);
         assert_eq!(l.rows[1].lane, 0);
         assert_eq!(l.rows[2].lane, 1);
-        assert!(l.row_edges(2).iter().any(|e| e.kind == EdgeKind::Down && e.from == 1 && e.to == 0));
+        assert!(
+            l.row_edges(2)
+                .iter()
+                .any(|e| e.kind == EdgeKind::Down && e.from == 1 && e.to == 0)
+        );
         assert_eq!(l.rows[3].lane, 0);
         assert_eq!(l.rows[3].width, 1);
     }
@@ -278,7 +317,7 @@ mod tests {
             if i + 1 < n {
                 ps.push(i + 1);
             }
-            if seed % 7 == 0 && i + 5 < n {
+            if seed.is_multiple_of(7) && i + 5 < n {
                 ps.push(i + 2 + (seed >> 8) % 3);
             }
             parents.push(ps);

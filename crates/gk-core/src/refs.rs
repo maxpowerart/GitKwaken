@@ -77,7 +77,9 @@ pub enum RepoState {
     #[default]
     Clean,
     Merging,
-    Rebasing { interactive: bool },
+    Rebasing {
+        interactive: bool,
+    },
     CherryPicking,
     Reverting,
     Bisecting,
@@ -172,7 +174,11 @@ pub fn load(repo: &Repo) -> Result<Refs> {
         let stash = s.spawn(|| git.run_raw(&["stash", "list", "--format=%H%x00%gs"], None));
         let remotes = s.spawn(|| git.run_raw(&["remote", "-v"], None));
         let out = git.run(&["for-each-ref", "--format=%(refname)%00%(objectname)%00%(*objectname)%00%(upstream:short)%00%(upstream:track,nobracket)%00%(HEAD)%00%(symref)%00%(objecttype)"]);
-        (out, stash.join().expect("stash thread"), remotes.join().expect("remote thread"))
+        (
+            out,
+            stash.join().expect("stash thread"),
+            remotes.join().expect("remote thread"),
+        )
     });
     let (out, stash, remotes) = (out?, stash?, remotes?);
     for line in out.stdout_str().lines() {
@@ -209,7 +215,12 @@ pub fn load(repo: &Repo) -> Result<Refs> {
             let annotated = otype == "tag";
             refs.tags.push(Tag {
                 name: t.to_string(),
-                target: if annotated && !peeled.is_empty() { peeled } else { oid }.to_string(),
+                target: if annotated && !peeled.is_empty() {
+                    peeled
+                } else {
+                    oid
+                }
+                .to_string(),
                 annotated,
             });
         }
@@ -238,20 +249,24 @@ pub fn load(repo: &Repo) -> Result<Refs> {
     }
     refs.state = repo_state(repo);
 
-
     if stash.success() {
         for (i, line) in stash.stdout_str().lines().enumerate() {
             if let Some((id, msg)) = line.split_once('\0') {
-                refs.stashes.push(Stash { index: i, id: id.to_string(), message: msg.to_string() });
+                refs.stashes.push(Stash {
+                    index: i,
+                    id: id.to_string(),
+                    message: msg.to_string(),
+                });
             }
         }
     }
 
-
     let mut by_name: BTreeMap<String, Remote> = BTreeMap::new();
     for line in remotes.stdout_str().lines() {
         // "<name>\t<url> (fetch)"; URLs (local paths) may contain spaces.
-        let Some((name, rest)) = line.split_once('\t') else { continue };
+        let Some((name, rest)) = line.split_once('\t') else {
+            continue;
+        };
         let (url, kind) = match rest.rsplit_once(' ') {
             Some((u, k)) if k == "(fetch)" || k == "(push)" => (u, Some(k)),
             _ => (rest, None),
@@ -275,7 +290,9 @@ pub fn load(repo: &Repo) -> Result<Refs> {
             .remotes
             .iter()
             .map(|r| r.name.as_str())
-            .filter(|n| full.len() > n.len() + 1 && full.starts_with(n) && full.as_bytes()[n.len()] == b'/')
+            .filter(|n| {
+                full.len() > n.len() + 1 && full.starts_with(n) && full.as_bytes()[n.len()] == b'/'
+            })
             .max_by_key(|n| n.len());
         let (remote, name) = match known {
             Some(n) => (n, &full[n.len() + 1..]),
@@ -291,13 +308,25 @@ pub fn load(repo: &Repo) -> Result<Refs> {
         labels.entry(id.clone()).or_default().push(Label::Head);
     }
     for b in &refs.branches {
-        labels.entry(b.target.clone()).or_default().push(Label::Branch { name: b.name.clone(), is_head: b.is_head });
+        labels
+            .entry(b.target.clone())
+            .or_default()
+            .push(Label::Branch {
+                name: b.name.clone(),
+                is_head: b.is_head,
+            });
     }
     for b in &refs.remote_branches {
-        labels.entry(b.target.clone()).or_default().push(Label::Remote(b.full()));
+        labels
+            .entry(b.target.clone())
+            .or_default()
+            .push(Label::Remote(b.full()));
     }
     for t in &refs.tags {
-        labels.entry(t.target.clone()).or_default().push(Label::Tag(t.name.clone()));
+        labels
+            .entry(t.target.clone())
+            .or_default()
+            .push(Label::Tag(t.name.clone()));
     }
     if let Some(s) = refs.stashes.first() {
         labels.entry(s.id.clone()).or_default().push(Label::Stash);
@@ -311,8 +340,8 @@ pub fn repo_state(repo: &Repo) -> RepoState {
     if gd.join("rebase-merge").is_dir() {
         // The merge backend writes `interactive` for plain rebases too; only
         // those drop redundant commits by default.
-        let interactive =
-            gd.join("rebase-merge/interactive").exists() && !gd.join("rebase-merge/drop_redundant_commits").exists();
+        let interactive = gd.join("rebase-merge/interactive").exists()
+            && !gd.join("rebase-merge/drop_redundant_commits").exists();
         RepoState::Rebasing { interactive }
     } else if gd.join("rebase-apply").is_dir() {
         if gd.join("rebase-apply/applying").exists() {

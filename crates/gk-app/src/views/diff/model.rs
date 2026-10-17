@@ -44,7 +44,10 @@ pub fn pair_lines(kinds: &[LineKind]) -> Vec<(Option<usize>, Option<usize>)> {
         let (as_, ae) = (re, i);
         let len = (re - rs).max(ae - as_);
         for k in 0..len {
-            out.push(((rs + k < re).then_some(rs + k), (as_ + k < ae).then_some(as_ + k)));
+            out.push((
+                (rs + k < re).then_some(rs + k),
+                (as_ + k < ae).then_some(as_ + k),
+            ));
         }
     }
     out
@@ -78,7 +81,8 @@ impl Layout {
         for (h, hunk) in d.hunks.iter().enumerate() {
             l.unified_hunks.push(l.unified.len() as u32);
             l.unified.push(Row::Hunk(h as u32));
-            l.unified.extend(hunk.lines.clone().map(|i| Row::Line(i as u32)));
+            l.unified
+                .extend(hunk.lines.clone().map(|i| Row::Line(i as u32)));
 
             l.sbs_hunks.push(l.sbs.len() as u32);
             l.sbs.push(Row::Hunk(h as u32));
@@ -116,7 +120,11 @@ impl Layout {
     }
 
     pub fn hunk_rows(&self, sbs: bool) -> &[u32] {
-        if sbs { &self.sbs_hunks } else { &self.unified_hunks }
+        if sbs {
+            &self.sbs_hunks
+        } else {
+            &self.unified_hunks
+        }
     }
 }
 
@@ -141,7 +149,15 @@ pub fn picker(keys: &[LineKey]) -> impl Fn(&Line) -> bool + Send + Sync + 'stati
 
 /// Keys of every changed line of hunk `h`.
 pub fn hunk_keys(d: &FileDiff, h: usize) -> Vec<LineKey> {
-    d.hunks.get(h).map(|hk| d.lines[hk.lines.clone()].iter().filter_map(line_key).collect()).unwrap_or_default()
+    d.hunks
+        .get(h)
+        .map(|hk| {
+            d.lines[hk.lines.clone()]
+                .iter()
+                .filter_map(line_key)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Selected changed lines (indices into `FileDiff::lines`).
@@ -187,7 +203,10 @@ impl Selection {
         let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
         let hi = hi.min(lines.len().saturating_sub(1) as u32);
         for i in lo..=hi {
-            if lines.get(i as usize).is_some_and(|l| l.kind != LineKind::Context) {
+            if lines
+                .get(i as usize)
+                .is_some_and(|l| l.kind != LineKind::Context)
+            {
                 self.lines.insert(i);
             }
         }
@@ -197,12 +216,20 @@ impl Selection {
     pub fn count_in_hunk(&self, d: &FileDiff, h: usize) -> usize {
         d.hunks
             .get(h)
-            .map(|hk| self.lines.range(hk.lines.start as u32..hk.lines.end as u32).count())
+            .map(|hk| {
+                self.lines
+                    .range(hk.lines.start as u32..hk.lines.end as u32)
+                    .count()
+            })
             .unwrap_or(0)
     }
 
     pub fn keys(&self, d: &FileDiff) -> Vec<LineKey> {
-        self.lines.iter().filter_map(|&i| d.lines.get(i as usize)).filter_map(line_key).collect()
+        self.lines
+            .iter()
+            .filter_map(|&i| d.lines.get(i as usize))
+            .filter_map(line_key)
+            .collect()
     }
 
     /// Selected lines as patch-like text (`+`/`-` prefixed).
@@ -267,8 +294,8 @@ pub fn segments(len: usize, hl: &[std::ops::Range<usize>]) -> Vec<(std::ops::Ran
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gk_diff::{Options, diff};
     use LineKind::*;
+    use gk_diff::{Options, diff};
 
     #[test]
     fn pairing_runs() {
@@ -290,7 +317,10 @@ mod tests {
     #[test]
     fn pairing_more_added_than_removed() {
         let p = pair_lines(&[Removed, Added, Added, Added]);
-        assert_eq!(p, vec![(Some(0), Some(1)), (None, Some(2)), (None, Some(3))]);
+        assert_eq!(
+            p,
+            vec![(Some(0), Some(1)), (None, Some(2)), (None, Some(3))]
+        );
     }
 
     #[test]
@@ -343,7 +373,12 @@ mod tests {
         assert_eq!(keys, vec![(false, 31), (true, 31)]);
         let full = diff(old.as_bytes(), new.as_bytes(), Options::full());
         let pick = picker(&keys);
-        let picked: Vec<String> = full.lines.iter().filter(|l| pick(l)).map(|l| full.line_text(l).into_owned()).collect();
+        let picked: Vec<String> = full
+            .lines
+            .iter()
+            .filter(|l| pick(l))
+            .map(|l| full.line_text(l).into_owned())
+            .collect();
         assert_eq!(picked, vec!["30".to_string(), "thirty".to_string()]);
         let staged = gk_diff::apply_selection(&full, pick, gk_diff::SelectMode::Apply);
         let s = String::from_utf8(staged).unwrap();
@@ -366,8 +401,20 @@ mod tests {
 
     #[test]
     fn segment_split() {
-        assert_eq!(segments(10, &[2..4, 6..8]), vec![(0..2, false), (2..4, true), (4..6, false), (6..8, true), (8..10, false)]);
+        assert_eq!(
+            segments(10, &[2..4, 6..8]),
+            vec![
+                (0..2, false),
+                (2..4, true),
+                (4..6, false),
+                (6..8, true),
+                (8..10, false)
+            ]
+        );
         assert_eq!(segments(3, &[]), vec![(0..3, false)]);
-        assert_eq!(segments(3, std::slice::from_ref(&(0..3))), vec![(0..3, true)]);
+        assert_eq!(
+            segments(3, std::slice::from_ref(&(0..3))),
+            vec![(0..3, true)]
+        );
     }
 }

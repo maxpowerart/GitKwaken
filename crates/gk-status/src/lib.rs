@@ -81,7 +81,11 @@ pub struct Entry {
 
 impl Entry {
     pub fn new(path: impl Into<BString>, kind: Kind) -> Self {
-        Self { path: path.into(), kind, orig_path: None }
+        Self {
+            path: path.into(),
+            kind,
+            orig_path: None,
+        }
     }
 }
 
@@ -109,7 +113,9 @@ impl Status {
     }
 
     pub fn conflicts(&self) -> impl Iterator<Item = &Entry> {
-        self.unstaged.iter().filter(|e| matches!(e.kind, Kind::Conflict(_)))
+        self.unstaged
+            .iter()
+            .filter(|e| matches!(e.kind, Kind::Conflict(_)))
     }
 
     /// Replaces everything inside `scope` with the entries from `update`.
@@ -120,10 +126,20 @@ impl Status {
     pub fn merge(&mut self, update: Status, scope: &[BString], staged_too: bool) {
         let in_scope = |p: &BStr| scope.iter().any(|s| path_within(p, s.as_ref()));
         self.unstaged.retain(|e| !in_scope(e.path.as_ref()));
-        self.unstaged.extend(update.unstaged.into_iter().filter(|e| in_scope(e.path.as_ref())));
+        self.unstaged.extend(
+            update
+                .unstaged
+                .into_iter()
+                .filter(|e| in_scope(e.path.as_ref())),
+        );
         if staged_too {
             self.staged.retain(|e| !in_scope(e.path.as_ref()));
-            self.staged.extend(update.staged.into_iter().filter(|e| in_scope(e.path.as_ref())));
+            self.staged.extend(
+                update
+                    .staged
+                    .into_iter()
+                    .filter(|e| in_scope(e.path.as_ref())),
+            );
         }
         self.took = update.took;
         self.sort();
@@ -198,10 +214,16 @@ mod tests {
     #[test]
     fn merge_replaces_scope() {
         let mut s = Status {
-            unstaged: vec![Entry::new("a/x", Kind::Modified), Entry::new("b/y", Kind::Modified)],
+            unstaged: vec![
+                Entry::new("a/x", Kind::Modified),
+                Entry::new("b/y", Kind::Modified),
+            ],
             ..Default::default()
         };
-        let update = Status { unstaged: vec![Entry::new("a/z", Kind::Untracked)], ..Default::default() };
+        let update = Status {
+            unstaged: vec![Entry::new("a/z", Kind::Untracked)],
+            ..Default::default()
+        };
         s.merge(update, &["a".into()], false);
         let paths: Vec<_> = s.unstaged.iter().map(|e| e.path.to_string()).collect();
         assert_eq!(paths, ["a/z", "b/y"]);

@@ -57,9 +57,17 @@ impl Gfx {
         let info = format!(
             "Direct3D 11 | {} | {} | feature level {} | {} swap chain",
             adapter_name(&adapter),
-            if driver == D3D_DRIVER_TYPE_WARP { "WARP (software)" } else { "hardware" },
+            if driver == D3D_DRIVER_TYPE_WARP {
+                "WARP (software)"
+            } else {
+                "hardware"
+            },
             level_name(level),
-            if flip { "flip-discard" } else { "legacy discard" },
+            if flip {
+                "flip-discard"
+            } else {
+                "legacy discard"
+            },
         );
         log::info!("{info}");
 
@@ -91,7 +99,10 @@ impl Gfx {
             None => {
                 let back: ID3D11Texture2D = unsafe { self.swap_chain.GetBuffer(0) }?;
                 let mut rtv = None;
-                unsafe { self.device.CreateRenderTargetView(&back, None, Some(&mut rtv)) }?;
+                unsafe {
+                    self.device
+                        .CreateRenderTargetView(&back, None, Some(&mut rtv))
+                }?;
                 let rtv = rtv.ok_or_else(|| windows::core::Error::from(E_INVALIDARG))?;
                 self.rtv = Some(rtv.clone());
                 rtv
@@ -134,14 +145,20 @@ impl Gfx {
         let staging = staging.ok_or_else(|| windows::core::Error::from(E_INVALIDARG))?;
         unsafe { self.context.CopyResource(&staging, &back) };
         let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-        unsafe { self.context.Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped)) }?;
+        unsafe {
+            self.context
+                .Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
+        }?;
         let (w, h) = (desc.Width as usize, desc.Height as usize);
         let mut rgba = Vec::with_capacity(w * h * 4);
         for y in 0..h {
             let row = unsafe {
-                std::slice::from_raw_parts((mapped.pData as *const u8).add(y * mapped.RowPitch as usize), w * 4)
+                std::slice::from_raw_parts(
+                    (mapped.pData as *const u8).add(y * mapped.RowPitch as usize),
+                    w * 4,
+                )
             };
-            for px in row.chunks_exact(4) {
+            for px in row.as_chunks::<4>().0 {
                 // BGRA -> RGBA, opaque
                 rgba.extend_from_slice(&[px[2], px[1], px[0], 255]);
             }
@@ -180,7 +197,10 @@ fn take_screenshot_request() -> Option<std::path::PathBuf> {
     static DONE: AtomicBool = AtomicBool::new(false);
     let path = std::env::var_os("GK_DX11_SCREENSHOT")?;
     let start = *START.get_or_init(std::time::Instant::now);
-    let after: u64 = std::env::var("GK_DX11_SCREENSHOT_AFTER_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(3000);
+    let after: u64 = std::env::var("GK_DX11_SCREENSHOT_AFTER_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3000);
     if DONE.load(Ordering::SeqCst) || start.elapsed().as_millis() < after as u128 {
         return None;
     }
@@ -251,7 +271,10 @@ fn create_swap_chain(
         Height: size[1].max(1),
         Format: FORMAT,
         Stereo: false.into(),
-        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        SampleDesc: DXGI_SAMPLE_DESC {
+            Count: 1,
+            Quality: 0,
+        },
         BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
         BufferCount: 2,
         Scaling: DXGI_SCALING_STRETCH,
@@ -273,7 +296,11 @@ fn create_swap_chain(
 fn adapter_name(adapter: &IDXGIAdapter) -> String {
     match unsafe { adapter.GetDesc() } {
         Ok(desc) => {
-            let len = desc.Description.iter().position(|&c| c == 0).unwrap_or(desc.Description.len());
+            let len = desc
+                .Description
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(desc.Description.len());
             String::from_utf16_lossy(&desc.Description[..len])
         }
         Err(_) => "unknown adapter".to_owned(),

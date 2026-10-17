@@ -8,15 +8,37 @@ use std::sync::atomic::AtomicBool;
 
 fn summarize(s: &Status) -> (Vec<String>, Vec<String>) {
     let f = |v: &Vec<gk_status::Entry>| {
-        v.iter().map(|e| format!("{}:{}", e.kind.code(), e.path)).collect::<Vec<_>>()
+        v.iter()
+            .map(|e| format!("{}:{}", e.kind.code(), e.path))
+            .collect::<Vec<_>>()
     };
     (f(&s.staged), f(&s.unstaged))
 }
 
 fn both(dir: &std::path::Path, git: &Git, untracked: Untracked) -> (Status, Status) {
     let stop = Arc::new(AtomicBool::new(false));
-    let a = compute(dir, git, &[], &Options { engine: Engine::Gix, untracked }, &stop).unwrap();
-    let b = compute(dir, git, &[], &Options { engine: Engine::Cli, untracked }, &stop).unwrap();
+    let a = compute(
+        dir,
+        git,
+        &[],
+        &Options {
+            engine: Engine::Gix,
+            untracked,
+        },
+        &stop,
+    )
+    .unwrap();
+    let b = compute(
+        dir,
+        git,
+        &[],
+        &Options {
+            engine: Engine::Cli,
+            untracked,
+        },
+        &stop,
+    )
+    .unwrap();
     (a, b)
 }
 
@@ -66,14 +88,29 @@ fn gix_matches_cli() {
     assert_eq!(staged, ["A:added.txt", "M:src/f2.txt", "D:src/f3.txt"]);
     assert_eq!(
         unstaged,
-        ["D:del.txt", "?:newdir/sub/a.txt", "M:src/f1.txt", "M:src/f2.txt", "?:top.txt"]
+        [
+            "D:del.txt",
+            "?:newdir/sub/a.txt",
+            "M:src/f1.txt",
+            "M:src/f2.txt",
+            "?:top.txt"
+        ]
     );
 
     // pathspec-limited computation
     let stop = Arc::new(AtomicBool::new(false));
     for engine in [Engine::Gix, Engine::Cli] {
-        let s = compute(dir, &git, &["src".into()], &Options { engine, untracked: Untracked::All }, &stop)
-            .unwrap();
+        let s = compute(
+            dir,
+            &git,
+            &["src".into()],
+            &Options {
+                engine,
+                untracked: Untracked::All,
+            },
+            &stop,
+        )
+        .unwrap();
         let (_, u) = summarize(&s);
         assert_eq!(u, ["M:src/f1.txt", "M:src/f2.txt"], "{engine:?}");
     }
@@ -87,14 +124,30 @@ fn fast_vs_cli(dir: &std::path::Path, git: &Git, paths: &[&str]) {
         gk_status::fast::Outcome::Fallback => panic!("unexpected fallback for {paths:?}"),
     };
     let stop = Arc::new(AtomicBool::new(false));
-    let reference =
-        compute(dir, git, &scope, &Options { engine: Engine::Cli, untracked: Untracked::All }, &stop).unwrap();
-    let mut a: Vec<String> = got.iter().map(|e| format!("{}:{}", e.kind.code(), e.path)).collect();
+    let reference = compute(
+        dir,
+        git,
+        &scope,
+        &Options {
+            engine: Engine::Cli,
+            untracked: Untracked::All,
+        },
+        &stop,
+    )
+    .unwrap();
+    let mut a: Vec<String> = got
+        .iter()
+        .map(|e| format!("{}:{}", e.kind.code(), e.path))
+        .collect();
     a.sort();
     let mut b: Vec<String> = reference
         .unstaged
         .iter()
-        .filter(|e| scope.iter().any(|s| gk_status::path_within(e.path.as_ref(), s.as_ref())))
+        .filter(|e| {
+            scope
+                .iter()
+                .any(|s| gk_status::path_within(e.path.as_ref(), s.as_ref()))
+        })
         .map(|e| format!("{}:{}", e.kind.code(), e.path))
         .collect();
     b.sort();
@@ -110,7 +163,12 @@ fn fast_path_matches_cli() {
         git.run(&["init", "-q", "-b", "main"]).unwrap();
         git.run(&["config", "user.email", "t@t"]).unwrap();
         git.run(&["config", "user.name", "t"]).unwrap();
-        git.run(&["config", "core.autocrlf", if autocrlf { "true" } else { "false" }]).unwrap();
+        git.run(&[
+            "config",
+            "core.autocrlf",
+            if autocrlf { "true" } else { "false" },
+        ])
+        .unwrap();
         fs::create_dir_all(dir.join("src/sub")).unwrap();
         fs::write(dir.join("src/a.txt"), "a\nb\n").unwrap();
         fs::write(dir.join("src/b.txt"), "b\n").unwrap();
@@ -123,7 +181,11 @@ fn fast_path_matches_cli() {
 
         fs::write(dir.join("src/a.txt"), "a\nchanged\n").unwrap();
         // same content rewritten: stat changes, content does not
-        fs::write(dir.join("src/b.txt"), if autocrlf { "b\r\n" } else { "b\n" }).unwrap();
+        fs::write(
+            dir.join("src/b.txt"),
+            if autocrlf { "b\r\n" } else { "b\n" },
+        )
+        .unwrap();
         fs::remove_file(dir.join("src/sub/c.txt")).unwrap();
         fs::write(dir.join("src/new.txt"), "n\n").unwrap();
         fs::write(dir.join("src/debug.log"), "x").unwrap();

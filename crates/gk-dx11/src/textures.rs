@@ -43,7 +43,10 @@ impl TextureMirror {
         self.images
             .iter()
             .map(|(id, (image, options))| {
-                (*id, ImageDelta::full(ImageData::Color(image.clone()), *options))
+                (
+                    *id,
+                    ImageDelta::full(ImageData::Color(image.clone()), *options),
+                )
             })
             .collect()
     }
@@ -84,7 +87,10 @@ mod tests {
             None => ImageDelta::full(image, options),
             Some(p) => ImageDelta::partial(p, image, options),
         };
-        TexturesDelta { set: vec![(id, delta)], free: vec![] }
+        TexturesDelta {
+            set: vec![(id, delta)],
+            free: vec![],
+        }
     }
 
     #[test]
@@ -94,7 +100,9 @@ mod tests {
         m.record(&set(id, None, img(4, 3, Color32::BLACK)));
         m.record(&set(id, Some([1, 1]), img(2, 1, Color32::WHITE)));
         let got = m.get(id).unwrap();
-        let white: Vec<usize> = (0..12).filter(|&i| got.pixels[i] == Color32::WHITE).collect();
+        let white: Vec<usize> = (0..12)
+            .filter(|&i| got.pixels[i] == Color32::WHITE)
+            .collect();
         assert_eq!(white, vec![5, 6]);
     }
 
@@ -116,7 +124,10 @@ mod tests {
         let mut m = TextureMirror::default();
         m.record(&set(a, None, img(1, 1, Color32::BLACK)));
         m.record(&set(b, None, img(1, 1, Color32::BLACK)));
-        m.record(&TexturesDelta { set: vec![], free: vec![a] });
+        m.record(&TexturesDelta {
+            set: vec![],
+            free: vec![a],
+        });
         let replay = m.full_set();
         assert_eq!(replay.len(), 1);
         assert_eq!(replay[0].0, b);
@@ -126,7 +137,11 @@ mod tests {
     #[test]
     fn partial_for_unknown_texture_is_ignored() {
         let mut m = TextureMirror::default();
-        m.record(&set(TextureId::Managed(3), Some([0, 0]), img(1, 1, Color32::RED)));
+        m.record(&set(
+            TextureId::Managed(3),
+            Some([0, 0]),
+            img(1, 1, Color32::RED),
+        ));
         assert!(m.full_set().is_empty());
     }
 }

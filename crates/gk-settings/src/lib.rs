@@ -313,8 +313,18 @@ impl Settings {
         fix(&mut self.ui_scale, 0.5, 4.0, d.ui_scale);
         fix(&mut self.font_size, 6.0, 72.0, d.font_size);
         fix(&mut self.mono_font_size, 6.0, 72.0, d.mono_font_size);
-        fix(&mut self.history.row_height, 10.0, 100.0, d.history.row_height);
-        fix(&mut self.history.graph_lane_width, 4.0, 100.0, d.history.graph_lane_width);
+        fix(
+            &mut self.history.row_height,
+            10.0,
+            100.0,
+            d.history.row_height,
+        );
+        fix(
+            &mut self.history.graph_lane_width,
+            4.0,
+            100.0,
+            d.history.graph_lane_width,
+        );
         if self.diff.tab_width == 0 {
             self.diff.tab_width = d.diff.tab_width;
         }

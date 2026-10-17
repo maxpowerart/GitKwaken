@@ -16,7 +16,10 @@ pub(crate) fn load_or_default<T: DeserializeOwned + Default>(path: &Path) -> T {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return T::default(),
         Err(e) => {
-            eprintln!("gk-settings: cannot read {}: {e}; using defaults", path.display());
+            eprintln!(
+                "gk-settings: cannot read {}: {e}; using defaults",
+                path.display()
+            );
             backup_broken(path);
             return T::default();
         }
@@ -24,7 +27,10 @@ pub(crate) fn load_or_default<T: DeserializeOwned + Default>(path: &Path) -> T {
     match toml::from_str(&text) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("gk-settings: cannot parse {}: {e}; using defaults", path.display());
+            eprintln!(
+                "gk-settings: cannot parse {}: {e}; using defaults",
+                path.display()
+            );
             backup_broken(path);
             T::default()
         }

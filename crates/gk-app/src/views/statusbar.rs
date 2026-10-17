@@ -8,28 +8,33 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
     // Error messages pop up above the status bar until dismissed.
     if !snap.messages.is_empty() {
         egui::Panel::bottom(egui::Id::new(("messages", &tab.path))).show(ui, |ui| {
-            egui::ScrollArea::vertical().max_height(140.0).show(ui, |ui| {
-                for m in snap.messages.iter().rev() {
-                    let color = match m.kind {
-                        MessageKind::Error => shared.palette.removed_fg,
-                        MessageKind::Info => ui.visuals().text_color(),
-                    };
-                    ui.colored_label(color, &m.text);
-                }
-            });
+            egui::ScrollArea::vertical()
+                .max_height(140.0)
+                .show(ui, |ui| {
+                    for m in snap.messages.iter().rev() {
+                        let color = match m.kind {
+                            MessageKind::Error => shared.palette.removed_fg,
+                            MessageKind::Info => ui.visuals().text_color(),
+                        };
+                        ui.colored_label(color, &m.text);
+                    }
+                });
             if ui.small_button("Dismiss").clicked() {
                 tab.session.dismiss_messages();
             }
         });
     }
-    egui::Panel::bottom(egui::Id::new(("statusbar", &tab.path))).exact_size(24.0).show(ui, |ui| {
-        ui.horizontal_centered(|ui| {
-            let refs = &snap.refs;
-            match &refs.head {
-                Head::Branch(b) => {
-                    ui.label(egui::RichText::new(format!("⑂ {b}")).strong());
-                    if let Some(br) = refs.current_branch() {
-                        if let Some(u) = &br.upstream {
+    egui::Panel::bottom(egui::Id::new(("statusbar", &tab.path)))
+        .exact_size(24.0)
+        .show(ui, |ui| {
+            ui.horizontal_centered(|ui| {
+                let refs = &snap.refs;
+                match &refs.head {
+                    Head::Branch(b) => {
+                        ui.label(egui::RichText::new(format!("⑂ {b}")).strong());
+                        if let Some(br) = refs.current_branch()
+                            && let Some(u) = &br.upstream
+                        {
                             let t = if br.upstream_gone {
                                 format!("{u} (gone)")
                             } else {
@@ -38,42 +43,51 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
                             ui.label(egui::RichText::new(t).color(shared.palette.muted));
                         }
                     }
+                    Head::Detached(id) => {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "HEAD detached at {}",
+                                crate::util::short_id(id)
+                            ))
+                            .strong(),
+                        );
+                    }
+                    Head::Unborn(b) => {
+                        ui.label(format!("⑂ {b} (no commits yet)"));
+                    }
+                    Head::Unknown => {}
                 }
-                Head::Detached(id) => {
-                    ui.label(egui::RichText::new(format!("HEAD detached at {}", crate::util::short_id(id))).strong());
+                if refs.state != gk_core::RepoState::Clean {
+                    ui.label(
+                        egui::RichText::new(refs.state.label())
+                            .strong()
+                            .color(shared.palette.conflict),
+                    );
                 }
-                Head::Unborn(b) => {
-                    ui.label(format!("⑂ {b} (no commits yet)"));
-                }
-                Head::Unknown => {}
-            }
-            if refs.state != gk_core::RepoState::Clean {
-                ui.label(egui::RichText::new(refs.state.label()).strong().color(shared.palette.conflict));
-            }
-            ui.separator();
-            if let Some(op) = &snap.op {
-                ui.spinner();
-                ui.label(format!("{}…", op.label));
-                if !op.last_line.is_empty() {
-                    ui.label(egui::RichText::new(&op.last_line).color(shared.palette.muted));
-                }
-                if ui.small_button("Cancel").clicked() {
-                    tab.session.cancel_op();
-                }
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if snap.status_loading || snap.history_loading {
+                ui.separator();
+                if let Some(op) = &snap.op {
                     ui.spinner();
+                    ui.label(format!("{}…", op.label));
+                    if !op.last_line.is_empty() {
+                        ui.label(egui::RichText::new(&op.last_line).color(shared.palette.muted));
+                    }
+                    if ui.small_button("Cancel").clicked() {
+                        tab.session.cancel_op();
+                    }
                 }
-                ui.label(
-                    egui::RichText::new(format!(
-                        "{} commits · status {} ms",
-                        snap.history.len(),
-                        snap.status.took.as_millis()
-                    ))
-                    .color(shared.palette.muted),
-                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if snap.status_loading || snap.history_loading {
+                        ui.spinner();
+                    }
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} commits · status {} ms",
+                            snap.history.len(),
+                            snap.status.took.as_millis()
+                        ))
+                        .color(shared.palette.muted),
+                    );
+                });
             });
         });
-    });
 }

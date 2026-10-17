@@ -47,11 +47,18 @@ pub struct GkApp {
 }
 
 impl GkApp {
-    pub fn new(ctx: &egui::Context, settings: Settings, initial: Vec<PathBuf>, staged: crate::update::Staged) -> Self {
+    pub fn new(
+        ctx: &egui::Context,
+        settings: Settings,
+        initial: Vec<PathBuf>,
+        staged: crate::update::Staged,
+    ) -> Self {
         theme::install_fonts(ctx);
         let palette = theme::apply(ctx, settings.theme, settings.ui_scale, settings.font_size);
         let c = ctx.clone();
-        let askpass = gk_askpass::Server::start(Box::new(move || c.request_repaint())).ok().map(Arc::new);
+        let askpass = gk_askpass::Server::start(Box::new(move || c.request_repaint()))
+            .ok()
+            .map(Arc::new);
         let mut app = Self {
             autosave: Autosave::new(&settings),
             settings,
@@ -95,13 +102,21 @@ impl GkApp {
             self.active = i;
             return;
         }
-        match RepoTab::open(&path, ctx, self.log.clone(), self.askpass_env(), &self.settings) {
+        match RepoTab::open(
+            &path,
+            ctx,
+            self.log.clone(),
+            self.askpass_env(),
+            &self.settings,
+        ) {
             Ok(tab) => {
                 self.settings.add_recent(tab.path.clone());
                 self.tabs.push(tab);
                 self.active = self.tabs.len() - 1;
             }
-            Err(e) => self.errors.push(format!("Cannot open {}: {e:#}", path.display())),
+            Err(e) => self
+                .errors
+                .push(format!("Cannot open {}: {e:#}", path.display())),
         }
     }
 
@@ -110,7 +125,10 @@ impl GkApp {
             match a {
                 Action::OpenRepo(p) => self.open_repo(ctx, p),
                 Action::OpenRepoDialog => {
-                    if let Some(p) = rfd::FileDialog::new().set_title("Open repository").pick_folder() {
+                    if let Some(p) = rfd::FileDialog::new()
+                        .set_title("Open repository")
+                        .pick_folder()
+                    {
                         self.open_repo(ctx, p);
                     }
                 }
@@ -126,8 +144,12 @@ impl GkApp {
                 Action::SelectTab(i) => self.active = i.min(self.tabs.len().saturating_sub(1)),
                 Action::Global(d) => self.global = Some(d),
                 Action::ApplySettings => {
-                    self.palette =
-                        theme::apply(ctx, self.settings.theme, self.settings.ui_scale, self.settings.font_size);
+                    self.palette = theme::apply(
+                        ctx,
+                        self.settings.theme,
+                        self.settings.ui_scale,
+                        self.settings.font_size,
+                    );
                     // Status options apply to open tabs right away.
                     for t in &self.tabs {
                         let mut o = t.session.options();
@@ -158,7 +180,9 @@ impl GkApp {
         ui.horizontal(|ui| {
             for (i, t) in self.tabs.iter().enumerate() {
                 let selected = i == self.active;
-                let r = ui.selectable_label(selected, &t.name).on_hover_text(t.path.display().to_string());
+                let r = ui
+                    .selectable_label(selected, &t.name)
+                    .on_hover_text(t.path.display().to_string());
                 if r.clicked() {
                     self.actions.push(Action::SelectTab(i));
                 }
@@ -180,26 +204,34 @@ impl GkApp {
                 }
                 ui.separator();
             }
-            if ui.button("+").on_hover_text("Open repository (Ctrl+O)").clicked() {
+            if ui
+                .button("+")
+                .on_hover_text("Open repository (Ctrl+O)")
+                .clicked()
+            {
                 self.actions.push(Action::OpenRepoDialog);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 self.updater.ui(ui);
                 if ui.button("⚙").on_hover_text("Settings").clicked() {
-                    self.actions.push(Action::Global(dialogs::GlobalDialog::settings()));
+                    self.actions
+                        .push(Action::Global(dialogs::GlobalDialog::settings()));
                 }
                 if ui.selectable_label(self.show_log, "Output").clicked() {
                     self.show_log = !self.show_log;
                 }
                 if ui.button("Clone…").clicked() {
-                    self.actions.push(Action::Global(dialogs::GlobalDialog::clone_repo()));
+                    self.actions
+                        .push(Action::Global(dialogs::GlobalDialog::clone_repo()));
                 }
             });
         });
     }
 
     fn askpass_prompt(&mut self, ctx: &egui::Context) {
-        let Some(server) = self.askpass.clone() else { return };
+        let Some(server) = self.askpass.clone() else {
+            return;
+        };
         let Some(p) = server.pending() else { return };
         let mut answer: Option<Option<String>> = None;
         egui::Modal::new(egui::Id::new(("askpass", p.id))).show(ctx, |ui| {
@@ -248,11 +280,17 @@ impl GkApp {
                 i.consume_key(egui::Modifiers::COMMAND, egui::Key::O),
                 i.consume_key(egui::Modifiers::COMMAND, egui::Key::W),
                 i.consume_key(egui::Modifiers::CTRL, egui::Key::Tab),
-                i.consume_key(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, egui::Key::P),
+                i.consume_key(
+                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                    egui::Key::P,
+                ),
             )
         });
         // Never open over a dialog: its unsaved input would be lost.
-        let dialog_open = self.tabs.get(self.active).is_some_and(|t| t.dialog.is_some());
+        let dialog_open = self
+            .tabs
+            .get(self.active)
+            .is_some_and(|t| t.dialog.is_some());
         if palette && !dialog_open {
             self.command_palette.toggle();
         }
@@ -347,7 +385,11 @@ impl gk_dx11::App for GkApp {
     }
 
     fn clear_color(&self) -> [f32; 4] {
-        if self.palette.dark { [0.145, 0.153, 0.169, 1.0] } else { [0.97, 0.97, 0.97, 1.0] }
+        if self.palette.dark {
+            [0.145, 0.153, 0.169, 1.0]
+        } else {
+            [0.97, 0.97, 0.97, 1.0]
+        }
     }
 }
 

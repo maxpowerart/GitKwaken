@@ -16,7 +16,11 @@ pub enum SelectMode {
 /// applying or reverting only the lines for which `selected` is true.
 ///
 /// Line terminators are preserved byte-for-byte.
-pub fn apply_selection(d: &FileDiff, selected: impl Fn(&Line) -> bool, mode: SelectMode) -> Vec<u8> {
+pub fn apply_selection(
+    d: &FileDiff,
+    selected: impl Fn(&Line) -> bool,
+    mode: SelectMode,
+) -> Vec<u8> {
     assert!(d.is_full(), "apply_selection needs a full-context diff");
     let mut out = Vec::with_capacity(d.text.len());
     // A line may only lack its newline at the very end of the file; when more
@@ -95,7 +99,12 @@ mod tests {
     fn revert_some_lines() {
         let r = run(b"a\nb\nc\n", b"a\nX\nc\nY\n", &[1004], SelectMode::Revert);
         assert_eq!(r, "a\nX\nc\n");
-        let r = run(b"a\nb\nc\n", b"a\nX\nc\nY\n", &[2, 1002], SelectMode::Revert);
+        let r = run(
+            b"a\nb\nc\n",
+            b"a\nX\nc\nY\n",
+            &[2, 1002],
+            SelectMode::Revert,
+        );
         assert_eq!(r, "a\nb\nc\nY\n");
     }
 

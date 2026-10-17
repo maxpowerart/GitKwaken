@@ -25,9 +25,11 @@ pub struct Updater {
 impl Updater {
     pub fn new(ctx: &egui::Context, staged: Staged) -> Self {
         let state = Arc::new(Mutex::new(State::Idle));
-        let url = std::env::var("GITKWAKEN_UPDATE_URL").unwrap_or_else(|_| gk_update::DEFAULT_CHANNEL_URL.to_string());
+        let url = std::env::var("GITKWAKEN_UPDATE_URL")
+            .unwrap_or_else(|_| gk_update::DEFAULT_CHANNEL_URL.to_string());
         // No release channel configured yet (placeholder owner) or opted out.
-        let enabled = !url.contains("/OWNER/") && std::env::var_os("GITKWAKEN_NO_UPDATE_CHECK").is_none();
+        let enabled =
+            !url.contains("/OWNER/") && std::env::var_os("GITKWAKEN_NO_UPDATE_CHECK").is_none();
         if enabled {
             let s = state.clone();
             let c = ctx.clone();
@@ -72,15 +74,19 @@ impl Updater {
             State::Available(rel) => {
                 let b = ui
                     .button(format!("⬆ Update to {}", rel.version))
-                    .on_hover_text(if rel.notes.is_empty() { "A new version is available".to_string() } else { rel.notes.clone() });
+                    .on_hover_text(if rel.notes.is_empty() {
+                        "A new version is available".to_string()
+                    } else {
+                        rel.notes.clone()
+                    });
                 if b.clicked() {
                     self.download(rel, ui.ctx());
                 }
             }
             State::Downloading(done, total) => {
                 ui.spinner();
-                if total > 0 {
-                    ui.label(format!("Downloading update {}%", done * 100 / total));
+                if let Some(pct) = (done * 100).checked_div(total) {
+                    ui.label(format!("Downloading update {pct}%"));
                 } else {
                     ui.label("Downloading update…");
                 }

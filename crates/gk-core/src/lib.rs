@@ -10,6 +10,6 @@ mod repo;
 pub mod session;
 
 pub use gix::ObjectId;
-pub use refs::{Head, Label, RepoState, Refs};
+pub use refs::{Head, Label, Refs, RepoState};
 pub use repo::{Repo, init};
 pub use session::{Load, Message, MessageKind, Session, SessionOptions, Snapshot};

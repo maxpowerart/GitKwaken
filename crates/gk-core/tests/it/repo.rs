@@ -30,15 +30,28 @@ fn init_new_repo() {
 #[test]
 fn env_and_git_override() {
     let t = TestRepo::new();
-    let r = t.repo.clone().with_env([("GIT_AUTHOR_NAME".to_string(), "Env Author".to_string())]);
+    let r = t
+        .repo
+        .clone()
+        .with_env([("GIT_AUTHOR_NAME".to_string(), "Env Author".to_string())]);
     t.write("a.txt", "a\n");
     r.stage_all().unwrap();
-    r.commit(&gk_core::ops::CommitOptions { message: s("env"), ..Default::default() }).unwrap();
+    r.commit(&gk_core::ops::CommitOptions {
+        message: s("env"),
+        ..Default::default()
+    })
+    .unwrap();
     assert_eq!(t.git(&["log", "-1", "--format=%an"]), "Env Author");
 
     let exe = gk_cli::find_git();
-    let r = Repo::open_with_git(t.repo.workdir(), CommandLog::default(), Some(exe.clone())).unwrap();
+    let r =
+        Repo::open_with_git(t.repo.workdir(), CommandLog::default(), Some(exe.clone())).unwrap();
     assert_eq!(r.git().exe(), exe.as_path());
-    let bad = Repo::open_with_git(t.repo.workdir(), CommandLog::default(), Some("no-such-git-exe".into())).unwrap();
+    let bad = Repo::open_with_git(
+        t.repo.workdir(),
+        CommandLog::default(),
+        Some("no-such-git-exe".into()),
+    )
+    .unwrap();
     assert!(bad.stage_all().is_err());
 }

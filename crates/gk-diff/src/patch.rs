@@ -30,7 +30,10 @@ pub fn build_patch(
     let mut any = false;
     let mut delta: i64 = 0;
     for h in &d.hunks {
-        let has_selection = h.lines.clone().any(|i| d.lines[i].kind != LineKind::Context && selected(i));
+        let has_selection = h
+            .lines
+            .clone()
+            .any(|i| d.lines[i].kind != LineKind::Context && selected(i));
         if !has_selection {
             continue;
         }
@@ -68,7 +71,11 @@ pub fn build_patch(
         let (old_start, new_start) = if !reverse {
             // The old side (index) is unchanged: its positions are exact.
             let old_start = h.old_start as i64;
-            let base = if old_count == 0 { old_start + 1 } else { old_start };
+            let base = if old_count == 0 {
+                old_start + 1
+            } else {
+                old_start
+            };
             let mut new_start = base + delta;
             if new_count == 0 {
                 new_start -= 1;
@@ -77,7 +84,11 @@ pub fn build_patch(
         } else {
             // The new side is what the target currently contains.
             let new_start = h.new_start as i64;
-            let base = if new_count == 0 { new_start + 1 } else { new_start };
+            let base = if new_count == 0 {
+                new_start + 1
+            } else {
+                new_start
+            };
             let mut old_start = base - delta;
             if old_count == 0 {
                 old_start -= 1;
@@ -85,7 +96,9 @@ pub fn build_patch(
             (old_start, new_start)
         };
         delta += new_count - old_count;
-        out.push_str(&format!("@@ -{old_start},{old_count} +{new_start},{new_count} @@\n"));
+        out.push_str(&format!(
+            "@@ -{old_start},{old_count} +{new_start},{new_count} @@\n"
+        ));
         out.push_str(&body);
         any = true;
     }

@@ -105,7 +105,5 @@ impl<T: Serialize> Autosave<T> {
 }
 
 fn hash_of<T: Serialize>(value: &T) -> Option<u64> {
-    toml::to_string(value)
-        .ok()
-        .map(|s| fnv1a64(s.as_bytes()))
+    toml::to_string(value).ok().map(|s| fnv1a64(s.as_bytes()))
 }

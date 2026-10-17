@@ -37,7 +37,12 @@ impl Repo {
         if let Some(exe) = git_exe {
             git = git.with_exe(exe);
         }
-        Ok(Self { ts, workdir, git_dir, git })
+        Ok(Self {
+            ts,
+            workdir,
+            git_dir,
+            git,
+        })
     }
 
     /// Adds environment variables (e.g. `GIT_ASKPASS`) to every git call.

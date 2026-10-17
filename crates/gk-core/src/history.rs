@@ -51,7 +51,9 @@ pub fn build(repo: &Repo, tips: &[ObjectId], interrupt: &AtomicBool) -> Result<H
     let g = repo.gix();
     let walk = g
         .rev_walk(tips.iter().copied())
-        .sorting(gix::revision::walk::Sorting::ByCommitTime(Default::default()))
+        .sorting(gix::revision::walk::Sorting::ByCommitTime(
+            Default::default(),
+        ))
         .use_commit_graph(true)
         .all()
         .map_err(gix_err)?;
@@ -72,7 +74,11 @@ pub fn build(repo: &Repo, tips: &[ObjectId], interrupt: &AtomicBool) -> Result<H
     }
     let parents: Vec<Vec<u32>> = raw_parents
         .iter()
-        .map(|ps| ps.iter().map(|p| index.get(p).copied().unwrap_or(NONE)).collect())
+        .map(|ps| {
+            ps.iter()
+                .map(|p| index.get(p).copied().unwrap_or(NONE))
+                .collect()
+        })
         .collect();
     drop(raw_parents);
     let order = date_order(&parents, &time);
@@ -85,12 +91,27 @@ pub fn build(repo: &Repo, tips: &[ObjectId], interrupt: &AtomicBool) -> Result<H
     let mut prow: Vec<u32> = Vec::with_capacity(4);
     for (row, &c) in order.iter().enumerate() {
         prow.clear();
-        prow.extend(parents[c as usize].iter().map(|&p| if p == NONE { NONE } else { row_of_idx[p as usize] }));
+        prow.extend(parents[c as usize].iter().map(|&p| {
+            if p == NONE {
+                NONE
+            } else {
+                row_of_idx[p as usize]
+            }
+        }));
         layout.push(row as u32, &prow);
     }
     let ids_ordered: Vec<ObjectId> = order.iter().map(|&c| ids[c as usize]).collect();
-    let row_of = ids_ordered.iter().enumerate().map(|(r, id)| (*id, r as u32)).collect();
-    Ok(History { ids: ids_ordered, layout, row_of, took: start.elapsed() })
+    let row_of = ids_ordered
+        .iter()
+        .enumerate()
+        .map(|(r, id)| (*id, r as u32))
+        .collect();
+    Ok(History {
+        ids: ids_ordered,
+        layout,
+        row_of,
+        took: start.elapsed(),
+    })
 }
 
 /// Resolves scope to tip ids.
@@ -102,7 +123,8 @@ pub fn resolve_tips(repo: &Repo, scope: &Scope, all_tips: &[String]) -> Vec<Obje
             for t in all_tips {
                 // Tags may point at trees or blobs, which cannot be walked.
                 if let Ok(id) = ObjectId::from_hex(t.as_bytes())
-                    && g.find_header(id).is_ok_and(|h| h.kind() == gix::object::Kind::Commit)
+                    && g.find_header(id)
+                        .is_ok_and(|h| h.kind() == gix::object::Kind::Commit)
                 {
                     out.push(id);
                 }
@@ -165,7 +187,9 @@ impl MetaCache {
     pub fn new(repo: Repo) -> Self {
         Self {
             repo,
-            cache: parking_lot::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(20_000).unwrap())),
+            cache: parking_lot::Mutex::new(lru::LruCache::new(
+                std::num::NonZeroUsize::new(20_000).unwrap(),
+            )),
             pending: Default::default(),
         }
     }
@@ -194,8 +218,10 @@ impl MetaCache {
             let this = self.clone();
             rayon::spawn(move || {
                 let g = this.repo.gix();
-                let loaded: Vec<(ObjectId, Option<CommitMeta>)> =
-                    missing.iter().map(|id| (*id, commit_meta(&g, *id).ok())).collect();
+                let loaded: Vec<(ObjectId, Option<CommitMeta>)> = missing
+                    .iter()
+                    .map(|id| (*id, commit_meta(&g, *id).ok()))
+                    .collect();
                 {
                     let mut cache = this.cache.lock();
                     let mut pending = this.pending.lock();

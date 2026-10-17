@@ -100,7 +100,9 @@ pub fn install_fonts(ctx: &egui::Context) {
     };
     let mut add = |key: &str, file: &str, family: FontFamily, primary: bool| {
         if let Some(data) = load(file) {
-            fonts.font_data.insert(key.to_string(), std::sync::Arc::new(data));
+            fonts
+                .font_data
+                .insert(key.to_string(), std::sync::Arc::new(data));
             let list = fonts.families.entry(family).or_default();
             if primary {
                 list.insert(0, key.to_string());
@@ -118,13 +120,25 @@ pub fn install_fonts(ctx: &egui::Context) {
     ctx.set_fonts(fonts);
 }
 
-pub fn apply(ctx: &egui::Context, theme: gk_settings::Theme, ui_scale: f32, font_size: f32) -> Palette {
+pub fn apply(
+    ctx: &egui::Context,
+    theme: gk_settings::Theme,
+    ui_scale: f32,
+    font_size: f32,
+) -> Palette {
     let dark = match theme {
         gk_settings::Theme::Dark => true,
         gk_settings::Theme::Light => false,
-        gk_settings::Theme::System => ctx.system_theme().map(|t| t == egui::Theme::Dark).unwrap_or(true),
+        gk_settings::Theme::System => ctx
+            .system_theme()
+            .map(|t| t == egui::Theme::Dark)
+            .unwrap_or(true),
     };
-    let mut visuals = if dark { Visuals::dark() } else { Visuals::light() };
+    let mut visuals = if dark {
+        Visuals::dark()
+    } else {
+        Visuals::light()
+    };
     if dark {
         visuals.panel_fill = Color32::from_rgb(0x25, 0x27, 0x2B);
         visuals.window_fill = Color32::from_rgb(0x2B, 0x2D, 0x31);
@@ -132,19 +146,32 @@ pub fn apply(ctx: &egui::Context, theme: gk_settings::Theme, ui_scale: f32, font
         visuals.faint_bg_color = Color32::from_rgb(0x2A, 0x2C, 0x30);
     }
     visuals.striped = true;
-    let theme = if dark { egui::Theme::Dark } else { egui::Theme::Light };
+    let theme = if dark {
+        egui::Theme::Dark
+    } else {
+        egui::Theme::Light
+    };
     ctx.set_theme(theme);
     ctx.set_zoom_factor(ui_scale);
     ctx.style_mut_of(theme, |s| {
         s.visuals = visuals;
         use egui::{FontId, TextStyle};
-        s.text_styles.insert(TextStyle::Body, FontId::proportional(font_size));
-        s.text_styles.insert(TextStyle::Button, FontId::proportional(font_size));
-        s.text_styles.insert(TextStyle::Small, FontId::proportional(font_size - 2.0));
-        s.text_styles.insert(TextStyle::Monospace, FontId::monospace(font_size - 0.5));
-        s.text_styles.insert(TextStyle::Heading, FontId::proportional(font_size + 4.0));
+        s.text_styles
+            .insert(TextStyle::Body, FontId::proportional(font_size));
+        s.text_styles
+            .insert(TextStyle::Button, FontId::proportional(font_size));
+        s.text_styles
+            .insert(TextStyle::Small, FontId::proportional(font_size - 2.0));
+        s.text_styles
+            .insert(TextStyle::Monospace, FontId::monospace(font_size - 0.5));
+        s.text_styles
+            .insert(TextStyle::Heading, FontId::proportional(font_size + 4.0));
         s.spacing.item_spacing = egui::vec2(6.0, 4.0);
         s.spacing.button_padding = egui::vec2(6.0, 3.0);
     });
-    if dark { Palette::dark() } else { Palette::light() }
+    if dark {
+        Palette::dark()
+    } else {
+        Palette::light()
+    }
 }

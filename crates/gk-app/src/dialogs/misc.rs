@@ -32,16 +32,31 @@ pub struct CreatePatch {
 
 impl CreatePatch {
     pub fn new(ids: Vec<String>) -> Self {
-        Self { ids, path: String::new(), sorted: false, labels: RevLabels::default(), overwrite: false }
+        Self {
+            ids,
+            path: String::new(),
+            sorted: false,
+            labels: RevLabels::default(),
+            overwrite: false,
+        }
     }
 }
 
 impl TabDialog for CreatePatch {
-    fn show(&mut self, ctx: &Context, tab: &mut RepoTab, snap: &Snapshot, _shared: &mut Shared) -> bool {
+    fn show(
+        &mut self,
+        ctx: &Context,
+        tab: &mut RepoTab,
+        snap: &Snapshot,
+        _shared: &mut Shared,
+    ) -> bool {
         if !self.sorted {
             // Oldest first so the patch series applies in order.
             let row = |id: &String| {
-                gk_core::ObjectId::from_hex(id.as_bytes()).ok().and_then(|o| snap.history.row(&o)).unwrap_or(usize::MAX)
+                gk_core::ObjectId::from_hex(id.as_bytes())
+                    .ok()
+                    .and_then(|o| snap.history.row(&o))
+                    .unwrap_or(usize::MAX)
             };
             self.ids.sort_by_key(|id| std::cmp::Reverse(row(id)));
             self.sorted = true;
@@ -52,34 +67,48 @@ impl TabDialog for CreatePatch {
         }
         let labels = self.labels.get(tab, snap, &self.ids).to_vec();
         let workdir = tab.path.clone();
-        let (out, ()) = modal(ctx, "create-patch", "Create patch", 560.0, "Save patch", |ui, ctl| {
-            ui.label(format!("{} commit(s):", self.ids.len()));
-            egui::ScrollArea::vertical().max_height(160.0).auto_shrink([false, true]).show(ui, |ui| {
-                for (id, l) in self.ids.iter().zip(&labels) {
-                    ui.label(RichText::new(if l.is_empty() { id } else { l }).monospace());
-                }
-            });
-            ui.label("Save to:");
-            let current = self.path.clone();
-            path_field(ui, &mut self.path, || {
-                let p = PathBuf::from(&current);
-                rfd::FileDialog::new()
-                    .set_title("Save patch")
-                    .set_directory(p.parent().map(|d| d.to_path_buf()).unwrap_or(workdir))
-                    .set_file_name(p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())
-                    .add_filter("Patch", &["patch", "diff"])
-                    .save_file()
-            });
-            if self.ids.is_empty() || self.path.trim().is_empty() {
-                ctl.invalid();
-            } else if std::path::Path::new(self.path.trim()).exists() {
-                warning(ui, "A file with this name already exists.");
-                ui.checkbox(&mut self.overwrite, "Overwrite it");
-                if !self.overwrite {
+        let (out, ()) = modal(
+            ctx,
+            "create-patch",
+            "Create patch",
+            560.0,
+            "Save patch",
+            |ui, ctl| {
+                ui.label(format!("{} commit(s):", self.ids.len()));
+                egui::ScrollArea::vertical()
+                    .max_height(160.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        for (id, l) in self.ids.iter().zip(&labels) {
+                            ui.label(RichText::new(if l.is_empty() { id } else { l }).monospace());
+                        }
+                    });
+                ui.label("Save to:");
+                let current = self.path.clone();
+                path_field(ui, &mut self.path, || {
+                    let p = PathBuf::from(&current);
+                    rfd::FileDialog::new()
+                        .set_title("Save patch")
+                        .set_directory(p.parent().map(|d| d.to_path_buf()).unwrap_or(workdir))
+                        .set_file_name(
+                            p.file_name()
+                                .map(|n| n.to_string_lossy().into_owned())
+                                .unwrap_or_default(),
+                        )
+                        .add_filter("Patch", &["patch", "diff"])
+                        .save_file()
+                });
+                if self.ids.is_empty() || self.path.trim().is_empty() {
                     ctl.invalid();
+                } else if std::path::Path::new(self.path.trim()).exists() {
+                    warning(ui, "A file with this name already exists.");
+                    ui.checkbox(&mut self.overwrite, "Overwrite it");
+                    if !self.overwrite {
+                        ctl.invalid();
+                    }
                 }
-            }
-        });
+            },
+        );
         finish(out, || {
             let ids = self.ids.clone();
             let path = PathBuf::from(self.path.trim());
@@ -99,28 +128,47 @@ pub struct ApplyPatch {
 }
 
 impl TabDialog for ApplyPatch {
-    fn show(&mut self, ctx: &Context, tab: &mut RepoTab, _snap: &Snapshot, _shared: &mut Shared) -> bool {
+    fn show(
+        &mut self,
+        ctx: &Context,
+        tab: &mut RepoTab,
+        _snap: &Snapshot,
+        _shared: &mut Shared,
+    ) -> bool {
         let workdir = tab.path.clone();
-        let (out, ()) = modal(ctx, "apply-patch", "Apply patch", 540.0, "Apply", |ui, ctl| {
-            ui.label("Patch file:");
-            path_field(ui, &mut self.path, || {
-                rfd::FileDialog::new()
-                    .set_title("Apply patch")
-                    .set_directory(workdir)
-                    .add_filter("Patch", &["patch", "diff"])
-                    .add_filter("All files", &["*"])
-                    .pick_file()
-            });
-            ui.checkbox(&mut self.to_index, "Apply to the index only (staged changes)");
-            hint(ui, "Uses git apply --3way: conflicts are left for you to resolve.");
-            let p = self.path.trim();
-            if p.is_empty() {
-                ctl.invalid();
-            } else if !std::path::Path::new(p).is_file() {
-                error(ui, "File not found.");
-                ctl.invalid();
-            }
-        });
+        let (out, ()) = modal(
+            ctx,
+            "apply-patch",
+            "Apply patch",
+            540.0,
+            "Apply",
+            |ui, ctl| {
+                ui.label("Patch file:");
+                path_field(ui, &mut self.path, || {
+                    rfd::FileDialog::new()
+                        .set_title("Apply patch")
+                        .set_directory(workdir)
+                        .add_filter("Patch", &["patch", "diff"])
+                        .add_filter("All files", &["*"])
+                        .pick_file()
+                });
+                ui.checkbox(
+                    &mut self.to_index,
+                    "Apply to the index only (staged changes)",
+                );
+                hint(
+                    ui,
+                    "Uses git apply --3way: conflicts are left for you to resolve.",
+                );
+                let p = self.path.trim();
+                if p.is_empty() {
+                    ctl.invalid();
+                } else if !std::path::Path::new(p).is_file() {
+                    error(ui, "File not found.");
+                    ctl.invalid();
+                }
+            },
+        );
         finish(out, || {
             let path = PathBuf::from(self.path.trim());
             let to_index = self.to_index;
@@ -142,61 +190,90 @@ pub struct Archive {
 
 impl Archive {
     pub fn new(rev: String) -> Self {
-        Self { rev, path: String::new(), label: RevLabel::default() }
+        Self {
+            rev,
+            path: String::new(),
+            label: RevLabel::default(),
+        }
     }
 }
 
 impl TabDialog for Archive {
-    fn show(&mut self, ctx: &Context, tab: &mut RepoTab, snap: &Snapshot, _shared: &mut Shared) -> bool {
+    fn show(
+        &mut self,
+        ctx: &Context,
+        tab: &mut RepoTab,
+        snap: &Snapshot,
+        _shared: &mut Shared,
+    ) -> bool {
         if self.path.is_empty() {
-            let base = tab.path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| tab.path.clone());
-            let name = format!("{}-{}.zip", tab.name, crate::util::short_id(&self.rev).replace('/', "-"));
+            let base = tab
+                .path
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| tab.path.clone());
+            let name = format!(
+                "{}-{}.zip",
+                tab.name,
+                crate::util::short_id(&self.rev).replace('/', "-")
+            );
             self.path = base.join(name).display().to_string();
         }
         let label = self.label.get(tab, snap, &self.rev).to_string();
-        let (out, ()) = modal(ctx, "archive", "Archive", 560.0, "Create archive", |ui, ctl| {
-            ui.horizontal(|ui| {
-                ui.label("Revision:");
-                ui.add(egui::TextEdit::singleline(&mut self.rev).desired_width(240.0));
-            });
-            if !label.is_empty() {
-                hint(ui, label);
-            }
-            ui.label("Save to (.zip, .tar, .tar.gz, .tgz):");
-            let current = self.path.clone();
-            path_field(ui, &mut self.path, || {
-                let p = PathBuf::from(&current);
-                let mut d = rfd::FileDialog::new()
-                    .set_title("Save archive")
-                    .add_filter("Zip", &["zip"])
-                    .add_filter("Tar", &["tar"])
-                    .add_filter("Tar.gz", &["tar.gz", "tgz"]);
-                if let Some(dir) = p.parent() {
-                    d = d.set_directory(dir);
+        let (out, ()) = modal(
+            ctx,
+            "archive",
+            "Archive",
+            560.0,
+            "Create archive",
+            |ui, ctl| {
+                ui.horizontal(|ui| {
+                    ui.label("Revision:");
+                    ui.add(egui::TextEdit::singleline(&mut self.rev).desired_width(240.0));
+                });
+                if !label.is_empty() {
+                    hint(ui, label);
                 }
-                if let Some(n) = p.file_name() {
-                    d = d.set_file_name(n.to_string_lossy());
+                ui.label("Save to (.zip, .tar, .tar.gz, .tgz):");
+                let current = self.path.clone();
+                path_field(ui, &mut self.path, || {
+                    let p = PathBuf::from(&current);
+                    let mut d = rfd::FileDialog::new()
+                        .set_title("Save archive")
+                        .add_filter("Zip", &["zip"])
+                        .add_filter("Tar", &["tar"])
+                        .add_filter("Tar.gz", &["tar.gz", "tgz"]);
+                    if let Some(dir) = p.parent() {
+                        d = d.set_directory(dir);
+                    }
+                    if let Some(n) = p.file_name() {
+                        d = d.set_file_name(n.to_string_lossy());
+                    }
+                    d.save_file()
+                });
+                let lower = self.path.trim().to_lowercase();
+                if self.rev.trim().is_empty() || lower.is_empty() {
+                    ctl.invalid();
+                } else if self.rev.trim().starts_with('-') {
+                    error(ui, "A revision cannot start with '-'.");
+                    ctl.invalid();
+                } else if ![".zip", ".tar", ".tar.gz", ".tgz"]
+                    .iter()
+                    .any(|e| lower.ends_with(e))
+                {
+                    error(ui, "Unsupported extension: use .zip, .tar, .tar.gz or .tgz");
+                    ctl.invalid();
                 }
-                d.save_file()
-            });
-            let lower = self.path.trim().to_lowercase();
-            if self.rev.trim().is_empty() || lower.is_empty() {
-                ctl.invalid();
-            } else if self.rev.trim().starts_with('-') {
-                error(ui, "A revision cannot start with '-'.");
-                ctl.invalid();
-            } else if ![".zip", ".tar", ".tar.gz", ".tgz"].iter().any(|e| lower.ends_with(e)) {
-                error(ui, "Unsupported extension: use .zip, .tar, .tar.gz or .tgz");
-                ctl.invalid();
-            }
-        });
+            },
+        );
         finish(out, || {
             let rev = self.rev.trim().to_string();
             let path = PathBuf::from(self.path.trim());
-            tab.session.run_op(format!("Archive {rev}"), move |repo, _, _| {
-                repo.archive(&rev, &path)?;
-                Ok(String::new())
-            });
+            tab.session
+                .run_op(format!("Archive {rev}"), move |repo, _, _| {
+                    repo.archive(&rev, &path)?;
+                    Ok(String::new())
+                });
         })
     }
 }
@@ -211,7 +288,10 @@ fn subcommand(args: &[String]) -> Option<(usize, &str)> {
     let mut i = 0;
     while i < args.len() {
         let a = args[i].as_str();
-        if matches!(a, "-c" | "-C" | "--git-dir" | "--work-tree" | "--namespace" | "--exec-path") {
+        if matches!(
+            a,
+            "-c" | "-C" | "--git-dir" | "--work-tree" | "--namespace" | "--exec-path"
+        ) {
             i += 2;
         } else if a.starts_with('-') {
             i += 1;
@@ -228,28 +308,57 @@ pub fn destructive_reason(args: &[String]) -> Option<&'static str> {
     let rest: Vec<&str> = args[i + 1..].iter().map(String::as_str).collect();
     let has = |opts: &[&str]| rest.iter().any(|a| opts.contains(a));
     // Combined short flags such as -fd or -Df.
-    let short = |c: char| rest.iter().any(|a| a.len() > 1 && a.starts_with('-') && !a.starts_with("--") && a.contains(c));
+    let short = |c: char| {
+        rest.iter()
+            .any(|a| a.len() > 1 && a.starts_with('-') && !a.starts_with("--") && a.contains(c))
+    };
     match verb {
         "reset" if has(&["--hard"]) => Some("reset --hard discards uncommitted changes"),
-        "clean" if !has(&["-n", "--dry-run"]) && !short('n') => Some("clean deletes untracked files"),
-        "push" if has(&["--force", "--mirror", "--delete", "--prune"])
-            || rest.iter().any(|a| a.starts_with("--force-with-lease") || a.starts_with('+') || (a.starts_with(':') && a.len() > 1))
-            || short('f')
-            || short('d') =>
+        "clean" if !has(&["-n", "--dry-run"]) && !short('n') => {
+            Some("clean deletes untracked files")
+        }
+        "push"
+            if has(&["--force", "--mirror", "--delete", "--prune"])
+                || rest.iter().any(|a| {
+                    a.starts_with("--force-with-lease")
+                        || a.starts_with('+')
+                        || (a.starts_with(':') && a.len() > 1)
+                })
+                || short('f')
+                || short('d') =>
         {
             Some("this push can overwrite or delete remote history")
         }
-        "branch" if short('D') || ((short('d') || has(&["--delete"])) && (short('f') || has(&["--force"]))) => {
+        "branch"
+            if short('D')
+                || ((short('d') || has(&["--delete"])) && (short('f') || has(&["--force"]))) =>
+        {
             Some("branch -D deletes a branch even when it is not merged")
         }
-        "checkout" if has(&["--", ".", "--force"]) || short('f') => Some("checkout can overwrite local changes"),
-        "restore" if !has(&["--staged", "-S"]) || has(&["--worktree", "-W"]) => Some("restore overwrites local changes"),
-        "stash" if rest.first().is_some_and(|s| *s == "drop" || *s == "clear") => Some("stash drop/clear deletes stashed changes"),
-        "rm" if !has(&["--cached", "-n", "--dry-run"]) => Some("rm deletes files from the working copy"),
-        "reflog" if rest.first().is_some_and(|s| *s == "expire" || *s == "delete") => Some("this removes reflog entries"),
+        "checkout" if has(&["--", ".", "--force"]) || short('f') => {
+            Some("checkout can overwrite local changes")
+        }
+        "restore" if !has(&["--staged", "-S"]) || has(&["--worktree", "-W"]) => {
+            Some("restore overwrites local changes")
+        }
+        "stash" if rest.first().is_some_and(|s| *s == "drop" || *s == "clear") => {
+            Some("stash drop/clear deletes stashed changes")
+        }
+        "rm" if !has(&["--cached", "-n", "--dry-run"]) => {
+            Some("rm deletes files from the working copy")
+        }
+        "reflog"
+            if rest
+                .first()
+                .is_some_and(|s| *s == "expire" || *s == "delete") =>
+        {
+            Some("this removes reflog entries")
+        }
         "update-ref" if short('d') => Some("update-ref -d deletes a ref"),
         "filter-branch" => Some("filter-branch rewrites history"),
-        "gc" if rest.iter().any(|a| a.starts_with("--prune")) => Some("gc --prune deletes unreachable objects"),
+        "gc" if rest.iter().any(|a| a.starts_with("--prune")) => {
+            Some("gc --prune deletes unreachable objects")
+        }
         _ => None,
     }
 }
@@ -266,7 +375,13 @@ pub struct Console {
 
 impl Console {
     pub fn new() -> Self {
-        Self { input: String::new(), output: String::new(), running: None, hist_pos: None, confirm: None }
+        Self {
+            input: String::new(),
+            output: String::new(),
+            running: None,
+            hist_pos: None,
+            confirm: None,
+        }
     }
 
     /// Runs the input line, asking for confirmation first when destructive.
@@ -307,17 +422,26 @@ impl Console {
         };
         // Queued with the other operations so it never races them; the
         // session refreshes everything afterwards.
-        let label = format!("git {}", subcommand(&args).map(|(_, v)| v).unwrap_or_default());
+        let label = format!(
+            "git {}",
+            subcommand(&args).map(|(_, v)| v).unwrap_or_default()
+        );
         self.running = Some(TrackedOp::queue(tab, label, move |repo, _, _| {
             let a: Vec<&str> = args.iter().map(String::as_str).collect();
             // No editor or pager can be shown: make git fail fast instead of hanging.
-            let git = repo.git().env("GIT_EDITOR", "true").env("GIT_SEQUENCE_EDITOR", "true");
+            let git = repo
+                .git()
+                .env("GIT_EDITOR", "true")
+                .env("GIT_SEQUENCE_EDITOR", "true");
             Ok(match git.run_raw(&a, None) {
                 Ok(o) => {
                     let mut t = o.stdout_str();
                     t.push_str(&o.stderr_str());
                     if !o.success() {
-                        t.push_str(&format!("[exit code {}]\n", o.code.map_or("?".to_string(), |c| c.to_string())));
+                        t.push_str(&format!(
+                            "[exit code {}]\n",
+                            o.code.map_or("?".to_string(), |c| c.to_string())
+                        ));
                     }
                     t
                 }
@@ -341,14 +465,21 @@ impl Console {
         self.input = pos.map(|p| h[p].clone()).unwrap_or_default();
         if let Some(mut st) = egui::TextEdit::load_state(ctx, id) {
             let end = egui::text::CCursor::new(self.input.chars().count());
-            st.cursor.set_char_range(Some(egui::text::CCursorRange::one(end)));
+            st.cursor
+                .set_char_range(Some(egui::text::CCursorRange::one(end)));
             st.store(ctx, id);
         }
     }
 }
 
 impl TabDialog for Console {
-    fn show(&mut self, ctx: &Context, tab: &mut RepoTab, _snap: &Snapshot, _shared: &mut Shared) -> bool {
+    fn show(
+        &mut self,
+        ctx: &Context,
+        tab: &mut RepoTab,
+        _snap: &Snapshot,
+        _shared: &mut Shared,
+    ) -> bool {
         if let Some(t) = &mut self.running
             && let Some(r) = t.take()
         {
@@ -360,7 +491,9 @@ impl TabDialog for Console {
             self.output.push('\n');
             if self.output.len() > MAX_OUTPUT {
                 let cut = self.output.len() - MAX_OUTPUT;
-                let cut = (cut..self.output.len()).find(|&i| self.output.is_char_boundary(i)).unwrap_or(0);
+                let cut = (cut..self.output.len())
+                    .find(|&i| self.output.is_char_boundary(i))
+                    .unwrap_or(0);
                 self.output.drain(..cut);
             }
             self.running = None;
@@ -375,19 +508,31 @@ impl TabDialog for Console {
             ctl.show_ok = false;
             ctl.enter_ok = false;
             ctl.cancel_label = "Close";
-            egui::Frame::new().fill(ui.visuals().extreme_bg_color).inner_margin(6).show(ui, |ui| {
-                egui::ScrollArea::vertical()
-                    .max_height(360.0)
-                    .min_scrolled_height(360.0)
-                    .auto_shrink([false, false])
-                    .stick_to_bottom(true)
-                    .show(ui, |ui| {
-                        if self.output.is_empty() {
-                            ui.label(RichText::new("Type git arguments below, e.g.  log --oneline -10").weak());
-                        }
-                        ui.add(egui::Label::new(RichText::new(&self.output).monospace()).selectable(true).wrap());
-                    });
-            });
+            egui::Frame::new()
+                .fill(ui.visuals().extreme_bg_color)
+                .inner_margin(6)
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height(360.0)
+                        .min_scrolled_height(360.0)
+                        .auto_shrink([false, false])
+                        .stick_to_bottom(true)
+                        .show(ui, |ui| {
+                            if self.output.is_empty() {
+                                ui.label(
+                                    RichText::new(
+                                        "Type git arguments below, e.g.  log --oneline -10",
+                                    )
+                                    .weak(),
+                                );
+                            }
+                            ui.add(
+                                egui::Label::new(RichText::new(&self.output).monospace())
+                                    .selectable(true)
+                                    .wrap(),
+                            );
+                        });
+                });
             ui.horizontal(|ui| {
                 ui.label(RichText::new("git").monospace().strong());
                 let r = ui.add_enabled(
@@ -423,7 +568,12 @@ impl TabDialog for Console {
                 warning(ui, format!("Careful: {reason}."));
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(format!("git {line}")).monospace());
-                    let run = egui::Button::new(RichText::new("Run anyway").strong().color(egui::Color32::WHITE)).fill(DANGER);
+                    let run = egui::Button::new(
+                        RichText::new("Run anyway")
+                            .strong()
+                            .color(egui::Color32::WHITE),
+                    )
+                    .fill(DANGER);
                     if ui.add(run).clicked() {
                         confirmed = Some(true);
                     }

@@ -129,7 +129,11 @@ impl DiffView {
             self.side_by_side = s.side_by_side;
             self.init = true;
         }
-        let context = if self.whole_file { u32::MAX } else { shared.settings.diff.context_lines };
+        let context = if self.whole_file {
+            u32::MAX
+        } else {
+            shared.settings.diff.context_lines
+        };
         let tab = shared.settings.diff.tab_width.clamp(1, 16) as usize;
         // Worktree content only changes with the status; other targets are immutable.
         let diff_gen = match target {
@@ -154,7 +158,9 @@ impl DiffView {
                 failed = Some(e);
             }
         }
-        let spinner = self.loading_since.is_some_and(|t| t.elapsed() >= SPINNER_DELAY);
+        let spinner = self
+            .loading_since
+            .is_some_and(|t| t.elapsed() >= SPINNER_DELAY);
         let current = self.shown.as_ref().is_some_and(|s| &s.target == target);
 
         let mut acts: Vec<Act> = Vec::new();
@@ -163,14 +169,21 @@ impl DiffView {
 
         if let Some(e) = failed {
             ui.add_space(8.0);
-            ui.colored_label(shared.palette.removed_fg, format!("Cannot show the diff: {e}"));
+            ui.colored_label(
+                shared.palette.removed_fg,
+                format!("Cannot show the diff: {e}"),
+            );
         } else if let Some(shown) = self.shown.take() {
             let d = shown.diff.clone();
             if d.binary {
                 self.binary_info(ui, session, &shown.target, shared);
             } else if d.lines.is_empty() {
                 ui.add_space(8.0);
-                let msg = if self.ignore_ws { "No changes (whitespace ignored)" } else { "No content changes" };
+                let msg = if self.ignore_ws {
+                    "No changes (whitespace ignored)"
+                } else {
+                    "No content changes"
+                };
                 ui.label(RichText::new(msg).color(shared.palette.muted));
             } else {
                 let editable = current && self.editable(mode, &shown.target);
@@ -199,7 +212,8 @@ impl DiffView {
                 if Arc::ptr_eq(&s.diff, &d) {
                     return;
                 }
-                let same = s.diff.lines == d.lines && s.diff.text == d.text && s.diff.binary == d.binary;
+                let same =
+                    s.diff.lines == d.lines && s.diff.text == d.text && s.diff.binary == d.binary;
                 if same {
                     s.diff = d;
                     return;
@@ -215,7 +229,12 @@ impl DiffView {
             self.scroll_to = Some(0.0);
         }
         self.inline.clear();
-        self.shown = Some(Shown { layout: Layout::build(&d, tab), target: target.clone(), diff: d, tab });
+        self.shown = Some(Shown {
+            layout: Layout::build(&d, tab),
+            target: target.clone(),
+            diff: d,
+            tab,
+        });
     }
 
     /// Hunk/line actions need line positions that match a full-context
@@ -225,7 +244,12 @@ impl DiffView {
             (DiffMode::ReadOnly, _) => false,
             (_, DiffTarget::Blobs { .. }) => false,
             // Unstaging lines of a rename would read HEAD at the new path.
-            (DiffMode::Staged, DiffTarget::Staged { old_path: Some(_), .. }) => false,
+            (
+                DiffMode::Staged,
+                DiffTarget::Staged {
+                    old_path: Some(_), ..
+                },
+            ) => false,
             _ => true,
         }
     }
@@ -252,22 +276,46 @@ impl DiffView {
             if let Some(s) = self.shown.as_ref().filter(|_| current)
                 && !s.diff.binary
             {
-                ui.label(RichText::new(format!("+{}", s.diff.additions)).color(p.added_fg).monospace());
-                ui.label(RichText::new(format!("−{}", s.diff.deletions)).color(p.removed_fg).monospace());
+                ui.label(
+                    RichText::new(format!("+{}", s.diff.additions))
+                        .color(p.added_fg)
+                        .monospace(),
+                );
+                ui.label(
+                    RichText::new(format!("−{}", s.diff.deletions))
+                        .color(p.removed_fg)
+                        .monospace(),
+                );
             }
             if spinner {
                 ui.spinner();
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let has_diff = current && self.shown.as_ref().is_some_and(|s| !s.diff.lines.is_empty());
-                if ui.add_enabled(has_diff, egui::Button::new("⎘").small()).on_hover_text("Copy as patch").clicked() {
+                let has_diff = current
+                    && self
+                        .shown
+                        .as_ref()
+                        .is_some_and(|s| !s.diff.lines.is_empty());
+                if ui
+                    .add_enabled(has_diff, egui::Button::new("⎘").small())
+                    .on_hover_text("Copy as patch")
+                    .clicked()
+                {
                     acts.push(Act::CopyPatch);
                 }
                 let s = &mut shared.settings.diff;
-                if ui.toggle_value(&mut self.side_by_side, "Split").on_hover_text("Side-by-side view").changed() {
+                if ui
+                    .toggle_value(&mut self.side_by_side, "Split")
+                    .on_hover_text("Side-by-side view")
+                    .changed()
+                {
                     s.side_by_side = self.side_by_side;
                 }
-                if ui.toggle_value(&mut self.word_diff, "Words").on_hover_text("Highlight changed words").changed() {
+                if ui
+                    .toggle_value(&mut self.word_diff, "Words")
+                    .on_hover_text("Highlight changed words")
+                    .changed()
+                {
                     s.word_diff = self.word_diff;
                 }
                 if ui
@@ -277,17 +325,35 @@ impl DiffView {
                 {
                     s.ignore_whitespace = self.ignore_ws;
                 }
-                ui.toggle_value(&mut self.whole_file, "Whole file").on_hover_text("Show the whole file");
+                ui.toggle_value(&mut self.whole_file, "Whole file")
+                    .on_hover_text("Show the whole file");
                 ui.add_enabled_ui(!self.whole_file, |ui| {
-                    ui.add(egui::DragValue::new(&mut s.context_lines).range(0..=100).speed(0.1))
-                        .on_hover_text("Context lines");
+                    ui.add(
+                        egui::DragValue::new(&mut s.context_lines)
+                            .range(0..=100)
+                            .speed(0.1),
+                    )
+                    .on_hover_text("Context lines");
                 });
                 ui.separator();
-                let hunks = self.shown.as_ref().filter(|_| current).map(|s| s.layout.hunk_rows(self.side_by_side).len()).unwrap_or(0);
-                if ui.add_enabled(hunks > 0, egui::Button::new("▼").small()).on_hover_text("Next hunk").clicked() {
+                let hunks = self
+                    .shown
+                    .as_ref()
+                    .filter(|_| current)
+                    .map(|s| s.layout.hunk_rows(self.side_by_side).len())
+                    .unwrap_or(0);
+                if ui
+                    .add_enabled(hunks > 0, egui::Button::new("▼").small())
+                    .on_hover_text("Next hunk")
+                    .clicked()
+                {
                     self.jump_hunk(true);
                 }
-                if ui.add_enabled(hunks > 0, egui::Button::new("▲").small()).on_hover_text("Previous hunk").clicked() {
+                if ui
+                    .add_enabled(hunks > 0, egui::Button::new("▲").small())
+                    .on_hover_text("Previous hunk")
+                    .clicked()
+                {
                     self.jump_hunk(false);
                 }
             });
@@ -311,21 +377,39 @@ impl DiffView {
         }
     }
 
-    fn binary_info(&mut self, ui: &mut Ui, session: &Session, target: &DiffTarget, shared: &Shared) {
+    fn binary_info(
+        &mut self,
+        ui: &mut Ui,
+        session: &Session,
+        target: &DiffTarget,
+        shared: &Shared,
+    ) {
         let p = shared.palette;
         let path = target.path();
-        let ext = path.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+        let ext = path
+            .rsplit_once('.')
+            .map(|(_, e)| e.to_ascii_lowercase())
+            .unwrap_or_default();
         let image = IMAGE_EXTS.contains(&ext.as_str());
         if !matches!(&self.file_size, Some((t, _)) if t == target) {
             // One stat per target, only for files that exist in the worktree.
             let size = match target {
-                DiffTarget::Unstaged { path } => std::fs::metadata(session.repo().abs(path)).ok().map(|m| m.len()),
+                DiffTarget::Unstaged { path } => std::fs::metadata(session.repo().abs(path))
+                    .ok()
+                    .map(|m| m.len()),
                 _ => None,
             };
             self.file_size = Some((target.clone(), size));
         }
         ui.add_space(8.0);
-        ui.label(RichText::new(if image { "Image changed" } else { "Binary file" }).strong());
+        ui.label(
+            RichText::new(if image {
+                "Image changed"
+            } else {
+                "Binary file"
+            })
+            .strong(),
+        );
         if let Some((_, Some(n))) = &self.file_size {
             ui.label(RichText::new(format!("Working copy: {}", human_size(*n))).color(p.muted));
         }
@@ -335,14 +419,24 @@ impl DiffView {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn body(&mut self, ui: &mut Ui, shown: &Shown, mode: DiffMode, editable: bool, acts: &mut Vec<Act>, shared: &Shared) {
+    fn body(
+        &mut self,
+        ui: &mut Ui,
+        shown: &Shown,
+        mode: DiffMode,
+        editable: bool,
+        acts: &mut Vec<Act>,
+        shared: &Shared,
+    ) {
         let p = shared.palette;
         let d = &*shown.diff;
         let sbs = self.side_by_side;
         let rows = shown.layout.rows(sbs);
         let font = egui::TextStyle::Monospace.resolve(ui.style());
         let small = egui::TextStyle::Small.resolve(ui.style());
-        let (font_h, char_w) = ui.ctx().fonts_mut(|f| (f.row_height(&font), f.glyph_width(&font, '0')));
+        let (font_h, char_w) = ui
+            .ctx()
+            .fonts_mut(|f| (f.row_height(&font), f.glyph_width(&font, '0')));
         let row_h = (font_h + 5.0).round().max(16.0);
         self.row_h = row_h;
         let num_w = shown.layout.digits as f32 * char_w + 12.0;
@@ -352,9 +446,17 @@ impl DiffView {
         let body_id = ui.make_persistent_id("gk-diff-body");
         let text_color = ui.visuals().text_color();
         let faint = ui.visuals().faint_bg_color;
-        let hl = |kind: LineKind| if kind == LineKind::Added { p.added_word } else { p.removed_word };
+        let hl = |kind: LineKind| {
+            if kind == LineKind::Added {
+                p.added_word
+            } else {
+                p.removed_word
+            }
+        };
 
-        let mut sa = egui::ScrollArea::both().auto_shrink([false, false]).id_salt("gk-diff-scroll");
+        let mut sa = egui::ScrollArea::both()
+            .auto_shrink([false, false])
+            .id_salt("gk-diff-scroll");
         if let Some(y) = self.scroll_to.take() {
             sa = sa.vertical_scroll_offset(y.max(0.0));
         }
@@ -389,16 +491,32 @@ impl DiffView {
                     Row::Line(i) => Some(i),
                     Row::Pair(a, b) => {
                         let (x, y) = if left_side(pos) { (a, b) } else { (b, a) };
-                        if x != NONE { Some(x) } else if y != NONE { Some(y) } else { None }
+                        if x != NONE {
+                            Some(x)
+                        } else if y != NONE {
+                            Some(y)
+                        } else {
+                            None
+                        }
                     }
                 }
             };
-            let is_changed = |i: u32| d.lines.get(i as usize).is_some_and(|l| l.kind != LineKind::Context);
-            let on_header = |pos: Pos2| row_at(pos).is_some_and(|r| matches!(rows[r], Row::Hunk(_)));
+            let is_changed = |i: u32| {
+                d.lines
+                    .get(i as usize)
+                    .is_some_and(|l| l.kind != LineKind::Context)
+            };
+            let on_header =
+                |pos: Pos2| row_at(pos).is_some_and(|r| matches!(rows[r], Row::Hunk(_)));
 
             // ---- selection input
-            let (pressed, shift, command) =
-                ui.input(|i| (i.pointer.primary_pressed(), i.modifiers.shift, i.modifiers.command));
+            let (pressed, shift, command) = ui.input(|i| {
+                (
+                    i.pointer.primary_pressed(),
+                    i.modifiers.shift,
+                    i.modifiers.command,
+                )
+            });
             if pressed && body.is_pointer_button_down_on() {
                 body.request_focus();
                 if let Some(pos) = body.interact_pointer_pos() {
@@ -434,7 +552,8 @@ impl DiffView {
                 }
             }
             if body.dragged()
-                && let (Some(from), Some(pos)) = (self.drag_from, ui.input(|i| i.pointer.latest_pos()))
+                && let (Some(from), Some(pos)) =
+                    (self.drag_from, ui.input(|i| i.pointer.latest_pos()))
             {
                 let clamped = pos2(pos.x, pos.y.clamp(vis.top() + 1.0, vis.bottom() - 1.0));
                 if let Some(i) = line_at(clamped) {
@@ -465,17 +584,35 @@ impl DiffView {
                 if editable && n > 0 {
                     match mode {
                         DiffMode::Unstaged => {
-                            if ui.add_enabled(!self.ignore_ws, egui::Button::new(format!("Stage {n} selected line(s)"))).clicked() {
+                            if ui
+                                .add_enabled(
+                                    !self.ignore_ws,
+                                    egui::Button::new(format!("Stage {n} selected line(s)")),
+                                )
+                                .clicked()
+                            {
                                 acts.push(Act::StageSel);
                                 ui.close();
                             }
-                            if ui.add_enabled(!self.ignore_ws, egui::Button::new(format!("Discard {n} selected line(s)…"))).clicked() {
+                            if ui
+                                .add_enabled(
+                                    !self.ignore_ws,
+                                    egui::Button::new(format!("Discard {n} selected line(s)…")),
+                                )
+                                .clicked()
+                            {
                                 acts.push(Act::DiscardSel);
                                 ui.close();
                             }
                         }
                         DiffMode::Staged => {
-                            if ui.add_enabled(!self.ignore_ws, egui::Button::new(format!("Unstage {n} selected line(s)"))).clicked() {
+                            if ui
+                                .add_enabled(
+                                    !self.ignore_ws,
+                                    egui::Button::new(format!("Unstage {n} selected line(s)")),
+                                )
+                                .clicked()
+                            {
                                 acts.push(Act::UnstageSel);
                                 ui.close();
                             }
@@ -484,7 +621,10 @@ impl DiffView {
                     }
                     ui.separator();
                 }
-                if ui.add_enabled(n > 0, egui::Button::new("Copy selected lines")).clicked() {
+                if ui
+                    .add_enabled(n > 0, egui::Button::new("Copy selected lines"))
+                    .clicked()
+                {
                     acts.push(Act::CopySel);
                     ui.close();
                 }
@@ -492,7 +632,10 @@ impl DiffView {
                     acts.push(Act::CopyPatch);
                     ui.close();
                 }
-                if ui.add_enabled(n > 0, egui::Button::new("Clear selection")).clicked() {
+                if ui
+                    .add_enabled(n > 0, egui::Button::new("Clear selection"))
+                    .clicked()
+                {
                     self.sel.clear();
                     ui.close();
                 }
@@ -507,7 +650,12 @@ impl DiffView {
                 ui.memory_mut(|m| {
                     m.set_focus_lock_filter(
                         body_id,
-                        egui::EventFilter { tab: false, horizontal_arrows: true, vertical_arrows: true, escape: true },
+                        egui::EventFilter {
+                            tab: false,
+                            horizontal_arrows: true,
+                            vertical_arrows: true,
+                            escape: true,
+                        },
                     )
                 });
                 use egui::Key;
@@ -550,7 +698,8 @@ impl DiffView {
                     acts.push(Act::CopySel);
                 }
                 if all {
-                    self.sel.range(0, d.lines.len().saturating_sub(1) as u32, &d.lines, false);
+                    self.sel
+                        .range(0, d.lines.len().saturating_sub(1) as u32, &d.lines, false);
                 }
                 if esc {
                     body.surrender_focus();
@@ -586,7 +735,9 @@ impl DiffView {
                         }
                     }
                     Row::Line(i) => {
-                        let Some(l) = d.lines.get(i as usize) else { continue };
+                        let Some(l) = d.lines.get(i as usize) else {
+                            continue;
+                        };
                         let bg = line_bg(&p, l.kind);
                         if bg != Color32::TRANSPARENT {
                             painter.rect_filled(rect, 0.0, bg);
@@ -594,21 +745,52 @@ impl DiffView {
                         let selected = self.sel.contains(i);
                         if selected {
                             painter.rect_filled(rect, 0.0, p.selection);
-                            painter.rect_filled(Rect::from_min_size(rect.min, vec2(3.0, row_h)), 0.0, p.branch);
+                            painter.rect_filled(
+                                Rect::from_min_size(rect.min, vec2(3.0, row_h)),
+                                0.0,
+                                p.branch,
+                            );
                         }
                         let cy = rect.center().y;
                         let x0 = rect.left();
                         if l.old_no != 0 {
-                            number(&painter, pos2(x0 + num_w - 6.0, cy), l.old_no, &font, p.muted);
+                            number(
+                                &painter,
+                                pos2(x0 + num_w - 6.0, cy),
+                                l.old_no,
+                                &font,
+                                p.muted,
+                            );
                         }
                         if l.new_no != 0 {
-                            number(&painter, pos2(x0 + 2.0 * num_w - 6.0, cy), l.new_no, &font, p.muted);
+                            number(
+                                &painter,
+                                pos2(x0 + 2.0 * num_w - 6.0, cy),
+                                l.new_no,
+                                &font,
+                                p.muted,
+                            );
                         }
                         let (sign, sc) = sign_of(&p, l.kind);
-                        painter.text(pos2(x0 + 2.0 * num_w + 2.0, cy), Align2::LEFT_CENTER, sign, font.clone(), sc);
+                        painter.text(
+                            pos2(x0 + 2.0 * num_w + 2.0, cy),
+                            Align2::LEFT_CENTER,
+                            sign,
+                            font.clone(),
+                            sc,
+                        );
                         let text_rect = Rect::from_min_max(pos2(x0 + gutter, rect.top()), rect.max);
                         let hls = self.highlights(d, &shown.layout, i);
-                        let job = line_job(&line_text(d, l, false), &hls, hl(l.kind), &font, text_color, p.muted, tab, l.no_eol());
+                        let job = line_job(
+                            &line_text(d, l, false),
+                            &hls,
+                            hl(l.kind),
+                            &font,
+                            text_color,
+                            p.muted,
+                            tab,
+                            l.no_eol(),
+                        );
                         let galley = painter.layout_job(job);
                         let gy = cy - galley.size().y / 2.0;
                         painter.with_clip_rect(text_rect.intersect(vis)).galley(
@@ -625,7 +807,9 @@ impl DiffView {
                             } else {
                                 Rect::from_min_max(pos2(mid, rect.top()), rect.max)
                             };
-                            let Some(l) = (idx != NONE).then(|| d.lines.get(idx as usize)).flatten() else {
+                            let Some(l) =
+                                (idx != NONE).then(|| d.lines.get(idx as usize)).flatten()
+                            else {
                                 painter.rect_filled(half, 0.0, faint);
                                 continue;
                             };
@@ -635,18 +819,46 @@ impl DiffView {
                             }
                             if l.kind != LineKind::Context && self.sel.contains(idx) {
                                 painter.rect_filled(half, 0.0, p.selection);
-                                painter.rect_filled(Rect::from_min_size(half.min, vec2(3.0, row_h)), 0.0, p.branch);
+                                painter.rect_filled(
+                                    Rect::from_min_size(half.min, vec2(3.0, row_h)),
+                                    0.0,
+                                    p.branch,
+                                );
                             }
                             let cy = half.center().y;
                             let no = if left { l.old_no } else { l.new_no };
                             if no != 0 {
-                                number(&painter, pos2(half.left() + num_w - 6.0, cy), no, &font, p.muted);
+                                number(
+                                    &painter,
+                                    pos2(half.left() + num_w - 6.0, cy),
+                                    no,
+                                    &font,
+                                    p.muted,
+                                );
                             }
                             let (sign, sc) = sign_of(&p, l.kind);
-                            painter.text(pos2(half.left() + num_w + 2.0, cy), Align2::LEFT_CENTER, sign, font.clone(), sc);
-                            let text_rect = Rect::from_min_max(pos2(half.left() + gutter, half.top()), half.max);
+                            painter.text(
+                                pos2(half.left() + num_w + 2.0, cy),
+                                Align2::LEFT_CENTER,
+                                sign,
+                                font.clone(),
+                                sc,
+                            );
+                            let text_rect = Rect::from_min_max(
+                                pos2(half.left() + gutter, half.top()),
+                                half.max,
+                            );
                             let hls = self.highlights(d, &shown.layout, idx);
-                            let job = line_job(&line_text(d, l, left), &hls, hl(l.kind), &font, text_color, p.muted, tab, l.no_eol());
+                            let job = line_job(
+                                &line_text(d, l, left),
+                                &hls,
+                                hl(l.kind),
+                                &font,
+                                text_color,
+                                p.muted,
+                                tab,
+                                l.no_eol(),
+                            );
                             let galley = painter.layout_job(job);
                             let gy = cy - galley.size().y / 2.0;
                             painter.with_clip_rect(text_rect.intersect(vis)).galley(
@@ -660,10 +872,18 @@ impl DiffView {
             }
             if sbs {
                 let x = vis.center().x;
-                painter.vline(x, vis.y_range(), egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color));
+                painter.vline(
+                    x,
+                    vis.y_range(),
+                    egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
+                );
             }
             // Gutter separator.
-            let gx = if sbs { vis.left() + num_w + sign_w } else { vis.left() + 2.0 * num_w + sign_w };
+            let gx = if sbs {
+                vis.left() + num_w + sign_w
+            } else {
+                vis.left() + 2.0 * num_w + sign_w
+            };
             painter.vline(gx, vis.y_range(), egui::Stroke::new(1.0, faint));
         });
         self.offset = out.state.offset.y;
@@ -671,7 +891,16 @@ impl DiffView {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn hunk_buttons(&self, ui: &mut Ui, rect: Rect, h: usize, d: &FileDiff, mode: DiffMode, font: &FontId, acts: &mut Vec<Act>) {
+    fn hunk_buttons(
+        &self,
+        ui: &mut Ui,
+        rect: Rect,
+        h: usize,
+        d: &FileDiff,
+        mode: DiffMode,
+        font: &FontId,
+        acts: &mut Vec<Act>,
+    ) {
         let n_sel = self.sel.lines.len();
         let in_hunk = self.sel.count_in_hunk(d, h) > 0;
         let lines = in_hunk && n_sel > 0;
@@ -680,8 +909,13 @@ impl DiffView {
                 (format!("Stage lines ({n_sel})"), Act::StageSel),
                 (format!("Discard lines ({n_sel})…"), Act::DiscardSel),
             ],
-            DiffMode::Unstaged => vec![("Stage hunk".into(), Act::StageHunk(h)), ("Discard hunk…".into(), Act::DiscardHunk(h))],
-            DiffMode::Staged if lines => vec![(format!("Unstage lines ({n_sel})"), Act::UnstageSel)],
+            DiffMode::Unstaged => vec![
+                ("Stage hunk".into(), Act::StageHunk(h)),
+                ("Discard hunk…".into(), Act::DiscardHunk(h)),
+            ],
+            DiffMode::Staged if lines => {
+                vec![(format!("Unstage lines ({n_sel})"), Act::UnstageSel)]
+            }
             DiffMode::Staged => vec![("Unstage hunk".into(), Act::UnstageHunk(h))],
             DiffMode::ReadOnly => Vec::new(),
         };
@@ -689,17 +923,28 @@ impl DiffView {
         let mut x = rect.right() - 6.0;
         let color = ui.visuals().text_color();
         for (label, act) in buttons.into_iter().rev() {
-            let w = ui.painter().layout_no_wrap(label.clone(), font.clone(), color).size().x + 14.0;
+            let w = ui
+                .painter()
+                .layout_no_wrap(label.clone(), font.clone(), color)
+                .size()
+                .x
+                + 14.0;
             let r = Rect::from_min_max(pos2(x - w, rect.top() + 1.0), pos2(x, rect.bottom() - 1.0));
             x -= w + 4.0;
-            let builder = egui::UiBuilder::new().max_rect(r).layout(egui::Layout::left_to_right(egui::Align::Center));
+            let builder = egui::UiBuilder::new()
+                .max_rect(r)
+                .layout(egui::Layout::left_to_right(egui::Align::Center));
             let resp = ui
                 .scope_builder(builder, |ui| {
-                    let b = egui::Button::new(RichText::new(label).font(font.clone())).small().min_size(r.size());
+                    let b = egui::Button::new(RichText::new(label).font(font.clone()))
+                        .small()
+                        .min_size(r.size());
                     ui.add_enabled(enabled, b)
                 })
                 .inner
-                .on_disabled_hover_text("Turn off \"Ignore WS\" to stage or discard parts of a file");
+                .on_disabled_hover_text(
+                    "Turn off \"Ignore WS\" to stage or discard parts of a file",
+                );
             if resp.clicked() {
                 acts.push(act);
             }
@@ -711,11 +956,17 @@ impl DiffView {
         if !self.word_diff {
             return Vec::new();
         }
-        let Some(&other) = layout.partner.get(i as usize) else { return Vec::new() };
+        let Some(&other) = layout.partner.get(i as usize) else {
+            return Vec::new();
+        };
         if other == NONE {
             return Vec::new();
         }
-        let (removed, added) = if d.lines[i as usize].kind == LineKind::Removed { (i, other) } else { (other, i) };
+        let (removed, added) = if d.lines[i as usize].kind == LineKind::Removed {
+            (i, other)
+        } else {
+            (other, i)
+        };
         if self.inline.len() > INLINE_CACHE_MAX {
             self.inline.clear();
         }
@@ -724,7 +975,11 @@ impl DiffView {
             let b = d.line_text(&d.lines[added as usize]);
             Arc::new(gk_diff::inline_changes(&a, &b))
         });
-        if i == removed { e.0.clone() } else { e.1.clone() }
+        if i == removed {
+            e.0.clone()
+        } else {
+            e.1.clone()
+        }
     }
 
     fn apply(&mut self, act: Act, ui: &Ui, session: &Session, shared: &Shared) {
@@ -734,13 +989,28 @@ impl DiffView {
             Act::CopySel => ui.ctx().copy_text(self.sel.text(&s.diff)),
             Act::CopyPatch => {
                 let old = match &s.target {
-                    DiffTarget::Staged { old_path: Some(o), .. } => o.clone(),
+                    DiffTarget::Staged {
+                        old_path: Some(o), ..
+                    } => o.clone(),
                     _ => path.clone(),
                 };
-                ui.ctx().copy_text(gk_diff::to_unified(&old, &path, &s.diff));
+                ui.ctx()
+                    .copy_text(gk_diff::to_unified(&old, &path, &s.diff));
             }
-            Act::StageHunk(h) => stage_lines(session, path, model::hunk_keys(&s.diff, h), false, "Stage hunk"),
-            Act::UnstageHunk(h) => stage_lines(session, path, model::hunk_keys(&s.diff, h), true, "Unstage hunk"),
+            Act::StageHunk(h) => stage_lines(
+                session,
+                path,
+                model::hunk_keys(&s.diff, h),
+                false,
+                "Stage hunk",
+            ),
+            Act::UnstageHunk(h) => stage_lines(
+                session,
+                path,
+                model::hunk_keys(&s.diff, h),
+                true,
+                "Unstage hunk",
+            ),
             Act::StageSel => {
                 stage_lines(session, path, self.sel.keys(&s.diff), false, "Stage lines");
                 self.sel.clear();
@@ -761,7 +1031,14 @@ impl DiffView {
         }
     }
 
-    fn ask_discard(&mut self, session: &Session, path: String, keys: Vec<LineKey>, what: String, shared: &Shared) {
+    fn ask_discard(
+        &mut self,
+        session: &Session,
+        path: String,
+        keys: Vec<LineKey>,
+        what: String,
+        shared: &Shared,
+    ) {
         if keys.is_empty() {
             return;
         }
@@ -781,7 +1058,10 @@ impl DiffView {
             ui.heading("Discard changes");
             ui.add_space(4.0);
             ui.label(format!("Discard {} in {}?", c.what, c.path));
-            ui.label(RichText::new("The working copy file is modified; this cannot be undone.").color(shared.palette.removed_fg));
+            ui.label(
+                RichText::new("The working copy file is modified; this cannot be undone.")
+                    .color(shared.palette.removed_fg),
+            );
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 if ui.button("Discard").clicked() {
@@ -812,14 +1092,18 @@ fn stage_lines(session: &Session, path: String, keys: Vec<LineKey>, unstage: boo
     if keys.is_empty() {
         return;
     }
-    session.run_index_op(format!("{label}: {path}"), move |repo| repo.stage_lines(&path, unstage, &model::picker(&keys)));
+    session.run_index_op(format!("{label}: {path}"), move |repo| {
+        repo.stage_lines(&path, unstage, &model::picker(&keys))
+    });
 }
 
 fn discard_lines(session: &Session, path: String, keys: Vec<LineKey>) {
     if keys.is_empty() {
         return;
     }
-    session.run_index_op(format!("Discard lines: {path}"), move |repo| repo.discard_lines(&path, &model::picker(&keys)));
+    session.run_index_op(format!("Discard lines: {path}"), move |repo| {
+        repo.discard_lines(&path, &model::picker(&keys))
+    });
 }
 
 fn line_bg(p: &crate::theme::Palette, kind: LineKind) -> Color32 {
@@ -839,7 +1123,13 @@ fn sign_of(p: &crate::theme::Palette, kind: LineKind) -> (&'static str, Color32)
 }
 
 fn number(painter: &egui::Painter, right_center: Pos2, n: u32, font: &FontId, color: Color32) {
-    painter.text(right_center, Align2::RIGHT_CENTER, n.to_string(), font.clone(), color);
+    painter.text(
+        right_center,
+        Align2::RIGHT_CENTER,
+        n.to_string(),
+        font.clone(),
+        color,
+    );
 }
 
 /// Display text of a line; `old_side` uses the old bytes of context lines
@@ -880,7 +1170,11 @@ fn line_job(
         };
         job.append(&buf, 0.0, format);
     }
-    let note = TextFormat { font_id: font.clone(), color: muted, ..Default::default() };
+    let note = TextFormat {
+        font_id: font.clone(),
+        color: muted,
+        ..Default::default()
+    };
     if was_cut {
         job.append(" …", 0.0, note.clone());
     }
@@ -916,7 +1210,13 @@ pub fn human_size(n: u64) -> String {
 impl DiffView {
     /// Lines and display rows of the shown diff (for smoke tests).
     pub(crate) fn shown_stats(&self) -> Option<(usize, usize, bool)> {
-        self.shown.as_ref().map(|s| (s.diff.lines.len(), s.layout.rows(self.side_by_side).len(), s.diff.binary))
+        self.shown.as_ref().map(|s| {
+            (
+                s.diff.lines.len(),
+                s.layout.rows(self.side_by_side).len(),
+                s.diff.binary,
+            )
+        })
     }
 }
 
@@ -935,14 +1235,24 @@ mod tests {
     #[test]
     fn job_marks_cut_and_eol() {
         let f = FontId::monospace(12.0);
-        let j = line_job("a\tb", std::slice::from_ref(&(2..3)), Color32::RED, &f, Color32::WHITE, Color32::GRAY, 4, true);
+        let j = line_job(
+            "a\tb",
+            std::slice::from_ref(&(2..3)),
+            Color32::RED,
+            &f,
+            Color32::WHITE,
+            Color32::GRAY,
+            4,
+            true,
+        );
         assert!(j.text.starts_with("a   b"));
         assert!(j.text.contains("no newline"));
         // highlighted segment "b" carries the background
         assert!(
             j.sections
                 .iter()
-                .any(|s| s.format.background == Color32::RED && &j.text[s.byte_range.start.0..s.byte_range.end.0] == "b")
+                .any(|s| s.format.background == Color32::RED
+                    && &j.text[s.byte_range.start.0..s.byte_range.end.0] == "b")
         );
     }
 
@@ -955,7 +1265,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let git = |args: &[&str]| {
-            let o = std::process::Command::new("git").args(args).current_dir(&dir).output().unwrap();
+            let o = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&dir)
+                .output()
+                .unwrap();
             assert!(o.status.success(), "git {args:?}");
             String::from_utf8_lossy(&o.stdout).into_owned()
         };
@@ -967,33 +1281,50 @@ mod tests {
         std::fs::write(dir.join("f.txt"), &old).unwrap();
         git(&["add", "-A"]);
         git(&["commit", "-qm", "init"]);
-        let new = old.replace("\r\n3\r\n", "\r\nthree\r\n").replace("\r\n30\r\n", "\r\nthirty\r\n");
+        let new = old
+            .replace("\r\n3\r\n", "\r\nthree\r\n")
+            .replace("\r\n30\r\n", "\r\nthirty\r\n");
         std::fs::write(dir.join("f.txt"), &new).unwrap();
 
         let repo = gk_core::Repo::open(&dir, gk_cli::CommandLog::default()).unwrap();
         let shown = |t: &DiffTarget| {
             let (o, n) = gk_core::content::load_sides(&repo, t).unwrap();
-            gk_diff::diff(o.as_deref().unwrap_or_default(), n.as_deref().unwrap_or_default(), Options::default())
+            gk_diff::diff(
+                o.as_deref().unwrap_or_default(),
+                n.as_deref().unwrap_or_default(),
+                Options::default(),
+            )
         };
-        let unstaged = DiffTarget::Unstaged { path: "f.txt".into() };
-        let staged = DiffTarget::Staged { path: "f.txt".into(), old_path: None };
+        let unstaged = DiffTarget::Unstaged {
+            path: "f.txt".into(),
+        };
+        let staged = DiffTarget::Staged {
+            path: "f.txt".into(),
+            old_path: None,
+        };
         let d = shown(&unstaged);
         assert_eq!(d.hunks.len(), 2);
 
         // Stage the second hunk only.
-        repo.stage_lines("f.txt", false, &model::picker(&model::hunk_keys(&d, 1))).unwrap();
+        repo.stage_lines("f.txt", false, &model::picker(&model::hunk_keys(&d, 1)))
+            .unwrap();
         let cached = git(&["diff", "--cached"]);
-        assert!(cached.contains("+thirty") && !cached.contains("+three"), "{cached}");
+        assert!(
+            cached.contains("+thirty") && !cached.contains("+three"),
+            "{cached}"
+        );
 
         // Unstage it again via the staged diff.
         let s = shown(&staged);
         assert_eq!(s.hunks.len(), 1);
-        repo.stage_lines("f.txt", true, &model::picker(&model::hunk_keys(&s, 0))).unwrap();
+        repo.stage_lines("f.txt", true, &model::picker(&model::hunk_keys(&s, 0)))
+            .unwrap();
         assert!(git(&["diff", "--cached"]).trim().is_empty());
 
         // Discard the first hunk from the worktree; CRLF stays intact.
         let d = shown(&unstaged);
-        repo.discard_lines("f.txt", &model::picker(&model::hunk_keys(&d, 0))).unwrap();
+        repo.discard_lines("f.txt", &model::picker(&model::hunk_keys(&d, 0)))
+            .unwrap();
         let now = std::fs::read_to_string(dir.join("f.txt")).unwrap();
         assert!(now.contains("\r\n3\r\n") && now.contains("\r\nthirty\r\n"));
 

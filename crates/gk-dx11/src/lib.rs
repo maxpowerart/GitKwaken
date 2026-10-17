@@ -98,7 +98,11 @@ static BACKEND_INFO: Mutex<String> = Mutex::new(String::new());
 /// Empty-ish placeholder until the window has started.
 pub fn backend_info() -> String {
     let info = BACKEND_INFO.lock().map(|s| s.clone()).unwrap_or_default();
-    if info.is_empty() { "renderer not started".to_owned() } else { info }
+    if info.is_empty() {
+        "renderer not started".to_owned()
+    } else {
+        info
+    }
 }
 
 fn set_backend_info(info: String) {

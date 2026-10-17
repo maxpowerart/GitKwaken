@@ -110,7 +110,11 @@ pub fn watch(workdir: &Path, git_dir: &Path, out: Sender<Event>) -> anyhow::Resu
     std::thread::Builder::new()
         .name("gk-watch".into())
         .spawn(move || debounce_loop(raw_rx, stop_rx, out, classifier, p))?;
-    Ok(Watcher { _watchers: watchers, paused, stop_tx })
+    Ok(Watcher {
+        _watchers: watchers,
+        paused,
+        stop_tx,
+    })
 }
 
 /// Removes the `\\?\` prefix canonicalize adds on Windows so prefixes compare.
@@ -139,7 +143,9 @@ impl Classifier {
         if let Ok(rel) = path.strip_prefix(&self.git_dir) {
             return classify_git(rel);
         }
-        let Ok(rel) = path.strip_prefix(&self.workdir) else { return Class::Skip };
+        let Ok(rel) = path.strip_prefix(&self.workdir) else {
+            return Class::Skip;
+        };
         let mut s = String::new();
         for (i, c) in rel.components().enumerate() {
             if i > 0 {
@@ -165,10 +171,12 @@ fn classify_git(rel: &Path) -> Class {
         "HEAD" => c.head = true,
         "packed-refs" | "FETCH_HEAD" | "ORIG_HEAD" => c.refs = true,
         _ if s.starts_with("refs/") => c.refs = true,
-        "MERGE_HEAD" | "MERGE_MSG" | "CHERRY_PICK_HEAD" | "REVERT_HEAD" | "BISECT_LOG" | "AUTO_MERGE" => {
-            c.state = true
-        }
-        _ if s.starts_with("rebase-merge") || s.starts_with("rebase-apply") || s.starts_with("sequencer") => {
+        "MERGE_HEAD" | "MERGE_MSG" | "CHERRY_PICK_HEAD" | "REVERT_HEAD" | "BISECT_LOG"
+        | "AUTO_MERGE" => c.state = true,
+        _ if s.starts_with("rebase-merge")
+            || s.starts_with("rebase-apply")
+            || s.starts_with("sequencer") =>
+        {
             c.state = true
         }
         _ if s.starts_with("modules/") || s.starts_with("worktrees/") => c.state = true,
@@ -190,7 +198,11 @@ fn debounce_loop(
     let mut first: Option<Instant> = None;
     let mut last = Instant::now();
     loop {
-        let timeout = if first.is_some() { DEBOUNCE } else { Duration::from_secs(3600) };
+        let timeout = if first.is_some() {
+            DEBOUNCE
+        } else {
+            Duration::from_secs(3600)
+        };
         select! {
             recv(stop) -> _ => return,
             recv(raw) -> msg => {
@@ -269,15 +281,27 @@ mod tests {
 
     #[test]
     fn git_dir_classification() {
-        assert!(matches!(classify_git(Path::new("index")), Class::GitDir(GitDirChange { index: true, .. })));
-        assert!(matches!(classify_git(Path::new("refs/heads/main")), Class::GitDir(GitDirChange { refs: true, .. })));
+        assert!(matches!(
+            classify_git(Path::new("index")),
+            Class::GitDir(GitDirChange { index: true, .. })
+        ));
+        assert!(matches!(
+            classify_git(Path::new("refs/heads/main")),
+            Class::GitDir(GitDirChange { refs: true, .. })
+        ));
         assert!(matches!(classify_git(Path::new("index.lock")), Class::Skip));
-        assert!(matches!(classify_git(Path::new("objects/ab/cdef")), Class::Skip));
+        assert!(matches!(
+            classify_git(Path::new("objects/ab/cdef")),
+            Class::Skip
+        ));
     }
 
     #[test]
     fn collapse_parents() {
-        let set: BTreeSet<BString> = ["a", "a/b", "a/c/d", "ab", "b/x"].iter().map(|s| BString::from(*s)).collect();
+        let set: BTreeSet<BString> = ["a", "a/b", "a/c/d", "ab", "b/x"]
+            .iter()
+            .map(|s| BString::from(*s))
+            .collect();
         let v: Vec<String> = collapse(set).iter().map(|s| s.to_string()).collect();
         assert_eq!(v, ["a", "ab", "b/x"]);
     }

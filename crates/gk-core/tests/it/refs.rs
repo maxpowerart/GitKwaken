@@ -24,7 +24,10 @@ fn branch_and_detached_head() {
     assert_eq!(r.current_branch().unwrap().name, "main");
     assert_eq!(r.branch("feature").unwrap().target, c1);
     assert!(!r.branch("feature").unwrap().is_head);
-    assert!(r.labels[&c2].contains(&Label::Branch { name: s("main"), is_head: true }));
+    assert!(r.labels[&c2].contains(&Label::Branch {
+        name: s("main"),
+        is_head: true
+    }));
 
     t.git(&["checkout", "-q", "--detach", &c1]);
     let r = refs::load(&t.repo).unwrap();
@@ -94,12 +97,19 @@ fn upstream_ahead_behind_and_remote_branches() {
     assert_eq!((main.ahead, main.behind), (2, 1));
     assert!(!main.upstream_gone);
     let names: Vec<String> = r.remote_branches.iter().map(|b| b.full()).collect();
-    assert!(names.contains(&s("origin/main")) && names.contains(&s("origin/side")), "{names:?}");
+    assert!(
+        names.contains(&s("origin/main")) && names.contains(&s("origin/side")),
+        "{names:?}"
+    );
     assert_eq!(r.remotes.len(), 1);
     assert_eq!(r.remotes[0].name, "origin");
     assert_eq!(r.remotes[0].fetch_url, remote.url());
     assert_eq!(r.remotes[0].push_url, remote.url());
-    let om = r.remote_branches.iter().find(|b| b.full() == "origin/main").unwrap();
+    let om = r
+        .remote_branches
+        .iter()
+        .find(|b| b.full() == "origin/main")
+        .unwrap();
     assert!(r.labels[&om.target].contains(&Label::Remote(s("origin/main"))));
 
     // Upstream deleted on the remote.
@@ -113,7 +123,12 @@ fn upstream_ahead_behind_and_remote_branches() {
 #[test]
 fn remote_url_with_spaces() {
     let t = TestRepo::new();
-    t.git(&["remote", "add", "spaced", "C:/some dir/with spaces/repo.git"]);
+    t.git(&[
+        "remote",
+        "add",
+        "spaced",
+        "C:/some dir/with spaces/repo.git",
+    ]);
     t.git(&["remote", "set-url", "--push", "spaced", "D:/push dir/x.git"]);
     let r = refs::load(&t.repo).unwrap();
     assert_eq!(r.remotes.len(), 1);
@@ -145,10 +160,16 @@ fn state_rebase_conflict() {
     conflicting_branches(&t);
     t.git(&["checkout", "-q", "topic"]);
     assert!(!t.git_raw(&["rebase", "main"]).success());
-    assert_eq!(refs::load(&t.repo).unwrap().state, RepoState::Rebasing { interactive: false });
+    assert_eq!(
+        refs::load(&t.repo).unwrap().state,
+        RepoState::Rebasing { interactive: false }
+    );
     t.git(&["rebase", "--abort"]);
     assert!(!t.git_raw(&["rebase", "-i", "main"]).success());
-    assert_eq!(refs::load(&t.repo).unwrap().state, RepoState::Rebasing { interactive: true });
+    assert_eq!(
+        refs::load(&t.repo).unwrap().state,
+        RepoState::Rebasing { interactive: true }
+    );
 }
 
 #[test]

@@ -67,7 +67,7 @@ mod tests {
     #[test]
     fn highlights_changed_word() {
         let (a, b) = inline_changes("let x = foo(1);", "let x = bar(1);");
-        assert_eq!(a, [8..11]);
-        assert_eq!(b, [8..11]);
+        assert_eq!(a, vec![8..11]);
+        assert_eq!(b, vec![8..11]);
     }
 }

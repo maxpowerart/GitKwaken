@@ -64,7 +64,10 @@ pub struct Hunk {
 
 impl Hunk {
     pub fn header(&self) -> String {
-        format!("@@ -{},{} +{},{} @@", self.old_start, self.old_len, self.new_start, self.new_len)
+        format!(
+            "@@ -{},{} +{},{} @@",
+            self.old_start, self.old_len, self.new_start, self.new_len
+        )
     }
 }
 
@@ -118,13 +121,19 @@ pub struct Options {
 
 impl Default for Options {
     fn default() -> Self {
-        Self { context: 3, ignore_whitespace: false }
+        Self {
+            context: 3,
+            ignore_whitespace: false,
+        }
     }
 }
 
 impl Options {
     pub fn full() -> Self {
-        Self { context: u32::MAX, ignore_whitespace: false }
+        Self {
+            context: u32::MAX,
+            ignore_whitespace: false,
+        }
     }
 }
 
@@ -144,13 +153,20 @@ fn split_lines(data: &[u8]) -> (Vec<&[u8]>, bool) {
 }
 
 fn normalize_ws(line: &[u8]) -> Vec<u8> {
-    line.iter().copied().filter(|c| !c.is_ascii_whitespace()).collect()
+    line.iter()
+        .copied()
+        .filter(|c| !c.is_ascii_whitespace())
+        .collect()
 }
 
 /// Computes a diff between two blobs.
 pub fn diff(old: &[u8], new: &[u8], opts: Options) -> FileDiff {
     if is_binary(old) || is_binary(new) {
-        return FileDiff { binary: true, context: opts.context, ..Default::default() };
+        return FileDiff {
+            binary: true,
+            context: opts.context,
+            ..Default::default()
+        };
     }
     let (a, a_noeol) = split_lines(old);
     let (b, b_noeol) = split_lines(new);
@@ -191,7 +207,11 @@ pub fn diff(old: &[u8], new: &[u8], opts: Options) -> FileDiff {
     }
 
     let ranges: Vec<Range<usize>> = if opts.context == u32::MAX {
-        if seq.is_empty() { Vec::new() } else { std::iter::once(0..seq.len()).collect() }
+        if seq.is_empty() {
+            Vec::new()
+        } else {
+            std::iter::once(0..seq.len()).collect()
+        }
     } else {
         let ctx = opts.context as usize;
         let mut ranges: Vec<Range<usize>> = Vec::new();
@@ -257,7 +277,11 @@ pub fn diff(old: &[u8], new: &[u8], opts: Options) -> FileDiff {
                     old_len += 1;
                     new_len += 1;
                     let t = push_text(&mut out, b[bj]);
-                    let ot = if a[ai] == b[bj] { t } else { push_text(&mut out, a[ai]) };
+                    let ot = if a[ai] == b[bj] {
+                        t
+                    } else {
+                        push_text(&mut out, a[ai])
+                    };
                     Line {
                         kind,
                         old_no: ai as u32 + 1,
@@ -279,7 +303,13 @@ pub fn diff(old: &[u8], new: &[u8], opts: Options) -> FileDiff {
         if new_len == 0 {
             new_start -= 1;
         }
-        out.hunks.push(Hunk { old_start, old_len, new_start, new_len, lines: first_line..out.lines.len() });
+        out.hunks.push(Hunk {
+            old_start,
+            old_len,
+            new_start,
+            new_len,
+            lines: first_line..out.lines.len(),
+        });
     }
     out
 }
@@ -325,7 +355,8 @@ fn line_flags<T: AsRef<[u8]>>(a: &[T], b: &[T]) -> (Vec<bool>, Vec<bool>) {
 
 /// Renders a diff as a unified patch (for copying or saving).
 pub fn to_unified(path_old: &str, path_new: &str, d: &FileDiff) -> String {
-    let mut s = format!("diff --git a/{path_old} b/{path_new}\n--- a/{path_old}\n+++ b/{path_new}\n");
+    let mut s =
+        format!("diff --git a/{path_old} b/{path_new}\n--- a/{path_old}\n+++ b/{path_new}\n");
     for h in &d.hunks {
         s.push_str(&h.header());
         s.push('\n');
@@ -386,7 +417,14 @@ mod tests {
 
     #[test]
     fn whitespace_ignored() {
-        let d = diff(b"a b\n", b"a  b\n", Options { ignore_whitespace: true, ..Default::default() });
+        let d = diff(
+            b"a b\n",
+            b"a  b\n",
+            Options {
+                ignore_whitespace: true,
+                ..Default::default()
+            },
+        );
         assert!(d.hunks.is_empty());
     }
 

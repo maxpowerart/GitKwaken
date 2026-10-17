@@ -56,8 +56,11 @@ impl RepoTab {
             gk_settings::StatusEngine::Gix => gk_status::Engine::Gix,
             gk_settings::StatusEngine::Cli => gk_status::Engine::Cli,
         };
-        opts.status.untracked =
-            if settings.show_untracked { gk_status::Untracked::All } else { gk_status::Untracked::No };
+        opts.status.untracked = if settings.show_untracked {
+            gk_status::Untracked::All
+        } else {
+            gk_status::Untracked::No
+        };
         opts.scope = if state.history_scope == "current" {
             gk_core::history::Scope::Current
         } else {
@@ -66,7 +69,11 @@ impl RepoTab {
         let c = ctx.clone();
         let session = Session::open(repo, opts, move || c.request_repaint());
         let name = session.repo().name();
-        let view = if state.last_view == "history" { View::History } else { View::FileStatus };
+        let view = if state.last_view == "history" {
+            View::History
+        } else {
+            View::FileStatus
+        };
         let mut tab = Self {
             session,
             path: workdir,
@@ -117,16 +124,22 @@ impl RepoTab {
         if minutes == 0 || snap.refs.remotes.is_empty() || snap.op.is_some() {
             return;
         }
-        let due = self.last_fetch.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(minutes as u64 * 60));
+        let due = self
+            .last_fetch
+            .is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(minutes as u64 * 60));
         if !due || self.fetching.load(std::sync::atomic::Ordering::SeqCst) {
             return;
         }
         self.last_fetch = Some(std::time::Instant::now());
-        self.fetching.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.fetching
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         let session = self.session.clone();
         let flag = self.fetching.clone();
         std::thread::spawn(move || {
-            let opts = gk_core::ops::FetchOptions { prune: true, tags: false };
+            let opts = gk_core::ops::FetchOptions {
+                prune: true,
+                tags: false,
+            };
             let ok = session
                 .repo()
                 .fetch(None, &opts, &gk_cli::CancelToken::new(), &mut |_| {})
@@ -184,12 +197,11 @@ impl RepoTab {
             View::Merge => views::merge::show(ui, self, &snap, shared),
             View::Blame => views::blame::show(ui, self, &snap, shared),
         });
-        if let Some(mut d) = self.dialog.take() {
-            if d.show(ui.ctx(), self, &snap, shared) {
-                if self.dialog.is_none() {
-                    self.dialog = Some(d);
-                }
-            }
+        if let Some(mut d) = self.dialog.take()
+            && d.show(ui.ctx(), self, &snap, shared)
+            && self.dialog.is_none()
+        {
+            self.dialog = Some(d);
         }
         self.seen_generation = snap.generation;
     }

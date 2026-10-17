@@ -38,15 +38,20 @@ fn bracket_id(rest: &str) -> Option<(String, String)> {
     let rest = rest.trim().strip_prefix('[')?;
     let (id, summary) = rest.split_once(']')?;
     let id = id.trim();
-    (!id.is_empty() && id.bytes().all(|b| b.is_ascii_hexdigit())).then(|| (id.to_string(), summary.trim().to_string()))
+    (!id.is_empty() && id.bytes().all(|b| b.is_ascii_hexdigit()))
+        .then(|| (id.to_string(), summary.trim().to_string()))
 }
 
 /// Parses the comment lines of `git bisect log`.
 pub fn parse_bisect_log(log: &str) -> BisectLog {
     let mut out = BisectLog::default();
     for line in log.lines() {
-        let Some(c) = line.strip_prefix('#') else { continue };
-        let Some((key, rest)) = c.trim_start().split_once(':') else { continue };
+        let Some(c) = line.strip_prefix('#') else {
+            continue;
+        };
+        let Some((key, rest)) = c.trim_start().split_once(':') else {
+            continue;
+        };
         let kind = match key.trim() {
             "good" => EntryKind::Good,
             "bad" => EntryKind::Bad,
@@ -75,7 +80,9 @@ pub fn parse_first_bad(output: &str) -> Option<String> {
 
 /// "Bisecting: 3 revisions left to test after this (roughly 2 steps)".
 pub fn parse_remaining(output: &str) -> Option<String> {
-    output.lines().find_map(|l| l.trim().strip_prefix("Bisecting: ").map(|s| s.to_string()))
+    output
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("Bisecting: ").map(|s| s.to_string()))
 }
 
 enum Pending {
@@ -119,7 +126,10 @@ impl Bisect {
         let repo = tab.session.repo().clone();
         self.log_head = snap.refs.head_id.clone();
         self.log = Some(Task::spawn(ctx, move || {
-            repo.git().run(&["bisect", "log"]).map(|o| o.stdout_str()).map_err(|e| format!("{e:#}"))
+            repo.git()
+                .run(&["bisect", "log"])
+                .map(|o| o.stdout_str())
+                .map_err(|e| format!("{e:#}"))
         }));
     }
 
@@ -130,7 +140,9 @@ impl Bisect {
             BisectMark::Skip => "skip",
         };
         self.error = None;
-        let op = TrackedOp::queue(tab, format!("Bisect: mark {word}"), move |repo, _, _| repo.bisect_mark(mark, None));
+        let op = TrackedOp::queue(tab, format!("Bisect: mark {word}"), move |repo, _, _| {
+            repo.bisect_mark(mark, None)
+        });
         self.pending = Some((Pending::Mark, op));
     }
 
@@ -156,7 +168,10 @@ impl Bisect {
             self.log = None;
         }
         let bisecting = snap.refs.state == RepoState::Bisecting;
-        if bisecting && self.log.is_none() && (self.parsed.is_none() || self.log_head != snap.refs.head_id) {
+        if bisecting
+            && self.log.is_none()
+            && (self.parsed.is_none() || self.log_head != snap.refs.head_id)
+        {
             self.load_log(ctx, tab, snap);
         }
     }
@@ -164,32 +179,51 @@ impl Bisect {
     fn start_form(&mut self, ui: &mut egui::Ui, ctl: &mut Ctl, tab: &RepoTab, snap: &Snapshot) {
         ui.label("Find the commit that introduced a bug by binary search between a bad and a good revision.");
         ui.add_space(4.0);
-        egui::Grid::new("bisect-start").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-            ui.label("Bad (has the bug):");
-            ui.horizontal(|ui| {
-                let r = ui.add(egui::TextEdit::singleline(&mut self.bad).desired_width(260.0));
-                ctl.focus(&r);
-                rev_combo(ui, "bisect-bad", &mut self.bad, snap, Some("HEAD"), 140.0);
+        egui::Grid::new("bisect-start")
+            .num_columns(2)
+            .spacing([8.0, 6.0])
+            .show(ui, |ui| {
+                ui.label("Bad (has the bug):");
+                ui.horizontal(|ui| {
+                    let r = ui.add(egui::TextEdit::singleline(&mut self.bad).desired_width(260.0));
+                    ctl.focus(&r);
+                    rev_combo(ui, "bisect-bad", &mut self.bad, snap, Some("HEAD"), 140.0);
+                });
+                ui.end_row();
+                ui.label("");
+                hint(
+                    ui,
+                    self.bad_label.get(tab, snap, self.bad.trim()).to_string(),
+                );
+                ui.end_row();
+                ui.label("Good (no bug):");
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.good)
+                            .hint_text("commit id, branch or tag")
+                            .desired_width(260.0),
+                    );
+                    rev_combo(ui, "bisect-good", &mut self.good, snap, None, 140.0);
+                });
+                ui.end_row();
+                ui.label("");
+                hint(
+                    ui,
+                    self.good_label.get(tab, snap, self.good.trim()).to_string(),
+                );
+                ui.end_row();
             });
-            ui.end_row();
-            ui.label("");
-            hint(ui, self.bad_label.get(tab, snap, self.bad.trim()).to_string());
-            ui.end_row();
-            ui.label("Good (no bug):");
-            ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut self.good).hint_text("commit id, branch or tag").desired_width(260.0));
-                rev_combo(ui, "bisect-good", &mut self.good, snap, None, 140.0);
-            });
-            ui.end_row();
-            ui.label("");
-            hint(ui, self.good_label.get(tab, snap, self.good.trim()).to_string());
-            ui.end_row();
-        });
         if worktree_dirty(snap) {
-            warning(ui, "The working copy has uncommitted changes; bisect checks out other commits.");
+            warning(
+                ui,
+                "The working copy has uncommitted changes; bisect checks out other commits.",
+            );
         }
         if snap.refs.state != RepoState::Clean {
-            warning(ui, format!("An operation is in progress ({}).", snap.refs.state.label()));
+            warning(
+                ui,
+                format!("An operation is in progress ({}).", snap.refs.state.label()),
+            );
         }
         let (bad, good) = (self.bad.trim(), self.good.trim());
         if bad.is_empty() || good.is_empty() {
@@ -200,31 +234,58 @@ impl Bisect {
         }
     }
 
-    fn session_ui(&mut self, ui: &mut egui::Ui, tab: &RepoTab, snap: &Snapshot, busy: bool) -> Option<BisectMark> {
+    fn session_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        tab: &RepoTab,
+        snap: &Snapshot,
+        busy: bool,
+    ) -> Option<BisectMark> {
         let mut clicked = None;
         let parsed = self.parsed.as_ref().and_then(|p| p.as_ref().ok());
         let first_bad = parsed
             .and_then(|p| p.first_bad.clone())
             .or_else(|| parse_first_bad(&self.output).map(|id| (id, String::new())));
         if let Some((id, summary)) = &first_bad {
-            let summary = if summary.is_empty() { describe_rev(tab, snap, id) } else { format!("{}  {summary}", crate::util::short_id(id)) };
-            egui::Frame::new().fill(DANGER.gamma_multiply(0.18)).stroke((1.0, DANGER)).inner_margin(10).corner_radius(4).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.label(RichText::new("First bad commit found").strong().size(16.0).color(DANGER));
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(&summary).monospace().strong());
-                    if ui.small_button("Copy id").clicked() {
-                        ui.ctx().copy_text(id.clone());
-                    }
+            let summary = if summary.is_empty() {
+                describe_rev(tab, snap, id)
+            } else {
+                format!("{}  {summary}", crate::util::short_id(id))
+            };
+            egui::Frame::new()
+                .fill(DANGER.gamma_multiply(0.18))
+                .stroke((1.0, DANGER))
+                .inner_margin(10)
+                .corner_radius(4)
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(
+                        RichText::new("First bad commit found")
+                            .strong()
+                            .size(16.0)
+                            .color(DANGER),
+                    );
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(&summary).monospace().strong());
+                        if ui.small_button("Copy id").clicked() {
+                            ui.ctx().copy_text(id.clone());
+                        }
+                    });
+                    hint(
+                        ui,
+                        "Reset to end the bisect session and return to the original branch.",
+                    );
                 });
-                hint(ui, "Reset to end the bisect session and return to the original branch.");
-            });
             ui.add_space(6.0);
         }
         let head = snap.refs.head_id.clone().unwrap_or_default();
         ui.horizontal(|ui| {
             ui.label("Current commit:");
-            let text = if head.is_empty() { "(unknown)".to_string() } else { self.head_label.get(tab, snap, &head).to_string() };
+            let text = if head.is_empty() {
+                "(unknown)".to_string()
+            } else {
+                self.head_label.get(tab, snap, &head).to_string()
+            };
             ui.label(RichText::new(text).monospace().strong());
         });
         if let Some(r) = parse_remaining(&self.output) {
@@ -233,14 +294,30 @@ impl Bisect {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.add_enabled_ui(!busy, |ui| {
-                let b = |t: &str, c: Color32| egui::Button::new(RichText::new(t).strong().color(Color32::WHITE)).fill(c).min_size(egui::vec2(90.0, 28.0));
-                if ui.add(b("✔ Good", GOOD)).on_hover_text("This commit does not have the bug").clicked() {
+                let b = |t: &str, c: Color32| {
+                    egui::Button::new(RichText::new(t).strong().color(Color32::WHITE))
+                        .fill(c)
+                        .min_size(egui::vec2(90.0, 28.0))
+                };
+                if ui
+                    .add(b("✔ Good", GOOD))
+                    .on_hover_text("This commit does not have the bug")
+                    .clicked()
+                {
                     clicked = Some(BisectMark::Good);
                 }
-                if ui.add(b("✖ Bad", DANGER)).on_hover_text("This commit has the bug").clicked() {
+                if ui
+                    .add(b("✖ Bad", DANGER))
+                    .on_hover_text("This commit has the bug")
+                    .clicked()
+                {
                     clicked = Some(BisectMark::Bad);
                 }
-                if ui.add(egui::Button::new("Skip").min_size(egui::vec2(90.0, 28.0))).on_hover_text("This commit cannot be tested").clicked() {
+                if ui
+                    .add(egui::Button::new("Skip").min_size(egui::vec2(90.0, 28.0)))
+                    .on_hover_text("This commit cannot be tested")
+                    .clicked()
+                {
                     clicked = Some(BisectMark::Skip);
                 }
             });
@@ -249,48 +326,72 @@ impl Bisect {
             }
         });
         if worktree_dirty(snap) {
-            warning(ui, "Uncommitted changes may prevent checking out the next commit.");
+            warning(
+                ui,
+                "Uncommitted changes may prevent checking out the next commit.",
+            );
         }
         ui.add_space(6.0);
         ui.label(RichText::new("Bisect log").strong());
-        egui::Frame::new().fill(ui.visuals().extreme_bg_color).inner_margin(6).show(ui, |ui| {
-            egui::ScrollArea::vertical().max_height(180.0).auto_shrink([false, true]).show(ui, |ui| match &self.parsed {
-                None => {
-                    ui.spinner();
-                }
-                Some(Err(e)) => error(ui, e.clone()),
-                Some(Ok(log)) if log.entries.is_empty() => {
-                    ui.label(RichText::new("No commits marked yet.").weak());
-                }
-                Some(Ok(log)) => {
-                    for e in &log.entries {
-                        let (word, color) = match e.kind {
-                            EntryKind::Good => ("good", GOOD),
-                            EntryKind::Bad => ("bad ", DANGER),
-                            EntryKind::Skip => ("skip", ui.visuals().weak_text_color()),
-                        };
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new(word).monospace().color(color));
-                            ui.label(RichText::new(crate::util::short_id(&e.id)).monospace());
-                            ui.label(&e.summary);
-                        });
-                    }
-                }
+        egui::Frame::new()
+            .fill(ui.visuals().extreme_bg_color)
+            .inner_margin(6)
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .max_height(180.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| match &self.parsed {
+                        None => {
+                            ui.spinner();
+                        }
+                        Some(Err(e)) => error(ui, e.clone()),
+                        Some(Ok(log)) if log.entries.is_empty() => {
+                            ui.label(RichText::new("No commits marked yet.").weak());
+                        }
+                        Some(Ok(log)) => {
+                            for e in &log.entries {
+                                let (word, color) = match e.kind {
+                                    EntryKind::Good => ("good", GOOD),
+                                    EntryKind::Bad => ("bad ", DANGER),
+                                    EntryKind::Skip => ("skip", ui.visuals().weak_text_color()),
+                                };
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(word).monospace().color(color));
+                                    ui.label(
+                                        RichText::new(crate::util::short_id(&e.id)).monospace(),
+                                    );
+                                    ui.label(&e.summary);
+                                });
+                            }
+                        }
+                    });
             });
-        });
         if !self.output.trim().is_empty() {
-            egui::CollapsingHeader::new("git output").id_salt("bisect-output").show(ui, |ui| {
-                egui::ScrollArea::vertical().max_height(140.0).show(ui, |ui| {
-                    ui.add(egui::Label::new(RichText::new(self.output.trim_end()).monospace()).selectable(true));
+            egui::CollapsingHeader::new("git output")
+                .id_salt("bisect-output")
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height(140.0)
+                        .show(ui, |ui| {
+                            ui.add(
+                                egui::Label::new(RichText::new(self.output.trim_end()).monospace())
+                                    .selectable(true),
+                            );
+                        });
                 });
-            });
         }
         clicked
     }
 }
 
 impl TabDialog for Bisect {
-    fn show(&mut self, ctx: &Context, tab: &mut RepoTab, snap: &Snapshot, _shared: &mut Shared) -> bool {
+    fn show(
+        &mut self,
+        ctx: &Context,
+        tab: &mut RepoTab,
+        snap: &Snapshot,
+        _shared: &mut Shared,
+    ) -> bool {
         self.poll(ctx, tab, snap);
         let bisecting = snap.refs.state == RepoState::Bisecting;
         let busy = self.pending.is_some();
@@ -315,7 +416,11 @@ impl TabDialog for Bisect {
             if bisecting {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    if ui.add_enabled(!busy, egui::Button::new("Reset")).on_hover_text("End bisecting and check out the original branch").clicked() {
+                    if ui
+                        .add_enabled(!busy, egui::Button::new("Reset"))
+                        .on_hover_text("End bisecting and check out the original branch")
+                        .clicked()
+                    {
                         reset = true;
                     }
                     hint(ui, "git bisect reset");
@@ -326,7 +431,9 @@ impl TabDialog for Bisect {
             self.mark(tab, m);
         }
         if reset {
-            tab.session.run_op("Bisect reset", |repo, _, _| repo.bisect_reset().map(|_| String::new()));
+            tab.session.run_op("Bisect reset", |repo, _, _| {
+                repo.bisect_reset().map(|_| String::new())
+            });
             return false;
         }
         match out {
@@ -337,7 +444,9 @@ impl TabDialog for Bisect {
                 self.error = None;
                 self.output.clear();
                 self.parsed = None;
-                let op = TrackedOp::queue(tab, "Bisect start", move |repo, _, _| repo.bisect_start(&bad, &good));
+                let op = TrackedOp::queue(tab, "Bisect start", move |repo, _, _| {
+                    repo.bisect_start(&bad, &good)
+                });
                 self.pending = Some((Pending::Start, op));
                 true
             }
@@ -360,10 +469,20 @@ mod tests {
         );
         let l = parse_bisect_log(&log);
         assert_eq!(l.entries.len(), 3);
-        assert_eq!(l.entries[0], LogEntry { kind: EntryKind::Bad, id: A.into(), summary: "Break things".into() });
+        assert_eq!(
+            l.entries[0],
+            LogEntry {
+                kind: EntryKind::Bad,
+                id: A.into(),
+                summary: "Break things".into()
+            }
+        );
         assert_eq!(l.entries[1].kind, EntryKind::Good);
         assert_eq!(l.entries[2].kind, EntryKind::Skip);
-        assert_eq!(l.first_bad, Some((A.to_string(), "Break things".to_string())));
+        assert_eq!(
+            l.first_bad,
+            Some((A.to_string(), "Break things".to_string()))
+        );
         assert_eq!(parse_bisect_log("git bisect start\n").first_bad, None);
     }
 
@@ -371,8 +490,12 @@ mod tests {
     fn output_parsing() {
         let out = format!("{A} is the first bad commit\ncommit {A}\nAuthor: X <x@y>\n");
         assert_eq!(parse_first_bad(&out).as_deref(), Some(A));
-        let out = "Bisecting: 3 revisions left to test after this (roughly 2 steps)\n[abc] Subject\n";
+        let out =
+            "Bisecting: 3 revisions left to test after this (roughly 2 steps)\n[abc] Subject\n";
         assert_eq!(parse_first_bad(out), None);
-        assert_eq!(parse_remaining(out).as_deref(), Some("3 revisions left to test after this (roughly 2 steps)"));
+        assert_eq!(
+            parse_remaining(out).as_deref(),
+            Some("3 revisions left to test after this (roughly 2 steps)")
+        );
     }
 }

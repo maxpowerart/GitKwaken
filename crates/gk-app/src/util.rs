@@ -11,7 +11,11 @@ pub fn format_time(secs: i64, offset: i32, fmt_relative: bool) -> String {
     let days = t.div_euclid(86_400);
     let rem = t.rem_euclid(86_400);
     let (y, m, d) = civil_from_days(days);
-    format!("{y:04}-{m:02}-{d:02} {:02}:{:02}", rem / 3600, (rem % 3600) / 60)
+    format!(
+        "{y:04}-{m:02}-{d:02} {:02}:{:02}",
+        rem / 3600,
+        (rem % 3600) / 60
+    )
 }
 
 pub fn relative(secs: i64) -> String {
@@ -50,7 +54,9 @@ pub fn short_id(id: &str) -> &str {
 
 /// Small rounded label, as used for branch/tag decorations.
 pub fn chip(ui: &mut Ui, text: &str, color: Color32, bold: bool) -> egui::Response {
-    let mut rt = RichText::new(text).color(Color32::WHITE).size(ui.style().text_styles[&egui::TextStyle::Small].size);
+    let mut rt = RichText::new(text)
+        .color(Color32::WHITE)
+        .size(ui.style().text_styles[&egui::TextStyle::Small].size);
     if bold {
         rt = rt.strong();
     }
@@ -60,11 +66,6 @@ pub fn chip(ui: &mut Ui, text: &str, color: Color32, bold: bool) -> egui::Respon
         .inner_margin(egui::Margin::symmetric(4, 0))
         .show(ui, |ui| ui.label(rt))
         .response
-}
-
-/// Status letter with its color.
-pub fn kind_badge(ui: &mut Ui, code: char, color: Color32) {
-    ui.label(RichText::new(code.to_string()).monospace().strong().color(color));
 }
 
 pub fn status_color(p: &crate::theme::Palette, kind: gk_status::Kind) -> Color32 {
@@ -85,6 +86,9 @@ mod tests {
     #[test]
     fn dates() {
         assert_eq!(format_time(0, 0, false), "1970-01-01 00:00");
-        assert_eq!(format_time(1_760_659_200, 3 * 3600, false), "2025-10-17 03:00");
+        assert_eq!(
+            format_time(1_760_659_200, 3 * 3600, false),
+            "2025-10-17 03:00"
+        );
     }
 }

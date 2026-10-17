@@ -20,7 +20,10 @@ fn check(t: &TestRepo, h: &History) {
         let c = g.find_commit(*id).unwrap();
         for p in c.parent_ids() {
             let prow = h.row(&p.detach()).expect("parent in history");
-            assert!(prow > row, "parent {p} at row {prow} not after child at {row}");
+            assert!(
+                prow > row,
+                "parent {p} at row {prow} not after child at {row}"
+            );
         }
     }
 }
@@ -41,7 +44,10 @@ fn empty_and_linear() {
     let h = build(&t, &Scope::All);
     assert_eq!(h.len(), 5);
     check(&t, &h);
-    assert_eq!(h.ids, oids(&t, &["HEAD", "HEAD~1", "HEAD~2", "HEAD~3", "HEAD~4"]));
+    assert_eq!(
+        h.ids,
+        oids(&t, &["HEAD", "HEAD~1", "HEAD~2", "HEAD~3", "HEAD~4"])
+    );
 }
 
 fn branchy(t: &TestRepo) {
@@ -78,7 +84,10 @@ fn merges_and_multiple_tips() {
     assert_eq!(revs.len(), 3);
     check(&t, &revs);
 
-    let both = build(&t, &Scope::Revs(vec![s("other"), s("feature"), s("does-not-exist")]));
+    let both = build(
+        &t,
+        &Scope::Revs(vec![s("other"), s("feature"), s("does-not-exist")]),
+    );
     assert_eq!(both.len(), 5);
     check(&t, &both);
 }
@@ -113,7 +122,13 @@ fn commit_meta_and_cache() {
     t.repo
         .git()
         .env("GIT_AUTHOR_DATE", "1600000000 +0200")
-        .run(&["commit", "-q", "--author=Ann Author <ann@example.com>", "-m", "Summary line\n\nBody text"])
+        .run(&[
+            "commit",
+            "-q",
+            "--author=Ann Author <ann@example.com>",
+            "-m",
+            "Summary line\n\nBody text",
+        ])
         .unwrap();
     let id = t.oid("HEAD");
     let m = history::commit_meta(&t.repo.gix(), id).unwrap();
@@ -127,7 +142,11 @@ fn commit_meta_and_cache() {
     let a = cache.get_sync(id).unwrap();
     let b = cache.get_sync(id).unwrap();
     assert!(std::sync::Arc::ptr_eq(&a, &b), "second lookup is cached");
-    assert!(cache.get_sync(ObjectId::null(gix::hash::Kind::Sha1)).is_none());
+    assert!(
+        cache
+            .get_sync(ObjectId::null(gix::hash::Kind::Sha1))
+            .is_none()
+    );
 
     // Background loading.
     let cache = std::sync::Arc::new(MetaCache::new(t.repo.clone()));
@@ -138,7 +157,10 @@ fn commit_meta_and_cache() {
     if first[0].is_none() {
         rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap();
     }
-    assert_eq!(cache.get_many(&[id], || {})[0].as_ref().unwrap().summary, "Summary line");
+    assert_eq!(
+        cache.get_many(&[id], || {})[0].as_ref().unwrap().summary,
+        "Summary line"
+    );
 }
 
 #[test]
@@ -147,18 +169,40 @@ fn search_message_author_id() {
     t.commit_file("f.txt", "0\n", "Initial import");
     t.write("f.txt", "1\n");
     t.git(&["add", "f.txt"]);
-    t.git_dated(&["commit", "-q", "--author=Zed Zebra <zed@zoo.org>", "-m", "Fix the parser\n\nDetails about NEEDLE"]);
+    t.git_dated(&[
+        "commit",
+        "-q",
+        "--author=Zed Zebra <zed@zoo.org>",
+        "-m",
+        "Fix the parser\n\nDetails about NEEDLE",
+    ]);
     t.commit_file("f.txt", "2\n", "Another change");
     let h = build(&t, &Scope::All);
     let no = AtomicBool::new(false);
     let row = |rev: &str| h.row(&t.oid(rev)).unwrap() as u32;
 
-    assert_eq!(history::search(&t.repo, &h, "parser", &no), vec![row("HEAD~1")]);
-    assert_eq!(history::search(&t.repo, &h, "needle", &no), vec![row("HEAD~1")], "body, case-insensitive");
-    assert_eq!(history::search(&t.repo, &h, "zebra", &no), vec![row("HEAD~1")]);
-    assert_eq!(history::search(&t.repo, &h, "zoo.org", &no), vec![row("HEAD~1")]);
+    assert_eq!(
+        history::search(&t.repo, &h, "parser", &no),
+        vec![row("HEAD~1")]
+    );
+    assert_eq!(
+        history::search(&t.repo, &h, "needle", &no),
+        vec![row("HEAD~1")],
+        "body, case-insensitive"
+    );
+    assert_eq!(
+        history::search(&t.repo, &h, "zebra", &no),
+        vec![row("HEAD~1")]
+    );
+    assert_eq!(
+        history::search(&t.repo, &h, "zoo.org", &no),
+        vec![row("HEAD~1")]
+    );
     let id = t.rev("HEAD~2");
-    assert_eq!(history::search(&t.repo, &h, &id[..8].to_uppercase(), &no), vec![row("HEAD~2")]);
+    assert_eq!(
+        history::search(&t.repo, &h, &id[..8].to_uppercase(), &no),
+        vec![row("HEAD~2")]
+    );
     let mut all = history::search(&t.repo, &h, "test user", &no);
     all.sort();
     assert_eq!(all, vec![row("HEAD"), row("HEAD~2")]);

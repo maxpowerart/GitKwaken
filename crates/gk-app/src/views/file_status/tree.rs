@@ -28,8 +28,16 @@ pub struct Tree {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TreeRow {
     /// `node` is the deepest directory of a compacted chain (`a/b/c`).
-    Dir { node: u32, name: String, depth: u16, collapsed: bool },
-    File { item: u32, depth: u16 },
+    Dir {
+        node: u32,
+        name: String,
+        depth: u16,
+        collapsed: bool,
+    },
+    File {
+        item: u32,
+        depth: u16,
+    },
 }
 
 /// Builds the tree of `items` (`(id, repo-relative path)`).
@@ -52,7 +60,9 @@ pub fn build(items: &[(u32, &str)]) -> Tree {
 }
 
 fn cmp_names(a: &str, b: &str) -> std::cmp::Ordering {
-    a.to_lowercase().cmp(&b.to_lowercase()).then_with(|| a.cmp(b))
+    a.to_lowercase()
+        .cmp(&b.to_lowercase())
+        .then_with(|| a.cmp(b))
 }
 
 fn ensure<'a>(dir: &'a str, map: &mut HashMap<&'a str, usize>, nodes: &mut Vec<Node>) -> usize {
@@ -68,7 +78,11 @@ fn ensure<'a>(dir: &'a str, map: &mut HashMap<&'a str, usize>, nodes: &mut Vec<N
     };
     let p = ensure(parent, map, nodes);
     let idx = nodes.len();
-    nodes.push(Node { name: name.to_string(), path: dir.to_string(), ..Default::default() });
+    nodes.push(Node {
+        name: name.to_string(),
+        path: dir.to_string(),
+        ..Default::default()
+    });
     nodes[p].dirs.push(idx);
     map.insert(dir, idx);
     idx
@@ -104,7 +118,12 @@ fn walk(tree: &Tree, n: usize, depth: u16, collapsed: &HashSet<String>, out: &mu
             name.push_str(&tree.nodes[node].name);
         }
         let is_collapsed = collapsed.contains(&tree.nodes[node].path);
-        out.push(TreeRow::Dir { node: node as u32, name, depth, collapsed: is_collapsed });
+        out.push(TreeRow::Dir {
+            node: node as u32,
+            name,
+            depth,
+            collapsed: is_collapsed,
+        });
         if !is_collapsed {
             walk(tree, node, depth + 1, collapsed, out);
         }
@@ -136,13 +155,27 @@ mod tests {
     fn rows_text(tree: &Tree, rows: &[TreeRow], paths: &[&str]) -> Vec<String> {
         rows.iter()
             .map(|r| match r {
-                TreeRow::Dir { name, depth, collapsed, .. } => {
-                    format!("{}{}/{}", "  ".repeat(*depth as usize), name, if *collapsed { "+" } else { "" })
+                TreeRow::Dir {
+                    name,
+                    depth,
+                    collapsed,
+                    ..
+                } => {
+                    format!(
+                        "{}{}/{}",
+                        "  ".repeat(*depth as usize),
+                        name,
+                        if *collapsed { "+" } else { "" }
+                    )
                 }
                 TreeRow::File { item, depth } => {
                     let p = paths[*item as usize];
                     let _ = tree;
-                    format!("{}{}", "  ".repeat(*depth as usize), p.rsplit('/').next().unwrap())
+                    format!(
+                        "{}{}",
+                        "  ".repeat(*depth as usize),
+                        p.rsplit('/').next().unwrap()
+                    )
                 }
             })
             .collect()
@@ -150,18 +183,38 @@ mod tests {
 
     #[test]
     fn builds_nested_tree_dirs_first() {
-        let paths = ["README.md", "src/a.rs", "src/views/b.rs", "src/views/c.rs", "z/deep/er/x.txt"];
-        let items: Vec<(u32, &str)> = paths.iter().enumerate().map(|(i, p)| (i as u32, *p)).collect();
+        let paths = [
+            "README.md",
+            "src/a.rs",
+            "src/views/b.rs",
+            "src/views/c.rs",
+            "z/deep/er/x.txt",
+        ];
+        let items: Vec<(u32, &str)> = paths
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (i as u32, *p))
+            .collect();
         let t = build(&items);
         let rows = flatten(&t, &HashSet::new());
         assert_eq!(
             rows_text(&t, &rows, &paths),
-            vec!["src/", "  views/", "    b.rs", "    c.rs", "  a.rs", "z/deep/er/", "  x.txt", "README.md"]
+            vec![
+                "src/",
+                "  views/",
+                "    b.rs",
+                "    c.rs",
+                "  a.rs",
+                "z/deep/er/",
+                "  x.txt",
+                "README.md"
+            ]
         );
         // Order covers every file once, directory ranges are contiguous.
         assert_eq!(t.order.len(), paths.len());
         let src = t.nodes.iter().find(|n| n.path == "src").unwrap();
-        let mut under: Vec<u32> = t.order[src.range.start as usize..src.range.end as usize].to_vec();
+        let mut under: Vec<u32> =
+            t.order[src.range.start as usize..src.range.end as usize].to_vec();
         under.sort();
         assert_eq!(under, vec![1, 2, 3]);
         assert_eq!(t.nodes[0].range, 0..5);
@@ -170,14 +223,21 @@ mod tests {
     #[test]
     fn collapsed_dirs_hide_content() {
         let paths = ["a/x", "a/b/y", "c"];
-        let items: Vec<(u32, &str)> = paths.iter().enumerate().map(|(i, p)| (i as u32, *p)).collect();
+        let items: Vec<(u32, &str)> = paths
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (i as u32, *p))
+            .collect();
         let t = build(&items);
         let collapsed: HashSet<String> = ["a".to_string()].into();
         let rows = flatten(&t, &collapsed);
         assert_eq!(rows_text(&t, &rows, &paths), vec!["a/+", "c"]);
         let collapsed: HashSet<String> = ["a/b".to_string()].into();
         let rows = flatten(&t, &collapsed);
-        assert_eq!(rows_text(&t, &rows, &paths), vec!["a/", "  b/+", "  x", "c"]);
+        assert_eq!(
+            rows_text(&t, &rows, &paths),
+            vec!["a/", "  b/+", "  x", "c"]
+        );
     }
 
     #[test]

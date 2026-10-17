@@ -48,7 +48,13 @@ pub fn run(options: Options, make_app: MakeApp<'_>) -> Result<()> {
         }
     });
 
-    let mut host = Host { options, make_app: Some(make_app), ctx, running: None, error: None };
+    let mut host = Host {
+        options,
+        make_app: Some(make_app),
+        ctx,
+        running: None,
+        error: None,
+    };
     event_loop.run_app(&mut host).context("winit event loop")?;
     host.error.map_or(Ok(()), Err)
 }
@@ -96,7 +102,9 @@ impl Host<'_> {
         if let Some((rgba, w, h)) = &o.icon_rgba {
             match Icon::from_rgba(rgba.clone(), *w, *h) {
                 Ok(icon) => {
-                    attrs = attrs.with_window_icon(Some(icon.clone())).with_taskbar_icon(Some(icon));
+                    attrs = attrs
+                        .with_window_icon(Some(icon.clone()))
+                        .with_taskbar_icon(Some(icon));
                 }
                 Err(e) => log::warn!("invalid window icon: {e}"),
             }
@@ -115,7 +123,10 @@ impl Host<'_> {
             window.theme(),
             Some(gfx::MAX_TEXTURE_SIDE),
         );
-        let make_app = self.make_app.take().ok_or_else(|| anyhow!("app already created"))?;
+        let make_app = self
+            .make_app
+            .take()
+            .ok_or_else(|| anyhow!("app already created"))?;
         let app = make_app(&self.ctx);
 
         let mut info = ViewportInfo::default();
@@ -130,7 +141,11 @@ impl Host<'_> {
             textures: TextureMirror::default(),
             replay_textures: false,
             next_repaint: None,
-            normal: WindowGeometry { position: o.position, size: o.size, maximized: false },
+            normal: WindowGeometry {
+                position: o.position,
+                size: o.size,
+                maximized: false,
+            },
             vsync: o.vsync,
             gfx_failures: 0,
             warned_viewports: false,
@@ -250,7 +265,8 @@ impl Running {
         }
         self.textures.record(&output.textures_delta);
         let (mut r_out, platform, viewports) = egui_directx11::split_output(output);
-        self.state.handle_platform_output_with_event_loop(&self.window, el, platform);
+        self.state
+            .handle_platform_output_with_event_loop(&self.window, el, platform);
 
         // The last pass decides the next repaint (overrides older requests).
         self.next_repaint = None;
@@ -320,7 +336,13 @@ impl Running {
             return;
         }
         let mut actions = Vec::new();
-        egui_winit::process_viewport_commands(ctx, &mut self.info, rest, &self.window, &mut actions);
+        egui_winit::process_viewport_commands(
+            ctx,
+            &mut self.info,
+            rest,
+            &self.window,
+            &mut actions,
+        );
         for action in actions {
             let event = match action {
                 egui_winit::ActionRequested::Copy => egui::Event::Copy,
@@ -360,7 +382,10 @@ impl Running {
         if std::mem::replace(&mut self.closed, true) {
             return;
         }
-        let geometry = WindowGeometry { maximized: self.window.is_maximized(), ..self.normal };
+        let geometry = WindowGeometry {
+            maximized: self.window.is_maximized(),
+            ..self.normal
+        };
         self.app.on_close(geometry);
     }
 }

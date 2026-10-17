@@ -200,7 +200,10 @@ fn bookmark_helpers() {
     assert!(s.rename_bookmark(Path::new("C:/code/alpha"), "Alpha!"));
     assert!(!s.rename_bookmark(Path::new("C:/code/alpha"), "  "));
     assert!(!s.rename_bookmark(Path::new("C:/nope"), "x"));
-    assert_eq!(s.find_bookmark(Path::new("C:/code/alpha")).unwrap().name, "Alpha!");
+    assert_eq!(
+        s.find_bookmark(Path::new("C:/code/alpha")).unwrap().name,
+        "Alpha!"
+    );
 
     assert!(s.move_bookmark_to_group(Path::new("C:/code/alpha"), Some("Personal".into())));
     assert_eq!(s.groups, vec!["Work".to_string(), "Personal".to_string()]);
@@ -281,7 +284,11 @@ fn repo_state_partial_and_corrupt() {
     let p = RepoState::path_for(&wd);
     fs::create_dir_all(p.parent().unwrap()).unwrap();
 
-    fs::write(&p, "last_view = \"stash\"\nextra = 1\n[layout]\nlist_split = 0.7\n").unwrap();
+    fs::write(
+        &p,
+        "last_view = \"stash\"\nextra = 1\n[layout]\nlist_split = 0.7\n",
+    )
+    .unwrap();
     let st = RepoState::load(&wd);
     assert_eq!(st.last_view, "stash");
     assert_eq!(st.layout.list_split, 0.7);
@@ -304,7 +311,10 @@ fn recent_messages_cap_dedup() {
     st.push_recent_message("  msg 20 \n");
     assert_eq!(st.recent_messages[0], "msg 20");
     assert_eq!(st.recent_messages.len(), MAX_RECENT_MESSAGES);
-    assert_eq!(st.recent_messages.iter().filter(|m| *m == "msg 20").count(), 1);
+    assert_eq!(
+        st.recent_messages.iter().filter(|m| *m == "msg 20").count(),
+        1
+    );
     st.push_recent_message("   ");
     assert_eq!(st.recent_messages[0], "msg 20");
 }

@@ -17,8 +17,10 @@ impl Repo {
         if paths.is_empty() {
             return Ok(());
         }
-        self.git()
-            .run_stdin(&["add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"], &literal_paths(paths))?;
+        self.git().run_stdin(
+            &["add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"],
+            &literal_paths(paths),
+        )?;
         Ok(())
     }
 
@@ -34,12 +36,25 @@ impl Repo {
         if self.gix().head_id().is_err() {
             // No commits yet: remove from the index entirely.
             self.git().run_stdin(
-                &["rm", "--cached", "-r", "-q", "--pathspec-from-file=-", "--pathspec-file-nul"],
+                &[
+                    "rm",
+                    "--cached",
+                    "-r",
+                    "-q",
+                    "--pathspec-from-file=-",
+                    "--pathspec-file-nul",
+                ],
                 &literal_paths(paths),
             )?;
         } else {
             self.git().run_stdin(
-                &["reset", "-q", "--pathspec-from-file=-", "--pathspec-file-nul", "--"],
+                &[
+                    "reset",
+                    "-q",
+                    "--pathspec-from-file=-",
+                    "--pathspec-file-nul",
+                    "--",
+                ],
                 &literal_paths(paths),
             )?;
         }
@@ -59,7 +74,12 @@ impl Repo {
     pub fn discard(&self, tracked: &[String], untracked: &[String]) -> Result<()> {
         if !tracked.is_empty() {
             self.git().run_stdin(
-                &["checkout", "--pathspec-from-file=-", "--pathspec-file-nul", "--"],
+                &[
+                    "checkout",
+                    "--pathspec-from-file=-",
+                    "--pathspec-file-nul",
+                    "--",
+                ],
                 &literal_paths(tracked),
             )?;
         }
@@ -76,47 +96,89 @@ impl Repo {
 
     /// Stages (`Apply`) or unstages (`Revert`) individual lines of a file.
     /// `pick` selects lines of a full-context diff of the matching target.
-    pub fn stage_lines(&self, path: &str, unstage: bool, pick: &dyn Fn(&DLine) -> bool) -> Result<()> {
+    pub fn stage_lines(
+        &self,
+        path: &str,
+        unstage: bool,
+        pick: &dyn Fn(&DLine) -> bool,
+    ) -> Result<()> {
         let g = self.gix();
-        if content::index_blob(&g, path, 2)?.is_some() || content::index_blob(&g, path, 3)?.is_some() {
+        if content::index_blob(&g, path, 2)?.is_some()
+            || content::index_blob(&g, path, 3)?.is_some()
+        {
             bail!("{path} has conflicts; resolve them first");
         }
         let (target, mode) = if unstage {
-            (DiffTarget::Staged { path: path.to_string(), old_path: None }, SelectMode::Revert)
+            (
+                DiffTarget::Staged {
+                    path: path.to_string(),
+                    old_path: None,
+                },
+                SelectMode::Revert,
+            )
         } else {
             // Untracked files get their index entry from update-index below.
-            (DiffTarget::Unstaged { path: path.to_string() }, SelectMode::Apply)
+            (
+                DiffTarget::Unstaged {
+                    path: path.to_string(),
+                },
+                SelectMode::Apply,
+            )
         };
         let (old, new) = content::load_sides(self, &target)?;
-        let d = diff(old.as_deref().unwrap_or_default(), new.as_deref().unwrap_or_default(), Options::full());
+        let d = diff(
+            old.as_deref().unwrap_or_default(),
+            new.as_deref().unwrap_or_default(),
+            Options::full(),
+        );
         if d.binary {
             bail!("cannot stage lines of a binary file");
         }
-        if !d.lines.iter().any(|l| l.kind != gk_diff::LineKind::Context && pick(l)) {
+        if !d
+            .lines
+            .iter()
+            .any(|l| l.kind != gk_diff::LineKind::Context && pick(l))
+        {
             return Ok(());
         }
         let result = apply_selection(&d, pick, mode);
         // Staging all of a deletion, or unstaging all of an addition, removes
         // the index entry instead of leaving an empty file.
-        let side_missing = if unstage { old.is_none() } else { new.is_none() };
+        let side_missing = if unstage {
+            old.is_none()
+        } else {
+            new.is_none()
+        };
         if side_missing && result.is_empty() {
-            self.git().run(&["rm", "--cached", "-f", "-q", "--", path])?;
+            self.git()
+                .run(&["rm", "--cached", "-f", "-q", "--", path])?;
             return Ok(());
         }
-        let mode_str = index_mode(&g, path).unwrap_or_else(|| worktree_mode(&self.abs(path)).to_string());
-        let id = self.git().run_stdin(&["hash-object", "-w", "--stdin", "--no-filters"], &result)?.stdout_str();
+        let mode_str =
+            index_mode(&g, path).unwrap_or_else(|| worktree_mode(&self.abs(path)).to_string());
+        let id = self
+            .git()
+            .run_stdin(&["hash-object", "-w", "--stdin", "--no-filters"], &result)?
+            .stdout_str();
         let id = id.trim();
         let info = format!("{mode_str},{id},{path}");
-        self.git().run(&["update-index", "--add", "--cacheinfo", &info])?;
+        self.git()
+            .run(&["update-index", "--add", "--cacheinfo", &info])?;
         Ok(())
     }
 
     /// Reverts selected lines in the worktree file.
     pub fn discard_lines(&self, path: &str, pick: &dyn Fn(&DLine) -> bool) -> Result<()> {
         let g = self.gix();
-        let t = DiffTarget::Unstaged { path: path.to_string() };
+        let t = DiffTarget::Unstaged {
+            path: path.to_string(),
+        };
         let (old, new) = content::load_sides(self, &t)?;
-        let d = diff(old.as_deref().unwrap_or_default(), new.as_deref().unwrap_or_default(), Options::full());
+        let d = diff(
+            old.as_deref().unwrap_or_default(),
+            new.as_deref().unwrap_or_default(),
+            Options::full(),
+        );
         if d.binary {
             bail!("cannot discard lines of a binary file");
         }
@@ -132,7 +194,11 @@ impl Repo {
             bail!("commit message is empty");
         }
         // Amending with an empty message keeps the previous one.
-        let mut args: Vec<&str> = if empty { vec!["commit", "--no-edit"] } else { vec!["commit", "-F", "-", "--cleanup=strip"] };
+        let mut args: Vec<&str> = if empty {
+            vec!["commit", "--no-edit"]
+        } else {
+            vec!["commit", "-F", "-", "--cleanup=strip"]
+        };
         if opts.amend {
             args.push("--amend");
         }
@@ -155,7 +221,11 @@ impl Repo {
             author = format!("--author={a}");
             args.push(&author);
         }
-        let out = if empty { self.git().run(&args)? } else { self.git().run_stdin(&args, opts.message.as_bytes())? };
+        let out = if empty {
+            self.git().run(&args)?
+        } else {
+            self.git().run_stdin(&args, opts.message.as_bytes())?
+        };
         Ok(out.stdout_str())
     }
 
@@ -178,7 +248,8 @@ impl Repo {
     /// Checks out a remote branch as a new local tracking branch.
     pub fn checkout_remote(&self, remote_branch: &str, local: &str) -> Result<()> {
         plain(&[remote_branch, local])?;
-        self.git().run(&["checkout", "-b", local, "--track", remote_branch])?;
+        self.git()
+            .run(&["checkout", "-b", local, "--track", remote_branch])?;
         Ok(())
     }
 
@@ -198,7 +269,8 @@ impl Repo {
 
     pub fn delete_branch(&self, name: &str, force: bool) -> Result<()> {
         plain(&[name])?;
-        self.git().run(&["branch", if force { "-D" } else { "-d" }, name])?;
+        self.git()
+            .run(&["branch", if force { "-D" } else { "-d" }, name])?;
         Ok(())
     }
 
@@ -211,13 +283,21 @@ impl Repo {
     pub fn set_upstream(&self, branch: &str, upstream: Option<&str>) -> Result<()> {
         plain(&[branch, upstream.unwrap_or_default()])?;
         match upstream {
-            Some(u) => self.git().run(&["branch", "--set-upstream-to", u, branch])?,
+            Some(u) => self
+                .git()
+                .run(&["branch", "--set-upstream-to", u, branch])?,
             None => self.git().run(&["branch", "--unset-upstream", branch])?,
         };
         Ok(())
     }
 
-    pub fn delete_remote_branch(&self, remote: &str, branch: &str, cancel: &CancelToken, p: Progress) -> Result<()> {
+    pub fn delete_remote_branch(
+        &self,
+        remote: &str,
+        branch: &str,
+        cancel: &CancelToken,
+        p: Progress,
+    ) -> Result<()> {
         let refspec = format!(":refs/heads/{branch}");
         self.git()
             .run_streaming(&["push", "--progress", remote, &refspec], None, cancel, p)?
@@ -227,12 +307,19 @@ impl Repo {
 
     // ---------------------------------------------------------------- tags
 
-    pub fn create_tag(&self, name: &str, rev: &str, message: Option<&str>, sign: bool) -> Result<()> {
+    pub fn create_tag(
+        &self,
+        name: &str,
+        rev: &str,
+        message: Option<&str>,
+        sign: bool,
+    ) -> Result<()> {
         plain(&[name, rev])?;
         match message {
             Some(m) if !m.trim().is_empty() => {
                 let flag = if sign { "-s" } else { "-a" };
-                self.git().run_stdin(&["tag", flag, name, rev, "-F", "-"], m.as_bytes())?;
+                self.git()
+                    .run_stdin(&["tag", flag, name, rev, "-F", "-"], m.as_bytes())?;
             }
             _ => {
                 self.git().run(&["tag", name, rev])?;
@@ -275,17 +362,30 @@ impl Repo {
 
     pub fn rebase(&self, onto: &str) -> Result<String> {
         plain(&[onto])?;
-        let out = self.git().env("GIT_EDITOR", "true").run_raw(&["rebase", onto], None)?;
+        let out = self
+            .git()
+            .env("GIT_EDITOR", "true")
+            .run_raw(&["rebase", onto], None)?;
         conflict_aware(out)
     }
 
     /// Interactive rebase driven by a prepared todo list.
-    pub fn rebase_interactive(&self, base: &str, todo: &[TodoItem], autosquash: bool) -> Result<String> {
+    pub fn rebase_interactive(
+        &self,
+        base: &str,
+        todo: &[TodoItem],
+        autosquash: bool,
+    ) -> Result<String> {
         // Unique per call: concurrent rebases (several sessions) must not share files.
         static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
-        let dir = std::env::temp_dir().join(format!("gitkwaken-todo-{}-{seq}-{nanos}", std::process::id()));
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.subsec_nanos());
+        let dir = std::env::temp_dir().join(format!(
+            "gitkwaken-todo-{}-{seq}-{nanos}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&dir)?;
         let mut todo_text = String::new();
         for (i, t) in todo.iter().enumerate() {
@@ -298,7 +398,9 @@ impl Repo {
                     std::fs::write(&msg_file, msg)?;
                     let mf = sh_quote(&msg_file);
                     todo_text.push_str(&format!("pick {} {summary}\n", t.id));
-                    todo_text.push_str(&format!("exec git commit --amend -q --allow-empty --cleanup=strip -F {mf}\n"));
+                    todo_text.push_str(&format!(
+                        "exec git commit --amend -q --allow-empty --cleanup=strip -F {mf}\n"
+                    ));
                 }
                 _ => todo_text.push_str(&format!("{} {} {summary}\n", t.action.word(), t.id)),
             }
@@ -457,18 +559,26 @@ impl Repo {
     }
 
     pub fn stash_drop(&self, index: usize) -> Result<()> {
-        self.git().run(&["stash", "drop", &format!("stash@{{{index}}}")])?;
+        self.git()
+            .run(&["stash", "drop", &format!("stash@{{{index}}}")])?;
         Ok(())
     }
 
     pub fn stash_branch(&self, index: usize, branch: &str) -> Result<()> {
-        self.git().run(&["stash", "branch", branch, &format!("stash@{{{index}}}")])?;
+        self.git()
+            .run(&["stash", "branch", branch, &format!("stash@{{{index}}}")])?;
         Ok(())
     }
 
     // ---------------------------------------------------------------- remotes
 
-    pub fn fetch(&self, remote: Option<&str>, opts: &FetchOptions, cancel: &CancelToken, p: Progress) -> Result<String> {
+    pub fn fetch(
+        &self,
+        remote: Option<&str>,
+        opts: &FetchOptions,
+        cancel: &CancelToken,
+        p: Progress,
+    ) -> Result<String> {
         let mut args = vec!["fetch", "--progress"];
         if opts.prune {
             args.push("--prune");
@@ -484,15 +594,29 @@ impl Repo {
         Ok(out.stderr_str())
     }
 
-    pub fn pull(&self, remote: Option<&str>, branch: Option<&str>, rebase: bool, cancel: &CancelToken, p: Progress) -> Result<String> {
-        let mut args = vec!["pull", "--progress", if rebase { "--rebase" } else { "--no-rebase" }];
+    pub fn pull(
+        &self,
+        remote: Option<&str>,
+        branch: Option<&str>,
+        rebase: bool,
+        cancel: &CancelToken,
+        p: Progress,
+    ) -> Result<String> {
+        let mut args = vec![
+            "pull",
+            "--progress",
+            if rebase { "--rebase" } else { "--no-rebase" },
+        ];
         if let Some(r) = remote {
             args.push(r);
             if let Some(b) = branch {
                 args.push(b);
             }
         }
-        let out = self.git().env("GIT_EDITOR", "true").run_streaming(&args, None, cancel, p)?;
+        let out = self
+            .git()
+            .env("GIT_EDITOR", "true")
+            .run_streaming(&args, None, cancel, p)?;
         conflict_aware(out)
     }
 
@@ -531,9 +655,22 @@ impl Repo {
         Ok(out.stderr_str())
     }
 
-    pub fn push_tag(&self, remote: &str, tag: &str, delete: bool, cancel: &CancelToken, p: Progress) -> Result<()> {
-        let spec = if delete { format!(":refs/tags/{tag}") } else { format!("refs/tags/{tag}") };
-        self.git().run_streaming(&["push", "--progress", remote, &spec], None, cancel, p)?.check()?;
+    pub fn push_tag(
+        &self,
+        remote: &str,
+        tag: &str,
+        delete: bool,
+        cancel: &CancelToken,
+        p: Progress,
+    ) -> Result<()> {
+        let spec = if delete {
+            format!(":refs/tags/{tag}")
+        } else {
+            format!("refs/tags/{tag}")
+        };
+        self.git()
+            .run_streaming(&["push", "--progress", remote, &spec], None, cancel, p)?
+            .check()?;
         Ok(())
     }
 
@@ -579,7 +716,10 @@ impl Repo {
     }
 
     pub fn config_get(&self, key: &str) -> Option<String> {
-        self.git().run(&["config", "--get", key]).ok().map(|o| o.stdout_str().trim().to_string())
+        self.git()
+            .run(&["config", "--get", key])
+            .ok()
+            .map(|o| o.stdout_str().trim().to_string())
     }
 
     pub fn config_set(&self, key: &str, value: &str, global: bool) -> Result<()> {
@@ -658,7 +798,9 @@ pub fn stopped_on_conflict(text: &str) -> bool {
         return true;
     }
     let lower = text.to_lowercase();
-    ["could not apply", "could not revert", "patch failed at"].iter().any(|m| lower.contains(m))
+    ["could not apply", "could not revert", "patch failed at"]
+        .iter()
+        .any(|m| lower.contains(m))
 }
 
 /// Single-quotes a path for sh, with forward slashes.
@@ -705,7 +847,12 @@ pub struct MergeOptions {
 
 impl Default for MergeOptions {
     fn default() -> Self {
-        Self { ff: FastForward::Allow, squash: false, commit: true, message: None }
+        Self {
+            ff: FastForward::Allow,
+            squash: false,
+            commit: true,
+            message: None,
+        }
     }
 }
 

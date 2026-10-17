@@ -34,7 +34,13 @@ impl Tag {
 }
 
 impl TabDialog for Tag {
-    fn show(&mut self, ctx: &Context, tab: &mut RepoTab, snap: &Snapshot, _shared: &mut Shared) -> bool {
+    fn show(
+        &mut self,
+        ctx: &Context,
+        tab: &mut RepoTab,
+        snap: &Snapshot,
+        _shared: &mut Shared,
+    ) -> bool {
         let remotes = remote_names(snap);
         if self.remote.is_empty() {
             self.remote = default_remote(&remotes);
@@ -48,14 +54,29 @@ impl TabDialog for Tag {
             ui.label("Commit:");
             ui.indent("tag-commit", |ui| {
                 let head = describe_rev(tab, snap, "HEAD");
-                ui.radio_value(&mut self.use_given, false, format!("Working copy parent (HEAD)  {head}"));
+                ui.radio_value(
+                    &mut self.use_given,
+                    false,
+                    format!("Working copy parent (HEAD)  {head}"),
+                );
                 if let Some(g) = &self.given {
                     let l = self.label.get(tab, snap, g).to_string();
-                    ui.radio_value(&mut self.use_given, true, format!("Specified commit: {}", if l.is_empty() { g.clone() } else { l }));
+                    ui.radio_value(
+                        &mut self.use_given,
+                        true,
+                        format!(
+                            "Specified commit: {}",
+                            if l.is_empty() { g.clone() } else { l }
+                        ),
+                    );
                 }
             });
             ui.label("Message (creates an annotated tag when not empty):");
-            let r = ui.add(egui::TextEdit::multiline(&mut self.message).desired_rows(3).desired_width(f32::INFINITY));
+            let r = ui.add(
+                egui::TextEdit::multiline(&mut self.message)
+                    .desired_rows(3)
+                    .desired_width(f32::INFINITY),
+            );
             ctl.multiline(&r);
             ui.checkbox(&mut self.sign, "Sign tag (GPG/SSH)");
             ui.add_enabled_ui(!remotes.is_empty(), |ui| {
@@ -85,17 +106,22 @@ impl TabDialog for Tag {
         });
         finish(out, || {
             let name = self.name.trim().to_string();
-            let rev = if self.use_given { self.given.clone().unwrap_or_else(|| "HEAD".into()) } else { "HEAD".into() };
+            let rev = if self.use_given {
+                self.given.clone().unwrap_or_else(|| "HEAD".into())
+            } else {
+                "HEAD".into()
+            };
             let msg = self.message.trim().to_string();
             let sign = self.sign;
             let push = (self.push && !self.remote.is_empty()).then(|| self.remote.clone());
-            tab.session.run_op(format!("Tag {name}"), move |repo, cancel, p| {
-                repo.create_tag(&name, &rev, (!msg.is_empty()).then_some(msg.as_str()), sign)?;
-                if let Some(remote) = push {
-                    repo.push_tag(&remote, &name, false, cancel, p)?;
-                }
-                Ok(String::new())
-            });
+            tab.session
+                .run_op(format!("Tag {name}"), move |repo, cancel, p| {
+                    repo.create_tag(&name, &rev, (!msg.is_empty()).then_some(msg.as_str()), sign)?;
+                    if let Some(remote) = push {
+                        repo.push_tag(&remote, &name, false, cancel, p)?;
+                    }
+                    Ok(String::new())
+                });
         })
     }
 }
@@ -108,43 +134,68 @@ pub struct DeleteTag {
 
 impl DeleteTag {
     pub fn new(name: String) -> Self {
-        Self { name, remote_too: false, remote: String::new() }
+        Self {
+            name,
+            remote_too: false,
+            remote: String::new(),
+        }
     }
 }
 
 impl TabDialog for DeleteTag {
-    fn show(&mut self, ctx: &Context, tab: &mut RepoTab, snap: &Snapshot, _shared: &mut Shared) -> bool {
+    fn show(
+        &mut self,
+        ctx: &Context,
+        tab: &mut RepoTab,
+        snap: &Snapshot,
+        _shared: &mut Shared,
+    ) -> bool {
         let remotes = remote_names(snap);
         if self.remote.is_empty() {
             self.remote = default_remote(&remotes);
         }
-        let (out, ()) = modal(ctx, "delete-tag", "Delete tag", 460.0, "Delete", |ui, ctl| {
-            ui.horizontal(|ui| {
-                ui.label("Delete tag");
-                ui.label(RichText::new(&self.name).strong());
-                ui.label("?");
-            });
-            ui.add_enabled_ui(!remotes.is_empty(), |ui| {
+        let (out, ()) = modal(
+            ctx,
+            "delete-tag",
+            "Delete tag",
+            460.0,
+            "Delete",
+            |ui, ctl| {
                 ui.horizontal(|ui| {
-                    ui.checkbox(&mut self.remote_too, "Also delete it on");
-                    combo(ui, "delete-tag-remote", &mut self.remote, &remotes, None, 200.0);
+                    ui.label("Delete tag");
+                    ui.label(RichText::new(&self.name).strong());
+                    ui.label("?");
                 });
-            });
-            if self.remote_too {
-                ui.colored_label(DANGER, "The tag is deleted on the server for everyone.");
-            }
-            ctl.danger = true;
-        });
+                ui.add_enabled_ui(!remotes.is_empty(), |ui| {
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut self.remote_too, "Also delete it on");
+                        combo(
+                            ui,
+                            "delete-tag-remote",
+                            &mut self.remote,
+                            &remotes,
+                            None,
+                            200.0,
+                        );
+                    });
+                });
+                if self.remote_too {
+                    ui.colored_label(DANGER, "The tag is deleted on the server for everyone.");
+                }
+                ctl.danger = true;
+            },
+        );
         finish(out, || {
             let name = self.name.clone();
             let remote = (self.remote_too && !self.remote.is_empty()).then(|| self.remote.clone());
-            tab.session.run_op(format!("Delete tag {name}"), move |repo, cancel, p| {
-                repo.delete_tag(&name)?;
-                if let Some(r) = remote {
-                    repo.push_tag(&r, &name, true, cancel, p)?;
-                }
-                Ok(String::new())
-            });
+            tab.session
+                .run_op(format!("Delete tag {name}"), move |repo, cancel, p| {
+                    repo.delete_tag(&name)?;
+                    if let Some(r) = remote {
+                        repo.push_tag(&r, &name, true, cancel, p)?;
+                    }
+                    Ok(String::new())
+                });
         })
     }
 }
@@ -156,12 +207,21 @@ pub struct PushTag {
 
 impl PushTag {
     pub fn new(name: String) -> Self {
-        Self { name, remote: String::new() }
+        Self {
+            name,
+            remote: String::new(),
+        }
     }
 }
 
 impl TabDialog for PushTag {
-    fn show(&mut self, ctx: &Context, tab: &mut RepoTab, snap: &Snapshot, _shared: &mut Shared) -> bool {
+    fn show(
+        &mut self,
+        ctx: &Context,
+        tab: &mut RepoTab,
+        snap: &Snapshot,
+        _shared: &mut Shared,
+    ) -> bool {
         let remotes = remote_names(snap);
         if self.remote.is_empty() {
             self.remote = default_remote(&remotes);
@@ -171,7 +231,14 @@ impl TabDialog for PushTag {
                 ui.label("Push tag");
                 ui.label(RichText::new(&self.name).strong());
                 ui.label("to");
-                combo(ui, "push-tag-remote", &mut self.remote, &remotes, None, 180.0);
+                combo(
+                    ui,
+                    "push-tag-remote",
+                    &mut self.remote,
+                    &remotes,
+                    None,
+                    180.0,
+                );
             });
             if remotes.is_empty() {
                 error(ui, "This repository has no remotes.");
@@ -180,10 +247,11 @@ impl TabDialog for PushTag {
         });
         finish(out, || {
             let (name, remote) = (self.name.clone(), self.remote.clone());
-            tab.session.run_op(format!("Push tag {name}"), move |repo, cancel, p| {
-                repo.push_tag(&remote, &name, false, cancel, p)?;
-                Ok(String::new())
-            });
+            tab.session
+                .run_op(format!("Push tag {name}"), move |repo, cancel, p| {
+                    repo.push_tag(&remote, &name, false, cancel, p)?;
+                    Ok(String::new())
+                });
         })
     }
 }

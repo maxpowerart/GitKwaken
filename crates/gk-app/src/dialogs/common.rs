@@ -121,7 +121,8 @@ pub fn modal<T>(
         && ctl.show_ok
         && ctl.ok_enabled
         && ctl.enter_ok
-        && ctx.input(|i| i.key_pressed(Key::Enter) && (i.modifiers.command || !ctl.multiline_focus));
+        && ctx
+            .input(|i| i.key_pressed(Key::Enter) && (i.modifiers.command || !ctl.multiline_focus));
     let out = if (ok || enter || ctl.ok) && ctl.ok_enabled {
         Outcome::Ok
     } else if cancel || esc || ctl.close {
@@ -157,47 +158,73 @@ pub fn hint(ui: &mut Ui, text: impl Into<String>) {
 }
 
 /// Combo box over strings. An empty value shows `none` (selectable when given).
-pub fn combo(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, value: &mut String, options: &[String], none: Option<&str>, width: f32) -> bool {
+pub fn combo(
+    ui: &mut Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    value: &mut String,
+    options: &[String],
+    none: Option<&str>,
+    width: f32,
+) -> bool {
     let before = value.clone();
-    let shown = if value.is_empty() { none.unwrap_or("").to_string() } else { value.clone() };
-    egui::ComboBox::from_id_salt(id).width(width).selected_text(shown).height(320.0).show_ui(ui, |ui| {
-        if let Some(n) = none {
-            ui.selectable_value(value, String::new(), n);
-        }
-        for o in options {
-            ui.selectable_value(value, o.clone(), o);
-        }
-    });
+    let shown = if value.is_empty() {
+        none.unwrap_or("").to_string()
+    } else {
+        value.clone()
+    };
+    egui::ComboBox::from_id_salt(id)
+        .width(width)
+        .selected_text(shown)
+        .height(320.0)
+        .show_ui(ui, |ui| {
+            if let Some(n) = none {
+                ui.selectable_value(value, String::new(), n);
+            }
+            for o in options {
+                ui.selectable_value(value, o.clone(), o);
+            }
+        });
     *value != before
 }
 
 /// Revision picker: grouped local branches, remote branches and tags.
-pub fn rev_combo(ui: &mut Ui, id: &str, value: &mut String, snap: &Snapshot, extra: Option<&str>, width: f32) -> bool {
+pub fn rev_combo(
+    ui: &mut Ui,
+    id: &str,
+    value: &mut String,
+    snap: &Snapshot,
+    extra: Option<&str>,
+    width: f32,
+) -> bool {
     let before = value.clone();
     let refs = &snap.refs;
     let current = refs.head.branch().unwrap_or_default().to_string();
-    egui::ComboBox::from_id_salt(id).width(width).selected_text(value.clone()).height(360.0).show_ui(ui, |ui| {
-        if let Some(e) = extra {
-            ui.selectable_value(value, e.to_string(), e);
-        }
-        ui.label(RichText::new("Branches").weak().small());
-        for b in refs.branches.iter().filter(|b| b.name != current) {
-            ui.selectable_value(value, b.name.clone(), &b.name);
-        }
-        if !refs.remote_branches.is_empty() {
-            ui.label(RichText::new("Remote branches").weak().small());
-            for b in &refs.remote_branches {
-                let f = b.full();
-                ui.selectable_value(value, f.clone(), &f);
+    egui::ComboBox::from_id_salt(id)
+        .width(width)
+        .selected_text(value.clone())
+        .height(360.0)
+        .show_ui(ui, |ui| {
+            if let Some(e) = extra {
+                ui.selectable_value(value, e.to_string(), e);
             }
-        }
-        if !refs.tags.is_empty() {
-            ui.label(RichText::new("Tags").weak().small());
-            for t in &refs.tags {
-                ui.selectable_value(value, t.name.clone(), &t.name);
+            ui.label(RichText::new("Branches").weak().small());
+            for b in refs.branches.iter().filter(|b| b.name != current) {
+                ui.selectable_value(value, b.name.clone(), &b.name);
             }
-        }
-    });
+            if !refs.remote_branches.is_empty() {
+                ui.label(RichText::new("Remote branches").weak().small());
+                for b in &refs.remote_branches {
+                    let f = b.full();
+                    ui.selectable_value(value, f.clone(), &f);
+                }
+            }
+            if !refs.tags.is_empty() {
+                ui.label(RichText::new("Tags").weak().small());
+                for t in &refs.tags {
+                    ui.selectable_value(value, t.name.clone(), &t.name);
+                }
+            }
+        });
     *value != before
 }
 
@@ -218,15 +245,27 @@ pub fn default_remote(remotes: &[String]) -> String {
 pub fn split_remote_ref(remotes: &[String], full: &str) -> Option<(String, String)> {
     remotes
         .iter()
-        .filter(|r| full.len() > r.len() + 1 && full.starts_with(r.as_str()) && full.as_bytes()[r.len()] == b'/')
+        .filter(|r| {
+            full.len() > r.len() + 1
+                && full.starts_with(r.as_str())
+                && full.as_bytes()[r.len()] == b'/'
+        })
         .max_by_key(|r| r.len())
         .map(|r| (r.clone(), full[r.len() + 1..].to_string()))
-        .or_else(|| full.split_once('/').map(|(a, b)| (a.to_string(), b.to_string())))
+        .or_else(|| {
+            full.split_once('/')
+                .map(|(a, b)| (a.to_string(), b.to_string()))
+        })
 }
 
 /// True when tracked files have changes (untracked files do not count).
 pub fn worktree_dirty(snap: &Snapshot) -> bool {
-    !snap.status.staged.is_empty() || snap.status.unstaged.iter().any(|e| e.kind != gk_status::Kind::Untracked)
+    !snap.status.staged.is_empty()
+        || snap
+            .status
+            .unstaged
+            .iter()
+            .any(|e| e.kind != gk_status::Kind::Untracked)
 }
 
 /// Commit id a rev names, from the snapshot (no git call).
@@ -250,7 +289,12 @@ pub fn resolve_rev(snap: &Snapshot, rev: &str) -> Option<String> {
     }
     if hex {
         let lower = rev.to_lowercase();
-        return snap.history.ids.iter().map(|id| id.to_string()).find(|id| id.starts_with(&lower));
+        return snap
+            .history
+            .ids
+            .iter()
+            .map(|id| id.to_string())
+            .find(|id| id.starts_with(&lower));
     }
     None
 }
@@ -261,7 +305,13 @@ pub fn resolve_rev(snap: &Snapshot, rev: &str) -> Option<String> {
 pub fn describe_revs(tab: &RepoTab, snap: &Snapshot, revs: &[&str]) -> (Vec<String>, bool) {
     let ids: Vec<Option<(String, gk_core::ObjectId)>> = revs
         .iter()
-        .map(|r| resolve_rev(snap, r).and_then(|id| gk_core::ObjectId::from_hex(id.as_bytes()).ok().map(|o| (id, o))))
+        .map(|r| {
+            resolve_rev(snap, r).and_then(|id| {
+                gk_core::ObjectId::from_hex(id.as_bytes())
+                    .ok()
+                    .map(|o| (id, o))
+            })
+        })
         .collect();
     let oids: Vec<gk_core::ObjectId> = ids.iter().flatten().map(|(_, o)| *o).collect();
     let mut metas = tab.session.metas(&oids).into_iter();
@@ -384,7 +434,9 @@ impl<T: Send + 'static> TrackedOp<T> {
     pub fn queue(
         tab: &RepoTab,
         label: impl Into<String>,
-        f: impl FnOnce(&gk_core::Repo, &gk_cli::CancelToken, OpRun) -> anyhow::Result<T> + Send + 'static,
+        f: impl FnOnce(&gk_core::Repo, &gk_cli::CancelToken, OpRun) -> anyhow::Result<T>
+        + Send
+        + 'static,
     ) -> Self {
         let slot = Arc::new(Mutex::new(None));
         let s2 = slot.clone();
@@ -412,7 +464,11 @@ pub fn op_progress(ui: &mut Ui, snap: &Snapshot) {
         ui.spinner();
         let text = snap.op.as_ref().map(|o| {
             let line = o.last_line.trim();
-            if line.is_empty() { o.label.clone() } else { format!("{}: {line}", o.label) }
+            if line.is_empty() {
+                o.label.clone()
+            } else {
+                format!("{}: {line}", o.label)
+            }
         });
         ui.label(RichText::new(text.unwrap_or_else(|| "Waiting…".into())).weak());
     });
@@ -428,8 +484,17 @@ pub fn check_ref_name(name: &str) -> Result<(), String> {
     if name == "@" {
         return Err("\"@\" is not a valid name".into());
     }
-    if let Some(c) = name.chars().find(|c| c.is_ascii_control() || " ~^:?*[\\".contains(*c)) {
-        let shown = if c == ' ' { "space".to_string() } else if c.is_ascii_control() { "control character".to_string() } else { format!("'{c}'") };
+    if let Some(c) = name
+        .chars()
+        .find(|c| c.is_ascii_control() || " ~^:?*[\\".contains(*c))
+    {
+        let shown = if c == ' ' {
+            "space".to_string()
+        } else if c.is_ascii_control() {
+            "control character".to_string()
+        } else {
+            format!("'{c}'")
+        };
         return Err(format!("Name cannot contain {shown}"));
     }
     if name.contains("..") {
@@ -578,7 +643,10 @@ pub fn autosquash_plan(ids: &[String], summaries: &[String]) -> Vec<(usize, Opti
     let mut attached: Vec<Vec<(usize, TodoAction)>> = vec![Vec::new(); n];
     for i in 0..n {
         let s = summaries[i].as_str();
-        let (action, rest) = if let Some(r) = s.strip_prefix("fixup! ").or_else(|| s.strip_prefix("amend! ")) {
+        let (action, rest) = if let Some(r) = s
+            .strip_prefix("fixup! ")
+            .or_else(|| s.strip_prefix("amend! "))
+        {
             (TodoAction::Fixup, r)
         } else if let Some(r) = s.strip_prefix("squash! ") {
             (TodoAction::Squash, r)
@@ -586,11 +654,19 @@ pub fn autosquash_plan(ids: &[String], summaries: &[String]) -> Vec<(usize, Opti
             continue;
         };
         let mut target = rest;
-        while let Some(r) = ["fixup! ", "squash! ", "amend! "].iter().find_map(|p| target.strip_prefix(p)) {
+        while let Some(r) = ["fixup! ", "squash! ", "amend! "]
+            .iter()
+            .find_map(|p| target.strip_prefix(p))
+        {
             target = r;
         }
-        let found = (0..i).find(|&j| summaries[j] == target || summaries[j].starts_with(target))
-            .or_else(|| (target.len() >= 4).then(|| (0..i).find(|&j| ids[j].starts_with(target))).flatten());
+        let found = (0..i)
+            .find(|&j| summaries[j] == target || summaries[j].starts_with(target))
+            .or_else(|| {
+                (target.len() >= 4)
+                    .then(|| (0..i).find(|&j| ids[j].starts_with(target)))
+                    .flatten()
+            });
         if let Some(j) = found {
             let r = root[j].unwrap_or(j);
             root[i] = Some(r);
@@ -618,8 +694,29 @@ mod tests {
             assert!(check_branch_name(ok).is_ok(), "{ok}");
         }
         for bad in [
-            "", "-x", "HEAD", "@", "a b", "a..b", "a~1", "a^", "a:b", "a?", "a*", "a[", "a\\b", "/a", "a/", "a//b",
-            "a.", ".a", "a/.b", "a.lock", "a/b.lock/c", "a@{1}", "tab\tx",
+            "",
+            "-x",
+            "HEAD",
+            "@",
+            "a b",
+            "a..b",
+            "a~1",
+            "a^",
+            "a:b",
+            "a?",
+            "a*",
+            "a[",
+            "a\\b",
+            "/a",
+            "a/",
+            "a//b",
+            "a.",
+            ".a",
+            "a/.b",
+            "a.lock",
+            "a/b.lock/c",
+            "a@{1}",
+            "tab\tx",
         ] {
             assert!(check_branch_name(bad).is_err(), "{bad:?}");
         }
@@ -629,10 +726,22 @@ mod tests {
 
     #[test]
     fn argument_splitting() {
-        assert_eq!(split_args("git log --oneline -5").unwrap(), ["log", "--oneline", "-5"]);
-        assert_eq!(split_args(r#"commit -m "a \"b\" c""#).unwrap(), ["commit", "-m", r#"a "b" c"#]);
-        assert_eq!(split_args("commit -m 'it''s'").unwrap(), ["commit", "-m", "its"]);
-        assert_eq!(split_args(r"add C:\dir\file.txt").unwrap(), ["add", r"C:\dir\file.txt"]);
+        assert_eq!(
+            split_args("git log --oneline -5").unwrap(),
+            ["log", "--oneline", "-5"]
+        );
+        assert_eq!(
+            split_args(r#"commit -m "a \"b\" c""#).unwrap(),
+            ["commit", "-m", r#"a "b" c"#]
+        );
+        assert_eq!(
+            split_args("commit -m 'it''s'").unwrap(),
+            ["commit", "-m", "its"]
+        );
+        assert_eq!(
+            split_args(r"add C:\dir\file.txt").unwrap(),
+            ["add", r"C:\dir\file.txt"]
+        );
         assert_eq!(split_args(r#"x "" y"#).unwrap(), ["x", "", "y"]);
         assert_eq!(split_args("  ").unwrap(), Vec::<String>::new());
         assert!(split_args("log \"abc").is_err());
@@ -643,7 +752,10 @@ mod tests {
     fn clone_folder_names() {
         assert_eq!(folder_from_url("https://github.com/user/repo.git"), "repo");
         assert_eq!(folder_from_url("https://github.com/user/repo/"), "repo");
-        assert_eq!(folder_from_url("git@github.com:user/my-repo.git"), "my-repo");
+        assert_eq!(
+            folder_from_url("git@github.com:user/my-repo.git"),
+            "my-repo"
+        );
         assert_eq!(folder_from_url("git@host:repo.git"), "repo");
         assert_eq!(folder_from_url(r"C:\src\proj"), "proj");
     }
@@ -665,7 +777,13 @@ mod tests {
     fn autosquash_ordering() {
         let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
         let ids = s(&["aaaa1111", "bbbb2222", "cccc3333", "dddd4444", "eeee5555"]);
-        let sums = s(&["Add A", "Add B", "fixup! Add A", "squash! fixup! Add A", "fixup! bbbb"]);
+        let sums = s(&[
+            "Add A",
+            "Add B",
+            "fixup! Add A",
+            "squash! fixup! Add A",
+            "fixup! bbbb",
+        ]);
         let plan = autosquash_plan(&ids, &sums);
         assert_eq!(
             plan,
@@ -687,16 +805,28 @@ mod tests {
         let out = "abc\0Subject\n\nBody\n\x1e\ndef\0Other\n\x1e\n";
         assert_eq!(
             parse_log_records(out),
-            [("abc".to_string(), "Subject\n\nBody".to_string()), ("def".to_string(), "Other".to_string())]
+            [
+                ("abc".to_string(), "Subject\n\nBody".to_string()),
+                ("def".to_string(), "Other".to_string())
+            ]
         );
     }
 
     #[test]
     fn remote_refs() {
         let r = vec!["origin".to_string(), "origin/mirror".to_string()];
-        assert_eq!(split_remote_ref(&r, "origin/feature/x"), Some(("origin".into(), "feature/x".into())));
-        assert_eq!(split_remote_ref(&r, "origin/mirror/main"), Some(("origin/mirror".into(), "main".into())));
-        assert_eq!(split_remote_ref(&r, "up/main"), Some(("up".into(), "main".into())));
+        assert_eq!(
+            split_remote_ref(&r, "origin/feature/x"),
+            Some(("origin".into(), "feature/x".into()))
+        );
+        assert_eq!(
+            split_remote_ref(&r, "origin/mirror/main"),
+            Some(("origin/mirror".into(), "main".into()))
+        );
+        assert_eq!(
+            split_remote_ref(&r, "up/main"),
+            Some(("up".into(), "main".into()))
+        );
         assert_eq!(split_remote_ref(&r, "plain"), None);
     }
 }

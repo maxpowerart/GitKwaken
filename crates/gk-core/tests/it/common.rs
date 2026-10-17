@@ -59,7 +59,12 @@ impl TestRepo {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("w");
         git_at(dir.path())
-            .run(&["clone", "-q", &url.to_string_lossy(), &target.to_string_lossy()])
+            .run(&[
+                "clone",
+                "-q",
+                &url.to_string_lossy(),
+                &target.to_string_lossy(),
+            ])
             .unwrap();
         configure(&git_at(&target), false);
         let repo = Repo::open(&target, CommandLog::default()).unwrap();
@@ -68,7 +73,10 @@ impl TestRepo {
 
     /// Runs git, panicking on failure; returns trimmed stdout.
     pub fn git(&self, args: &[&str]) -> String {
-        self.repo.git().read(args).unwrap_or_else(|e| panic!("git {args:?} failed: {e:#}"))
+        self.repo
+            .git()
+            .read(args)
+            .unwrap_or_else(|e| panic!("git {args:?} failed: {e:#}"))
     }
 
     /// Runs git with fixed author/committer dates.
@@ -85,7 +93,11 @@ impl TestRepo {
 
     /// Runs git and returns the raw output without checking the exit code.
     pub fn git_raw(&self, args: &[&str]) -> gk_cli::Output {
-        self.repo.git().env("GIT_EDITOR", "true").run_raw(args, None).unwrap()
+        self.repo
+            .git()
+            .env("GIT_EDITOR", "true")
+            .run_raw(args, None)
+            .unwrap()
     }
 
     pub fn write(&self, rel: &str, content: impl AsRef<[u8]>) {
@@ -135,7 +147,10 @@ impl TestRepo {
 
     /// Commit subjects of `rev`, newest first.
     pub fn subjects(&self, rev: &str) -> Vec<String> {
-        self.git(&["log", "--format=%s", rev]).lines().map(str::to_string).collect()
+        self.git(&["log", "--format=%s", rev])
+            .lines()
+            .map(str::to_string)
+            .collect()
     }
 
     pub fn staged_diff(&self) -> String {
@@ -144,7 +159,11 @@ impl TestRepo {
 
     /// `git show :path`.
     pub fn index_content(&self, path: &str) -> Vec<u8> {
-        self.repo.git().run(&["show", &format!(":{path}")]).unwrap().stdout
+        self.repo
+            .git()
+            .run(&["show", &format!(":{path}")])
+            .unwrap()
+            .stdout
     }
 
     pub fn status(&self) -> String {
@@ -160,7 +179,9 @@ pub struct Remote {
 impl Remote {
     pub fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        git_at(dir.path()).run(&["init", "-q", "--bare", "-b", "main"]).unwrap();
+        git_at(dir.path())
+            .run(&["init", "-q", "--bare", "-b", "main"])
+            .unwrap();
         Self { dir }
     }
 

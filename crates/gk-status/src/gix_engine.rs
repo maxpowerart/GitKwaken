@@ -1,8 +1,8 @@
 use crate::{Conflict, Entry, Kind, Status, Untracked};
 use anyhow::{Result, anyhow};
 use bstr::BString;
-use gix::status::index_worktree::Item as WtItem;
 use gix::status::Item;
+use gix::status::index_worktree::Item as WtItem;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -55,9 +55,18 @@ pub fn compute_in(
             Item::TreeIndex(change) => {
                 use gix::diff::index::Change;
                 let entry = match change {
-                    Change::Addition { location, .. } => Entry::new(location.into_owned(), Kind::Added),
-                    Change::Deletion { location, .. } => Entry::new(location.into_owned(), Kind::Deleted),
-                    Change::Modification { location, previous_entry_mode, entry_mode, .. } => {
+                    Change::Addition { location, .. } => {
+                        Entry::new(location.into_owned(), Kind::Added)
+                    }
+                    Change::Deletion { location, .. } => {
+                        Entry::new(location.into_owned(), Kind::Deleted)
+                    }
+                    Change::Modification {
+                        location,
+                        previous_entry_mode,
+                        entry_mode,
+                        ..
+                    } => {
                         let kind = if previous_entry_mode.to_tree_entry_mode().map(|m| m.kind())
                             != entry_mode.to_tree_entry_mode().map(|m| m.kind())
                         {
@@ -67,7 +76,12 @@ pub fn compute_in(
                         };
                         Entry::new(location.into_owned(), kind)
                     }
-                    Change::Rewrite { source_location, location, copy, .. } => Entry {
+                    Change::Rewrite {
+                        source_location,
+                        location,
+                        copy,
+                        ..
+                    } => Entry {
                         path: location.into_owned(),
                         kind: if copy { Kind::Copied } else { Kind::Renamed },
                         orig_path: Some(source_location.into_owned()),

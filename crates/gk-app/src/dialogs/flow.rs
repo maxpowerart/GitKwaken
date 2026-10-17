@@ -89,34 +89,44 @@ impl GitFlow {
             ui.label("Git Flow is not set up in this repository. Choose the branch names and prefixes to use:");
             ui.add_space(4.0);
         }
-        egui::Grid::new("flow-init").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-            ui.label(RichText::new("Branches").strong());
-            ui.end_row();
-            ui.label("Production releases:");
-            ui.add(egui::TextEdit::singleline(&mut f.master).desired_width(240.0));
-            ui.end_row();
-            ui.label("Next release development:");
-            ui.add(egui::TextEdit::singleline(&mut f.develop).desired_width(240.0));
-            ui.end_row();
-            ui.label(RichText::new("Prefixes").strong());
-            ui.end_row();
-            ui.label("Feature:");
-            ui.add(egui::TextEdit::singleline(&mut f.feature).desired_width(240.0));
-            ui.end_row();
-            ui.label("Release:");
-            ui.add(egui::TextEdit::singleline(&mut f.release).desired_width(240.0));
-            ui.end_row();
-            ui.label("Hotfix:");
-            ui.add(egui::TextEdit::singleline(&mut f.hotfix).desired_width(240.0));
-            ui.end_row();
-            ui.label("Version tag:");
-            ui.add(egui::TextEdit::singleline(&mut f.version_tag).hint_text("e.g. v").desired_width(240.0));
-            ui.end_row();
-        });
+        egui::Grid::new("flow-init")
+            .num_columns(2)
+            .spacing([8.0, 6.0])
+            .show(ui, |ui| {
+                ui.label(RichText::new("Branches").strong());
+                ui.end_row();
+                ui.label("Production releases:");
+                ui.add(egui::TextEdit::singleline(&mut f.master).desired_width(240.0));
+                ui.end_row();
+                ui.label("Next release development:");
+                ui.add(egui::TextEdit::singleline(&mut f.develop).desired_width(240.0));
+                ui.end_row();
+                ui.label(RichText::new("Prefixes").strong());
+                ui.end_row();
+                ui.label("Feature:");
+                ui.add(egui::TextEdit::singleline(&mut f.feature).desired_width(240.0));
+                ui.end_row();
+                ui.label("Release:");
+                ui.add(egui::TextEdit::singleline(&mut f.release).desired_width(240.0));
+                ui.end_row();
+                ui.label("Hotfix:");
+                ui.add(egui::TextEdit::singleline(&mut f.hotfix).desired_width(240.0));
+                ui.end_row();
+                ui.label("Version tag:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut f.version_tag)
+                        .hint_text("e.g. v")
+                        .desired_width(240.0),
+                );
+                ui.end_row();
+            });
         let master = f.master.trim();
         let develop = f.develop.trim();
         let mut problem = None;
-        for (what, b) in [("Production branch", master), ("Development branch", develop)] {
+        for (what, b) in [
+            ("Production branch", master),
+            ("Development branch", develop),
+        ] {
             if let Err(e) = check_branch_name(b) {
                 problem = Some(format!("{what}: {e}"));
             }
@@ -127,7 +137,11 @@ impl GitFlow {
         if problem.is_none() && snap.refs.branch(master).is_none() {
             problem = Some(format!("Branch '{master}' does not exist."));
         }
-        if problem.is_none() && [&f.feature, &f.release, &f.hotfix].iter().any(|p| p.trim().is_empty()) {
+        if problem.is_none()
+            && [&f.feature, &f.release, &f.hotfix]
+                .iter()
+                .any(|p| p.trim().is_empty())
+        {
             problem = Some("Prefixes cannot be empty.".into());
         }
         match problem {
@@ -135,20 +149,31 @@ impl GitFlow {
                 error(ui, p);
                 ctl.invalid();
             }
-            None if snap.refs.branch(develop).is_none() => hint(ui, format!("'{develop}' will be created from '{master}'.")),
+            None if snap.refs.branch(develop).is_none() => {
+                hint(ui, format!("'{develop}' will be created from '{master}'."))
+            }
             None => {}
         }
     }
 
     /// Start / finish UI; returns true when the settings form was requested.
-    fn actions(&mut self, ui: &mut egui::Ui, ctl: &mut Ctl, snap: &Snapshot, cfg: &FlowConfig) -> bool {
+    fn actions(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctl: &mut Ctl,
+        snap: &Snapshot,
+        cfg: &FlowConfig,
+    ) -> bool {
         let current = snap.refs.head.branch().unwrap_or_default().to_string();
         let finishable = cfg.classify(&current);
         let mut settings = false;
         ui.horizontal(|ui| {
             for k in [FlowKind::Feature, FlowKind::Release, FlowKind::Hotfix] {
                 let a = Action::Start(k);
-                if ui.selectable_label(self.action == a, format!("Start {}", kind_name(k))).clicked() {
+                if ui
+                    .selectable_label(self.action == a, format!("Start {}", kind_name(k)))
+                    .clicked()
+                {
                     self.set_action(a, cfg);
                 }
             }
@@ -156,7 +181,10 @@ impl GitFlow {
                 Some((k, _)) => format!("Finish {} ", kind_name(k)),
                 None => "Finish".to_string(),
             };
-            let r = ui.add_enabled(finishable.is_some(), egui::Button::selectable(self.action == Action::Finish, label));
+            let r = ui.add_enabled(
+                finishable.is_some(),
+                egui::Button::selectable(self.action == Action::Finish, label),
+            );
             let r = r.on_disabled_hover_text(format!(
                 "Check out a {}…, {}… or {}… branch to finish it",
                 cfg.feature, cfg.release, cfg.hotfix
@@ -177,14 +205,29 @@ impl GitFlow {
                 ui.horizontal(|ui| {
                     ui.label(format!("{} name:", kind_name(k)));
                     ui.label(RichText::new(&prefix).monospace().weak());
-                    let hint_text = if k == FlowKind::Feature { "my-feature" } else { "1.2.0" };
-                    let r = ui.add(egui::TextEdit::singleline(&mut self.name).hint_text(hint_text).desired_width(260.0));
+                    let hint_text = if k == FlowKind::Feature {
+                        "my-feature"
+                    } else {
+                        "1.2.0"
+                    };
+                    let r = ui.add(
+                        egui::TextEdit::singleline(&mut self.name)
+                            .hint_text(hint_text)
+                            .desired_width(260.0),
+                    );
                     ctl.focus(&r);
                 });
                 ui.horizontal(|ui| {
                     ui.label("Start at:");
                     ui.add(egui::TextEdit::singleline(&mut self.base).desired_width(200.0));
-                    rev_combo(ui, "flow-base", &mut self.base, snap, Some(default_base(cfg, k)), 140.0);
+                    rev_combo(
+                        ui,
+                        "flow-base",
+                        &mut self.base,
+                        snap,
+                        Some(default_base(cfg, k)),
+                        140.0,
+                    );
                 });
                 let name = self.name.trim();
                 let full = format!("{prefix}{name}");
@@ -194,13 +237,30 @@ impl GitFlow {
                     error(ui, e);
                     ctl.invalid();
                 } else {
-                    hint(ui, format!("Creates and checks out '{full}' from '{}'.", self.base.trim()));
+                    hint(
+                        ui,
+                        format!(
+                            "Creates and checks out '{full}' from '{}'.",
+                            self.base.trim()
+                        ),
+                    );
                 }
-                if resolve_rev(snap, self.base.trim()).is_none() && snap.refs.branch(self.base.trim()).is_none() {
-                    warning(ui, format!("'{}' is not a known branch, tag or commit.", self.base.trim()));
+                if resolve_rev(snap, self.base.trim()).is_none()
+                    && snap.refs.branch(self.base.trim()).is_none()
+                {
+                    warning(
+                        ui,
+                        format!(
+                            "'{}' is not a known branch, tag or commit.",
+                            self.base.trim()
+                        ),
+                    );
                 }
                 if worktree_dirty(snap) {
-                    hint(ui, "Uncommitted changes are carried over to the new branch.");
+                    hint(
+                        ui,
+                        "Uncommitted changes are carried over to the new branch.",
+                    );
                 }
                 ctl.ok_label = format!("Start {}", kind_name(k));
             }
@@ -212,13 +272,27 @@ impl GitFlow {
                 ui.label(RichText::new(format!("Finish {} '{name}'", kind_name(k))).strong());
                 match k {
                     FlowKind::Feature => {
-                        hint(ui, format!("Merges '{current}' into '{}' (--no-ff).", cfg.develop));
+                        hint(
+                            ui,
+                            format!("Merges '{current}' into '{}' (--no-ff).", cfg.develop),
+                        );
                     }
                     FlowKind::Release | FlowKind::Hotfix => {
                         let tag = format!("{}{name}", cfg.version_tag);
-                        hint(ui, format!("Merges '{current}' into '{}', tags it '{tag}', then merges into '{}' (--no-ff).", cfg.master, cfg.develop));
+                        hint(
+                            ui,
+                            format!(
+                                "Merges '{current}' into '{}', tags it '{tag}', then merges into '{}' (--no-ff).",
+                                cfg.master, cfg.develop
+                            ),
+                        );
                         ui.label("Tag message:");
-                        let r = ui.add(egui::TextEdit::multiline(&mut self.tag_message).hint_text(tag.as_str()).desired_rows(2).desired_width(f32::INFINITY));
+                        let r = ui.add(
+                            egui::TextEdit::multiline(&mut self.tag_message)
+                                .hint_text(tag.as_str())
+                                .desired_rows(2)
+                                .desired_width(f32::INFINITY),
+                        );
                         ctl.multiline(&r);
                         if snap.refs.tags.iter().any(|t| t.name == tag) {
                             error(ui, format!("Tag '{tag}' already exists."));
@@ -228,7 +302,10 @@ impl GitFlow {
                 }
                 ui.checkbox(&mut self.keep, "Keep the branch after finishing");
                 if worktree_dirty(snap) {
-                    warning(ui, "Commit or stash your changes first: finishing checks out other branches.");
+                    warning(
+                        ui,
+                        "Commit or stash your changes first: finishing checks out other branches.",
+                    );
                     ctl.invalid();
                 }
                 ctl.ok_label = format!("Finish {}", kind_name(k));
@@ -239,7 +316,13 @@ impl GitFlow {
 }
 
 impl TabDialog for GitFlow {
-    fn show(&mut self, ctx: &Context, tab: &mut RepoTab, snap: &Snapshot, _shared: &mut Shared) -> bool {
+    fn show(
+        &mut self,
+        ctx: &Context,
+        tab: &mut RepoTab,
+        snap: &Snapshot,
+        _shared: &mut Shared,
+    ) -> bool {
         if self.cfg.is_none() && self.load.is_none() {
             let repo = tab.session.repo().clone();
             self.load = Some(Task::spawn(ctx, move || repo.flow_config()));
@@ -249,10 +332,17 @@ impl TabDialog for GitFlow {
         {
             self.load = None;
             if c.is_none() {
-                self.form = Some(FlowConfig { master: self.default_master.clone(), ..FlowConfig::default() });
+                self.form = Some(FlowConfig {
+                    master: self.default_master.clone(),
+                    ..FlowConfig::default()
+                });
             } else if let Some(cfg) = &c {
                 let current = snap.refs.head.branch().unwrap_or_default();
-                let a = if cfg.classify(current).is_some() { Action::Finish } else { Action::Start(FlowKind::Feature) };
+                let a = if cfg.classify(current).is_some() {
+                    Action::Finish
+                } else {
+                    Action::Start(FlowKind::Feature)
+                };
                 self.set_action(a, cfg);
             }
             self.cfg = Some(c);
@@ -284,7 +374,11 @@ impl TabDialog for GitFlow {
                 }
                 Some(c) if self.form.is_some() => {
                     self.init_form(ui, ctl, snap, c.is_some());
-                    ctl.ok_label = if c.is_some() { "Save".into() } else { "Initialize".into() };
+                    ctl.ok_label = if c.is_some() {
+                        "Save".into()
+                    } else {
+                        "Initialize".into()
+                    };
                     if c.is_some() && ui.small_button("◀ Back").clicked() {
                         cancel_settings = true;
                     }
@@ -300,9 +394,7 @@ impl TabDialog for GitFlow {
                 error(ui, e.clone());
             }
         });
-        if open_settings
-            && let Some(Some(c)) = &self.cfg
-        {
+        if open_settings && let Some(Some(c)) = &self.cfg {
             self.form = Some(c.clone());
         }
         if cancel_settings {
@@ -324,7 +416,9 @@ impl TabDialog for GitFlow {
                     };
                     let f2 = f.clone();
                     self.error = None;
-                    let op = TrackedOp::queue(tab, "Git Flow init", move |repo, _, _| repo.flow_init(&f2));
+                    let op = TrackedOp::queue(tab, "Git Flow init", move |repo, _, _| {
+                        repo.flow_init(&f2)
+                    });
                     self.pending = Some((f, op));
                     return true;
                 }
@@ -341,7 +435,10 @@ impl TabDialog for GitFlow {
                     }
                     Action::Finish => {
                         let current = snap.refs.head.branch().unwrap_or_default().to_string();
-                        let Some((k, name)) = c.classify(&current).map(|(k, n)| (k, n.to_string())) else { return true };
+                        let Some((k, name)) = c.classify(&current).map(|(k, n)| (k, n.to_string()))
+                        else {
+                            return true;
+                        };
                         let msg = self.tag_message.trim().to_string();
                         let keep = self.keep;
                         let label = format!("Finish {} {name}", kind_name(k));
@@ -371,7 +468,10 @@ mod tests {
 
     #[test]
     fn bases() {
-        let c = FlowConfig { master: "master".into(), ..FlowConfig::default() };
+        let c = FlowConfig {
+            master: "master".into(),
+            ..FlowConfig::default()
+        };
         assert_eq!(default_base(&c, FlowKind::Hotfix), "master");
         assert_eq!(default_base(&c, FlowKind::Feature), "develop");
         assert_eq!(default_base(&c, FlowKind::Release), "develop");

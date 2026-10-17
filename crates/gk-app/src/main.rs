@@ -33,13 +33,15 @@ fn main() {
         maximized: w.maximized,
         position: w.position,
     };
-    let initial_paths: Vec<std::path::PathBuf> =
-        std::env::args_os().skip(1).map(std::path::PathBuf::from).collect();
+    let initial_paths: Vec<std::path::PathBuf> = std::env::args_os()
+        .skip(1)
+        .map(std::path::PathBuf::from)
+        .collect();
     let staged: update::Staged = Default::default();
     let staged_app = staged.clone();
-    if let Err(e) =
-        gk_dx11::run(options, move |ctx| Box::new(app::GkApp::new(ctx, settings, initial_paths, staged_app)))
-    {
+    if let Err(e) = gk_dx11::run(options, move |ctx| {
+        Box::new(app::GkApp::new(ctx, settings, initial_paths, staged_app))
+    }) {
         let _ = rfd::MessageDialog::new()
             .set_title("GitKwaken")
             .set_description(format!("Failed to start: {e:#}"))
@@ -54,7 +56,9 @@ fn main() {
 fn window_icon() -> Option<(Vec<u8>, u32, u32)> {
     let bytes: &[u8] = include_bytes!("../../../assets/icon-256.png");
     let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
-    decoder.set_transformations(png::Transformations::normalize_to_color8() | png::Transformations::ALPHA);
+    decoder.set_transformations(
+        png::Transformations::normalize_to_color8() | png::Transformations::ALPHA,
+    );
     let mut reader = decoder.read_info().ok()?;
     let mut buf = vec![0; reader.output_buffer_size()?];
     let info = reader.next_frame(&mut buf).ok()?;

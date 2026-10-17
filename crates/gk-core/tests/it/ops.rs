@@ -6,7 +6,11 @@ use gk_diff::{Line, LineKind};
 
 /// `git diff --cached` without the `index <ids>` line.
 fn cached_patch(t: &TestRepo) -> String {
-    t.staged_diff().lines().filter(|l| !l.starts_with("index ")).map(|l| format!("{l}\n")).collect()
+    t.staged_diff()
+        .lines()
+        .filter(|l| !l.starts_with("index "))
+        .map(|l| format!("{l}\n"))
+        .collect()
 }
 
 fn added(n: u32) -> impl Fn(&Line) -> bool {
@@ -44,7 +48,9 @@ fn stage_unstage_with_head() {
     t.write("a.txt", "changed\n");
     std::fs::remove_file(t.repo.abs("d.txt")).unwrap();
     t.write("dir/n.txt", "new\n");
-    t.repo.stage(&[s("a.txt"), s("d.txt"), s("dir/n.txt")]).unwrap();
+    t.repo
+        .stage(&[s("a.txt"), s("d.txt"), s("dir/n.txt")])
+        .unwrap();
     assert_eq!(t.status(), "M  a.txt\nD  d.txt\nA  dir/n.txt");
     t.repo.unstage(&[s("d.txt"), s("dir/n.txt")]).unwrap();
     assert_eq!(t.status(), "M  a.txt\n D d.txt\n?? dir/n.txt");
@@ -63,7 +69,9 @@ fn discard_tracked_and_untracked() {
     std::fs::remove_file(t.repo.abs("b.txt")).unwrap();
     t.write("u.txt", "u\n");
     t.write("udir/x/y.txt", "y\n");
-    t.repo.discard(&[s("a.txt"), s("b.txt")], &[s("u.txt"), s("udir/")]).unwrap();
+    t.repo
+        .discard(&[s("a.txt"), s("b.txt")], &[s("u.txt"), s("udir/")])
+        .unwrap();
     assert_eq!(t.read("a.txt"), "a\n");
     assert_eq!(t.read("b.txt"), "b\n");
     assert!(!t.exists("u.txt") && !t.exists("udir"));
@@ -99,7 +107,9 @@ fn stage_lines_subset() {
     assert_eq!(t.read("f.txt"), "a\nB\nc\nd\nE\n");
 
     // Unstage the removal only: b comes back next to B.
-    t.repo.stage_lines("f.txt", true, &|l: &Line| l.kind == LineKind::Removed).unwrap();
+    t.repo
+        .stage_lines("f.txt", true, &|l: &Line| l.kind == LineKind::Removed)
+        .unwrap();
     assert_eq!(t.index_content("f.txt"), b"a\nb\nB\nc\nd\n");
 }
 
@@ -137,7 +147,11 @@ fn stage_lines_untracked_file() {
     let t = TestRepo::new();
     t.commit_file("other.txt", "o\n", "init");
     t.write("new.txt", "x\ny\nz\n");
-    t.repo.stage_lines("new.txt", false, &|l: &Line| l.kind == LineKind::Added && l.new_no != 2).unwrap();
+    t.repo
+        .stage_lines("new.txt", false, &|l: &Line| {
+            l.kind == LineKind::Added && l.new_no != 2
+        })
+        .unwrap();
     assert_eq!(t.index_content("new.txt"), b"x\nz\n");
     assert_eq!(t.status(), "AM new.txt");
     assert_eq!(t.read("new.txt"), "x\ny\nz\n");
@@ -162,17 +176,31 @@ fn stage_lines_deleted_file() {
     let t = TestRepo::new();
     t.commit_file("d.txt", "1\n2\n", "init");
     std::fs::remove_file(t.repo.abs("d.txt")).unwrap();
-    t.repo.stage_lines("d.txt", false, &|l: &Line| l.old_no == 1).unwrap();
+    t.repo
+        .stage_lines("d.txt", false, &|l: &Line| l.old_no == 1)
+        .unwrap();
     assert_eq!(t.index_content("d.txt"), b"2\n");
     t.repo.stage_lines("d.txt", false, &|_| true).unwrap();
-    assert_eq!(t.status(), "D  d.txt", "staging every removed line stages the deletion");
+    assert_eq!(
+        t.status(),
+        "D  d.txt",
+        "staging every removed line stages the deletion"
+    );
 }
 
 #[test]
 fn stage_lines_conflicted_rejected() {
     let t = TestRepo::new();
     crate::refs::conflicting_branches(&t);
-    t.repo.merge("topic", &MergeOptions { commit: true, ..Default::default() }).unwrap();
+    t.repo
+        .merge(
+            "topic",
+            &MergeOptions {
+                commit: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
     let err = t.repo.stage_lines("c.txt", false, &|_| true).unwrap_err();
     assert!(err.to_string().contains("conflicts"), "{err}");
     assert!(t.status().starts_with("UU c.txt"));
@@ -227,16 +255,33 @@ fn commit_amend_signoff() {
     let t = TestRepo::new();
     t.write("a.txt", "a\n");
     t.repo.stage_all().unwrap();
-    let err = t.repo.commit(&CommitOptions { message: s("  \n"), ..Default::default() }).unwrap_err();
+    let err = t
+        .repo
+        .commit(&CommitOptions {
+            message: s("  \n"),
+            ..Default::default()
+        })
+        .unwrap_err();
     assert!(err.to_string().contains("empty"), "{err}");
 
-    t.repo.commit(&CommitOptions { message: s("First\n\nBody\n# kept? no, stripped"), ..Default::default() }).unwrap();
+    t.repo
+        .commit(&CommitOptions {
+            message: s("First\n\nBody\n# kept? no, stripped"),
+            ..Default::default()
+        })
+        .unwrap();
     assert_eq!(t.repo.head_message().unwrap(), "First\n\nBody\n");
     let first = t.head();
 
     t.write("b.txt", "b\n");
     t.repo.stage_all().unwrap();
-    t.repo.commit(&CommitOptions { message: s("Amended"), amend: true, ..Default::default() }).unwrap();
+    t.repo
+        .commit(&CommitOptions {
+            message: s("Amended"),
+            amend: true,
+            ..Default::default()
+        })
+        .unwrap();
     assert_eq!(t.subjects("HEAD"), ["Amended"]);
     assert_ne!(t.head(), first);
     assert_eq!(t.git(&["ls-tree", "--name-only", "HEAD"]), "a.txt\nb.txt");
@@ -244,14 +289,27 @@ fn commit_amend_signoff() {
     // Amending with an empty message keeps the old one.
     t.write("c.txt", "c\n");
     t.repo.stage_all().unwrap();
-    t.repo.commit(&CommitOptions { amend: true, ..Default::default() }).unwrap();
+    t.repo
+        .commit(&CommitOptions {
+            amend: true,
+            ..Default::default()
+        })
+        .unwrap();
     assert_eq!(t.repo.head_message().unwrap(), "Amended\n");
     assert_eq!(t.git(&["rev-list", "--count", "HEAD"]), "1");
 
     t.repo
-        .commit(&CommitOptions { message: s("Signed"), signoff: true, allow_empty: true, ..Default::default() })
+        .commit(&CommitOptions {
+            message: s("Signed"),
+            signoff: true,
+            allow_empty: true,
+            ..Default::default()
+        })
         .unwrap();
-    assert_eq!(t.repo.head_message().unwrap(), "Signed\n\nSigned-off-by: Test User <test@example.com>\n");
+    assert_eq!(
+        t.repo.head_message().unwrap(),
+        "Signed\n\nSigned-off-by: Test User <test@example.com>\n"
+    );
 
     t.repo
         .commit(&CommitOptions {
@@ -262,10 +320,20 @@ fn commit_amend_signoff() {
             ..Default::default()
         })
         .unwrap();
-    assert_eq!(t.git(&["log", "-1", "--format=%an <%ae>"]), "Someone Else <else@example.com>");
+    assert_eq!(
+        t.git(&["log", "-1", "--format=%an <%ae>"]),
+        "Someone Else <else@example.com>"
+    );
 
     // Nothing staged.
-    assert!(t.repo.commit(&CommitOptions { message: s("nothing"), ..Default::default() }).is_err());
+    assert!(
+        t.repo
+            .commit(&CommitOptions {
+                message: s("nothing"),
+                ..Default::default()
+            })
+            .is_err()
+    );
 }
 
 #[test]
@@ -291,7 +359,9 @@ fn branches() {
     t.repo.rename_branch("b1", "renamed").unwrap();
     assert_eq!(t.git(&["branch", "--show-current"]), "renamed");
     t.repo.checkout("main").unwrap();
-    t.repo.create_branch("unmerged", Some("renamed"), true).unwrap();
+    t.repo
+        .create_branch("unmerged", Some("renamed"), true)
+        .unwrap();
     t.commit_file("u.txt", "u\n", "unmerged work");
     t.repo.checkout("main").unwrap();
     assert!(t.repo.delete_branch("unmerged", false).is_err());
@@ -310,13 +380,18 @@ fn tags() {
     let c2 = t.commit_file("a.txt", "2\n", "two");
     t.repo.create_tag("light", &c1, None, false).unwrap();
     t.repo.create_tag("blank", &c1, Some("  "), false).unwrap();
-    t.repo.create_tag("anno", "HEAD", Some("Release\n\nnotes"), false).unwrap();
+    t.repo
+        .create_tag("anno", "HEAD", Some("Release\n\nnotes"), false)
+        .unwrap();
     let r = refs::load(&t.repo).unwrap();
     let get = |n: &str| r.tags.iter().find(|t| t.name == n).unwrap().clone();
     assert!(!get("light").annotated && get("light").target == c1);
     assert!(!get("blank").annotated);
     assert!(get("anno").annotated && get("anno").target == c2);
-    assert_eq!(t.git(&["tag", "-l", "--format=%(contents)", "anno"]), "Release\n\nnotes");
+    assert_eq!(
+        t.git(&["tag", "-l", "--format=%(contents)", "anno"]),
+        "Release\n\nnotes"
+    );
     t.repo.delete_tag("light").unwrap();
     t.repo.delete_tag("anno").unwrap();
     let r = refs::load(&t.repo).unwrap();
@@ -327,7 +402,11 @@ fn tags() {
 // ------------------------------------------------------------------ merge
 
 fn merge_opts(ff: FastForward) -> MergeOptions {
-    MergeOptions { ff, commit: true, ..Default::default() }
+    MergeOptions {
+        ff,
+        commit: true,
+        ..Default::default()
+    }
 }
 
 #[test]
@@ -339,20 +418,37 @@ fn merge_fast_forward_and_no_ff() {
     t.git(&["checkout", "-q", "main"]);
     t.git(&["branch", "copy"]);
 
-    t.repo.merge("topic", &merge_opts(FastForward::Only)).unwrap();
+    t.repo
+        .merge("topic", &merge_opts(FastForward::Only))
+        .unwrap();
     assert_eq!(t.head(), tip);
 
     t.git(&["checkout", "-q", "copy"]);
     t.repo
-        .merge("topic", &MergeOptions { message: Some(s("Merge it")), ..merge_opts(FastForward::Never) })
+        .merge(
+            "topic",
+            &MergeOptions {
+                message: Some(s("Merge it")),
+                ..merge_opts(FastForward::Never)
+            },
+        )
         .unwrap();
-    assert_eq!(t.git(&["rev-list", "--parents", "-n1", "HEAD"]).split(' ').count(), 3);
+    assert_eq!(
+        t.git(&["rev-list", "--parents", "-n1", "HEAD"])
+            .split(' ')
+            .count(),
+        3
+    );
     assert_eq!(t.subjects("-1"), ["Merge it"]);
 
     // ff-only on diverged history fails.
     t.git(&["checkout", "-q", "-b", "diverged", "main~1"]);
     t.commit_file("c.txt", "c\n", "diverge");
-    assert!(t.repo.merge("topic", &merge_opts(FastForward::Only)).is_err());
+    assert!(
+        t.repo
+            .merge("topic", &merge_opts(FastForward::Only))
+            .is_err()
+    );
     assert_eq!(state(&t), RepoState::Clean);
 }
 
@@ -366,20 +462,53 @@ fn merge_squash_and_no_commit() {
     t.git(&["checkout", "-q", "main"]);
     t.commit_file("m.txt", "m\n", "main work");
     let head = t.head();
-    t.repo.merge("topic", &MergeOptions { squash: true, commit: true, ..Default::default() }).unwrap();
+    t.repo
+        .merge(
+            "topic",
+            &MergeOptions {
+                squash: true,
+                commit: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
     assert_eq!(t.head(), head);
     assert_eq!(t.status(), "A  b.txt\nA  c.txt");
     assert_eq!(state(&t), RepoState::Clean);
-    t.repo.commit(&CommitOptions { message: s("squashed"), ..Default::default() }).unwrap();
-    assert_eq!(t.git(&["rev-list", "--parents", "-n1", "HEAD"]).split(' ').count(), 2);
+    t.repo
+        .commit(&CommitOptions {
+            message: s("squashed"),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(
+        t.git(&["rev-list", "--parents", "-n1", "HEAD"])
+            .split(' ')
+            .count(),
+        2
+    );
 
     t.git(&["reset", "-q", "--hard", &head]);
-    t.repo.merge("topic", &MergeOptions { commit: false, ff: FastForward::Never, ..Default::default() }).unwrap();
+    t.repo
+        .merge(
+            "topic",
+            &MergeOptions {
+                commit: false,
+                ff: FastForward::Never,
+                ..Default::default()
+            },
+        )
+        .unwrap();
     assert_eq!(t.head(), head);
     assert_eq!(state(&t), RepoState::Merging);
     t.repo.continue_op(RepoState::Merging).unwrap();
     assert_eq!(state(&t), RepoState::Clean);
-    assert_eq!(t.git(&["rev-list", "--parents", "-n1", "HEAD"]).split(' ').count(), 3);
+    assert_eq!(
+        t.git(&["rev-list", "--parents", "-n1", "HEAD"])
+            .split(' ')
+            .count(),
+        3
+    );
 }
 
 #[test]
@@ -387,7 +516,10 @@ fn merge_conflict_resolve_continue() {
     let t = TestRepo::new();
     crate::refs::conflicting_branches(&t);
     t.commit_file("other.txt", "o\n", "unrelated");
-    let text = t.repo.merge("topic", &merge_opts(FastForward::Allow)).unwrap();
+    let text = t
+        .repo
+        .merge("topic", &merge_opts(FastForward::Allow))
+        .unwrap();
     assert!(text.contains("CONFLICT"), "{text}");
     assert_eq!(state(&t), RepoState::Merging);
     // Continuing with unresolved conflicts is an error.
@@ -397,7 +529,12 @@ fn merge_conflict_resolve_continue() {
     assert_eq!(t.status(), "M  c.txt");
     t.repo.continue_op(RepoState::Merging).unwrap();
     assert_eq!(state(&t), RepoState::Clean);
-    assert_eq!(t.git(&["rev-list", "--parents", "-n1", "HEAD"]).split(' ').count(), 3);
+    assert_eq!(
+        t.git(&["rev-list", "--parents", "-n1", "HEAD"])
+            .split(' ')
+            .count(),
+        3
+    );
     assert_eq!(t.git(&["show", "HEAD:c.txt"]), "topic");
 }
 
@@ -406,7 +543,9 @@ fn merge_conflict_ours_mark_resolved_abort() {
     let t = TestRepo::new();
     crate::refs::conflicting_branches(&t);
     let head = t.head();
-    t.repo.merge("topic", &merge_opts(FastForward::Allow)).unwrap();
+    t.repo
+        .merge("topic", &merge_opts(FastForward::Allow))
+        .unwrap();
     t.repo.resolve_with(&[s("c.txt")], Side::Ours).unwrap();
     assert_eq!(t.read("c.txt"), "main\n");
     t.write("c.txt", "hand merged\n");
@@ -430,7 +569,9 @@ fn cherry_pick_clean_and_conflict() {
     t.git(&["checkout", "-q", "topic"]);
     let extra = t.commit_file("x.txt", "x\n", "extra");
     t.git(&["checkout", "-q", "main"]);
-    t.repo.cherry_pick(std::slice::from_ref(&extra), false).unwrap();
+    t.repo
+        .cherry_pick(std::slice::from_ref(&extra), false)
+        .unwrap();
     assert_eq!(t.subjects("-1"), ["extra"]);
     assert_eq!(t.read("x.txt"), "x\n");
 
@@ -523,7 +664,9 @@ fn stash_push_apply_pop_drop() {
     let t = TestRepo::new();
     t.commit_file("a.txt", "a\n", "init");
     t.write("a.txt", "a2\n");
-    t.repo.stash_push("my message", &StashOptions::default(), &[]).unwrap();
+    t.repo
+        .stash_push("my message", &StashOptions::default(), &[])
+        .unwrap();
     assert_eq!(t.status(), "");
     let r = refs::load(&t.repo).unwrap();
     assert_eq!(r.stashes.len(), 1);
@@ -537,7 +680,9 @@ fn stash_push_apply_pop_drop() {
     assert_eq!(t.read("a.txt"), "a2\n");
     assert!(refs::load(&t.repo).unwrap().stashes.is_empty());
 
-    t.repo.stash_push("", &StashOptions::default(), &[]).unwrap();
+    t.repo
+        .stash_push("", &StashOptions::default(), &[])
+        .unwrap();
     t.repo.stash_drop(0).unwrap();
     assert!(refs::load(&t.repo).unwrap().stashes.is_empty());
     assert!(t.repo.stash_drop(0).is_err());
@@ -551,14 +696,25 @@ fn stash_keep_index_and_restore_index() {
     t.write("a.txt", "staged\n");
     t.git(&["add", "a.txt"]);
     t.write("b.txt", "unstaged\n");
-    t.repo.stash_push("ki", &StashOptions { keep_index: true, ..Default::default() }, &[]).unwrap();
+    t.repo
+        .stash_push(
+            "ki",
+            &StashOptions {
+                keep_index: true,
+                ..Default::default()
+            },
+            &[],
+        )
+        .unwrap();
     assert_eq!(t.status(), "M  a.txt");
     t.git(&["reset", "-q", "--hard"]);
     t.repo.stash_apply(0, true, true).unwrap();
     assert_eq!(t.status(), "M  a.txt\n M b.txt");
 
     // Without --index the staged change comes back unstaged.
-    t.repo.stash_push("again", &StashOptions::default(), &[]).unwrap();
+    t.repo
+        .stash_push("again", &StashOptions::default(), &[])
+        .unwrap();
     t.repo.stash_apply(0, true, false).unwrap();
     assert_eq!(t.status(), " M a.txt\n M b.txt");
 }
@@ -570,21 +726,41 @@ fn stash_untracked_and_paths() {
     t.commit_file("b.txt", "b\n", "init2");
     t.write("u.txt", "u\n");
     t.write("a.txt", "a2\n");
-    t.repo.stash_push("with untracked", &StashOptions { include_untracked: true, ..Default::default() }, &[]).unwrap();
+    t.repo
+        .stash_push(
+            "with untracked",
+            &StashOptions {
+                include_untracked: true,
+                ..Default::default()
+            },
+            &[],
+        )
+        .unwrap();
     assert!(!t.exists("u.txt"));
     assert_eq!(t.status(), "");
     t.repo.stash_apply(0, true, false).unwrap();
     assert!(t.exists("u.txt"));
 
     t.write("b.txt", "b2\n");
-    t.repo.stash_push("only a", &StashOptions::default(), &[s("a.txt")]).unwrap();
+    t.repo
+        .stash_push("only a", &StashOptions::default(), &[s("a.txt")])
+        .unwrap();
     assert_eq!(t.status(), " M b.txt\n?? u.txt");
     assert_eq!(t.read("a.txt"), "a\n");
     t.repo.stash_apply(0, true, false).unwrap();
     assert_eq!(t.read("a.txt"), "a2\n");
 
     t.git(&["add", "b.txt"]);
-    t.repo.stash_push("staged only", &StashOptions { staged_only: true, ..Default::default() }, &[]).unwrap();
+    t.repo
+        .stash_push(
+            "staged only",
+            &StashOptions {
+                staged_only: true,
+                ..Default::default()
+            },
+            &[],
+        )
+        .unwrap();
     assert_eq!(t.status(), " M a.txt\n?? u.txt");
 }
 
@@ -593,7 +769,9 @@ fn stash_apply_conflict_and_branch() {
     let t = TestRepo::new();
     t.commit_file("a.txt", "a\n", "init");
     t.write("a.txt", "stashed\n");
-    t.repo.stash_push("s", &StashOptions::default(), &[]).unwrap();
+    t.repo
+        .stash_push("s", &StashOptions::default(), &[])
+        .unwrap();
     let base = t.head();
     t.commit_file("a.txt", "committed\n", "conflicting");
     let text = t.repo.stash_apply(0, true, false).unwrap();
@@ -627,9 +805,17 @@ fn ignore_appends() {
 fn config_local() {
     let t = TestRepo::new();
     assert_eq!(t.repo.config_get("gitkwaken.test-key"), None);
-    t.repo.config_set("gitkwaken.test-key", "some value", false).unwrap();
-    assert_eq!(t.repo.config_get("gitkwaken.test-key").as_deref(), Some("some value"));
-    assert_eq!(t.git(&["config", "--local", "gitkwaken.test-key"]), "some value");
+    t.repo
+        .config_set("gitkwaken.test-key", "some value", false)
+        .unwrap();
+    assert_eq!(
+        t.repo.config_get("gitkwaken.test-key").as_deref(),
+        Some("some value")
+    );
+    assert_eq!(
+        t.git(&["config", "--local", "gitkwaken.test-key"]),
+        "some value"
+    );
     assert_eq!(t.repo.config_get("user.name").as_deref(), Some("Test User"));
 }
 
@@ -641,7 +827,10 @@ fn format_and_apply_patch() {
     let c2 = t.commit_file("n.txt", "n\n", "add n");
     let patch = t.repo.format_patch(&[c1, c2]).unwrap();
     let text = String::from_utf8(patch.clone()).unwrap();
-    assert!(text.contains("Subject: [PATCH] add b") && text.contains("Subject: [PATCH] add n"), "{text}");
+    assert!(
+        text.contains("Subject: [PATCH] add b") && text.contains("Subject: [PATCH] add n"),
+        "{text}"
+    );
 
     t.git(&["reset", "-q", "--hard", "HEAD~2"]);
     let out = tempfile::tempdir().unwrap();

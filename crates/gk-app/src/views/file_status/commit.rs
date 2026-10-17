@@ -65,7 +65,11 @@ impl CommitBox {
         }
     }
 
-    fn load_async(&mut self, ctx: &egui::Context, f: impl FnOnce() -> Option<String> + Send + 'static) {
+    fn load_async(
+        &mut self,
+        ctx: &egui::Context,
+        f: impl FnOnce() -> Option<String> + Send + 'static,
+    ) {
         let slot: Arc<Mutex<Option<String>>> = Arc::default();
         self.loading = Some(slot.clone());
         let ctx = ctx.clone();
@@ -89,13 +93,26 @@ fn push_target(snap: &Snapshot) -> Option<(String, PushOptions)> {
         };
         return Some((u.clone(), opts));
     }
-    let remote = refs.remotes.iter().find(|r| r.name == "origin").or_else(|| refs.remotes.first())?;
-    let opts = PushOptions { remote: remote.name.clone(), set_upstream: true, ..Default::default() };
+    let remote = refs
+        .remotes
+        .iter()
+        .find(|r| r.name == "origin")
+        .or_else(|| refs.remotes.first())?;
+    let opts = PushOptions {
+        remote: remote.name.clone(),
+        set_upstream: true,
+        ..Default::default()
+    };
     Some((format!("{}/{} (new)", remote.name, b.name), opts))
 }
 
 pub fn show(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared) {
-    let RepoTab { status, state, session, .. } = tab;
+    let RepoTab {
+        status,
+        state,
+        session,
+        ..
+    } = tab;
     let cb = &mut status.commit;
     let p = shared.palette;
     cb.poll(state);
@@ -107,7 +124,10 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared
     }
 
     // Offer the prepared message of a merge / cherry-pick / revert once.
-    let in_op = matches!(snap.refs.state, RepoState::Merging | RepoState::CherryPicking | RepoState::Reverting);
+    let in_op = matches!(
+        snap.refs.state,
+        RepoState::Merging | RepoState::CherryPicking | RepoState::Reverting
+    );
     if !in_op {
         cb.merge_msg_offered = false;
     } else if !cb.merge_msg_offered && cb.loading.is_none() && cb.message.trim().is_empty() {
@@ -116,71 +136,119 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared
         cb.load_async(ui.ctx(), move || {
             let s = std::fs::read_to_string(f).ok()?;
             // Drop git's comment lines.
-            Some(s.lines().filter(|l| !l.starts_with('#')).collect::<Vec<_>>().join("\n"))
+            Some(
+                s.lines()
+                    .filter(|l| !l.starts_with('#'))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )
         });
     }
 
     let staged = snap.status.staged.len();
     let msg_id = ui.make_persistent_id("gk-commit-message");
     let has_focus = ui.memory(|m| m.has_focus(msg_id));
-    let mut want_commit = has_focus && ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter));
+    let mut want_commit =
+        has_focus && ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter));
 
     // ---- header: subject counter
     let guide = shared.settings.commit.subject_guide_column.max(1) as usize;
     let body_col = shared.settings.commit.body_wrap_column as usize;
-    let subject_len = cb.message.lines().next().map(|l| l.chars().count()).unwrap_or(0);
+    let subject_len = cb
+        .message
+        .lines()
+        .next()
+        .map(|l| l.chars().count())
+        .unwrap_or(0);
     ui.horizontal(|ui| {
-        ui.label(RichText::new(if cb.amend { "Amend last commit" } else { "Commit message" }).strong());
+        ui.label(
+            RichText::new(if cb.amend {
+                "Amend last commit"
+            } else {
+                "Commit message"
+            })
+            .strong(),
+        );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let color = if subject_len > guide { p.removed_fg } else { p.muted };
-            ui.label(RichText::new(format!("{subject_len}/{guide}")).color(color).monospace())
-                .on_hover_text("Subject line length");
-            ui.toggle_value(&mut cb.monospace, RichText::new("Aa").monospace()).on_hover_text("Monospace font");
+            let color = if subject_len > guide {
+                p.removed_fg
+            } else {
+                p.muted
+            };
+            ui.label(
+                RichText::new(format!("{subject_len}/{guide}"))
+                    .color(color)
+                    .monospace(),
+            )
+            .on_hover_text("Subject line length");
+            ui.toggle_value(&mut cb.monospace, RichText::new("Aa").monospace())
+                .on_hover_text("Monospace font");
             let recent = &state.recent_messages;
             ui.add_enabled_ui(!recent.is_empty(), |ui| {
                 ui.menu_button("Recent ▾", |ui| {
-                    egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
-                        for m in recent {
-                            let first = m.lines().next().unwrap_or("");
-                            let short: String = first.chars().take(80).collect();
-                            if ui.button(short).on_hover_text(m.as_str()).clicked() {
-                                cb.message = m.clone();
-                                ui.close();
+                    egui::ScrollArea::vertical()
+                        .max_height(320.0)
+                        .show(ui, |ui| {
+                            for m in recent {
+                                let first = m.lines().next().unwrap_or("");
+                                let short: String = first.chars().take(80).collect();
+                                if ui.button(short).on_hover_text(m.as_str()).clicked() {
+                                    cb.message = m.clone();
+                                    ui.close();
+                                }
                             }
-                        }
-                    });
+                        });
                 });
             });
         });
     });
 
     // ---- editor
-    let font = if cb.monospace { egui::TextStyle::Monospace } else { egui::TextStyle::Body };
+    let font = if cb.monospace {
+        egui::TextStyle::Monospace
+    } else {
+        egui::TextStyle::Body
+    };
     let font_id = font.resolve(ui.style());
     let options_h = 30.0;
     let edit_h = (ui.available_height() - options_h).max(48.0);
-    let out = egui::ScrollArea::vertical().id_salt("gk-commit-scroll").max_height(edit_h).show(ui, |ui| {
-        egui::TextEdit::multiline(&mut cb.message)
-            .id(msg_id)
-            .font(font)
-            .desired_width(f32::INFINITY)
-            .min_size(egui::vec2(0.0, edit_h - 4.0))
-            .hint_text("Commit message — first line is the subject (Ctrl+Enter to commit)")
-            .show(ui)
-    });
+    let out = egui::ScrollArea::vertical()
+        .id_salt("gk-commit-scroll")
+        .max_height(edit_h)
+        .show(ui, |ui| {
+            egui::TextEdit::multiline(&mut cb.message)
+                .id(msg_id)
+                .font(font)
+                .desired_width(f32::INFINITY)
+                .min_size(egui::vec2(0.0, edit_h - 4.0))
+                .hint_text("Commit message — first line is the subject (Ctrl+Enter to commit)")
+                .show(ui)
+        });
     let te = out.inner;
     {
         // Guides: subject column on the first line, body wrap column below.
-        let (row_h, char_w) = ui.ctx().fonts_mut(|f| (f.row_height(&font_id), f.glyph_width(&font_id, 'n')));
+        let (row_h, char_w) = ui
+            .ctx()
+            .fonts_mut(|f| (f.row_height(&font_id), f.glyph_width(&font_id, 'n')));
         let painter = ui.painter().with_clip_rect(te.text_clip_rect);
         let x0 = te.galley_pos.x;
         let top = te.galley_pos.y;
-        let faint = ui.visuals().widgets.noninteractive.bg_stroke.color.gamma_multiply(0.8);
+        let faint = ui
+            .visuals()
+            .widgets
+            .noninteractive
+            .bg_stroke
+            .color
+            .gamma_multiply(0.8);
         let gx = x0 + guide as f32 * char_w;
         painter.vline(gx, top..=top + row_h, egui::Stroke::new(1.0, faint));
         if body_col > 0 && cb.monospace {
             let bx = x0 + body_col as f32 * char_w;
-            painter.vline(bx, top + row_h..=te.text_clip_rect.bottom(), egui::Stroke::new(1.0, faint.gamma_multiply(0.5)));
+            painter.vline(
+                bx,
+                top + row_h..=te.text_clip_rect.bottom(),
+                egui::Stroke::new(1.0, faint.gamma_multiply(0.5)),
+            );
         }
     }
 
@@ -189,7 +257,8 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared
     let push_target = push_target(snap);
     ui.horizontal(|ui| {
         let was_amend = cb.amend;
-        ui.checkbox(&mut cb.amend, "Amend").on_hover_text("Amend the last commit");
+        ui.checkbox(&mut cb.amend, "Amend")
+            .on_hover_text("Amend the last commit");
         if cb.amend != was_amend {
             if cb.amend {
                 if cb.message.trim().is_empty() {
@@ -202,12 +271,14 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared
             }
         }
         if let Some(s) = &mut cb.signoff {
-            ui.checkbox(s, "Sign-off").on_hover_text("Add a Signed-off-by trailer");
+            ui.checkbox(s, "Sign-off")
+                .on_hover_text("Add a Signed-off-by trailer");
         }
         if let Some(push) = &mut cb.push {
             match &push_target {
                 Some((label, _)) => {
-                    ui.checkbox(push, format!("Push to {label}")).on_hover_text("Push changes immediately after committing");
+                    ui.checkbox(push, format!("Push to {label}"))
+                        .on_hover_text("Push changes immediately after committing");
                 }
                 None => {
                     ui.add_enabled(false, egui::Checkbox::new(push, "Push"))
@@ -217,9 +288,14 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let has_msg = !cb.message.trim().is_empty();
-            let enabled = cb.running.is_none() && (staged > 0 || cb.amend || merging) && (has_msg || cb.amend);
+            let enabled = cb.running.is_none()
+                && (staged > 0 || cb.amend || merging)
+                && (has_msg || cb.amend);
             let label = if cb.amend { "Amend" } else { "Commit" };
-            let r = ui.add_enabled(enabled, egui::Button::new(RichText::new(label).strong()).min_size(egui::vec2(80.0, 0.0)));
+            let r = ui.add_enabled(
+                enabled,
+                egui::Button::new(RichText::new(label).strong()).min_size(egui::vec2(80.0, 0.0)),
+            );
             let r = if cb.running.is_some() {
                 ui.spinner();
                 r
@@ -243,26 +319,30 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared
             sign: shared.settings.commit.sign,
             ..Default::default()
         };
-        let push = push_target.filter(|_| cb.push == Some(true)).map(|(_, o)| o);
+        let push = push_target
+            .filter(|_| cb.push == Some(true))
+            .map(|(_, o)| o);
         let flag = Arc::new(AtomicU8::new(PENDING));
         cb.running = Some((flag.clone(), cb.message.clone()));
         let label = if cb.amend { "Amend commit" } else { "Commit" };
-        session.run_op(label, move |repo, cancel, progress| match repo.commit(&opts) {
-            Ok(out) => {
-                flag.store(DONE, Ordering::SeqCst);
-                match push {
-                    Some(p) => {
-                        let pushed = repo
-                            .push(&p, cancel, progress)
-                            .map_err(|e| e.context("the commit was created, but pushing it failed"))?;
-                        Ok(format!("{out}\n{pushed}"))
+        session.run_op(label, move |repo, cancel, progress| {
+            match repo.commit(&opts) {
+                Ok(out) => {
+                    flag.store(DONE, Ordering::SeqCst);
+                    match push {
+                        Some(p) => {
+                            let pushed = repo.push(&p, cancel, progress).map_err(|e| {
+                                e.context("the commit was created, but pushing it failed")
+                            })?;
+                            Ok(format!("{out}\n{pushed}"))
+                        }
+                        None => Ok(out),
                     }
-                    None => Ok(out),
                 }
-            }
-            Err(e) => {
-                flag.store(FAILED, Ordering::SeqCst);
-                Err(e)
+                Err(e) => {
+                    flag.store(FAILED, Ordering::SeqCst);
+                    Err(e)
+                }
             }
         });
     }
@@ -286,11 +366,18 @@ mod tests {
             }],
             remotes: remotes
                 .iter()
-                .map(|r| Remote { name: r.to_string(), fetch_url: String::new(), push_url: String::new() })
+                .map(|r| Remote {
+                    name: r.to_string(),
+                    fetch_url: String::new(),
+                    push_url: String::new(),
+                })
                 .collect(),
             ..Default::default()
         };
-        Snapshot { refs: Arc::new(refs), ..Default::default() }
+        Snapshot {
+            refs: Arc::new(refs),
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -298,7 +385,10 @@ mod tests {
         let (label, o) = push_target(&snap_with(Some("origin/feature/x"), &["origin"])).unwrap();
         assert_eq!(label, "origin/feature/x");
         assert_eq!(o.remote, "origin");
-        assert_eq!(o.refspecs, vec![("main".to_string(), "feature/x".to_string())]);
+        assert_eq!(
+            o.refspecs,
+            vec![("main".to_string(), "feature/x".to_string())]
+        );
         let (_, o) = push_target(&snap_with(None, &["up", "origin"])).unwrap();
         assert!(o.set_upstream && o.remote == "origin");
         assert!(push_target(&snap_with(None, &[])).is_none());

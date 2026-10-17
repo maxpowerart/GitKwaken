@@ -9,8 +9,9 @@ pub fn compute(git: &gk_cli::Git, patterns: &[BString], untracked: Untracked) ->
         Untracked::Normal => "--untracked-files=normal",
         Untracked::No => "--untracked-files=no",
     };
-    let mut args: Vec<String> =
-        ["status", "--porcelain=v2", "-z", "--find-renames", mode].map(String::from).to_vec();
+    let mut args: Vec<String> = ["status", "--porcelain=v2", "-z", "--find-renames", mode]
+        .map(String::from)
+        .to_vec();
     // `git status` has no --pathspec-from-file; past the Windows command-line
     // limit a full run is used and the caller's merge narrows it to its scope.
     let total: usize = patterns.iter().map(|p| p.len() + 12).sum();
@@ -74,7 +75,9 @@ pub fn parse_porcelain_v2(data: &[u8]) -> Result<Status> {
                     b"AA" => Conflict::BothAdded,
                     _ => Conflict::BothModified,
                 };
-                status.unstaged.push(Entry::new(fields[10], Kind::Conflict(c)));
+                status
+                    .unstaged
+                    .push(Entry::new(fields[10], Kind::Conflict(c)));
             }
             b'?' => status.unstaged.push(Entry::new(&rec[2..], Kind::Untracked)),
             b'!' | b'#' => {}
@@ -87,13 +90,26 @@ pub fn parse_porcelain_v2(data: &[u8]) -> Result<Status> {
 fn push_xy(status: &mut Status, xy: &[u8], path: &[u8], orig: Option<BString>, sub: &[u8]) {
     let (x, y) = (xy[0], xy[1]);
     if let Some(kind) = kind_from(x) {
-        status.staged.push(Entry { path: path.into(), kind, orig_path: orig.clone() });
+        status.staged.push(Entry {
+            path: path.into(),
+            kind,
+            orig_path: orig.clone(),
+        });
     }
     // Submodules report worktree changes in `sub` (e.g. "SC.." / "S.M." / "S..U").
-    let sub_dirty = sub.len() == 4 && sub[0] == b'S' && (sub[1] == b'C' || sub[2] == b'M' || sub[3] == b'U');
+    let sub_dirty =
+        sub.len() == 4 && sub[0] == b'S' && (sub[1] == b'C' || sub[2] == b'M' || sub[3] == b'U');
     if let Some(kind) = kind_from(y) {
-        let kind = if x == b'A' && y == b'D' { Kind::Deleted } else { kind };
-        status.unstaged.push(Entry { path: path.into(), kind, orig_path: None });
+        let kind = if x == b'A' && y == b'D' {
+            Kind::Deleted
+        } else {
+            kind
+        };
+        status.unstaged.push(Entry {
+            path: path.into(),
+            kind,
+            orig_path: None,
+        });
     } else if y == b'.' && x == b'.' && sub_dirty {
         status.unstaged.push(Entry::new(path, Kind::Modified));
     }
@@ -119,6 +135,9 @@ u UU N... 100644 100644 100644 100644 a b c conflict.txt\0\
         assert_eq!(s.staged[0].kind, Kind::Renamed);
         assert_eq!(s.staged[0].orig_path.as_ref().unwrap(), "old.rs");
         assert_eq!(s.unstaged[2].path, "untracked file.txt");
-        assert!(matches!(s.unstaged[1].kind, Kind::Conflict(Conflict::BothModified)));
+        assert!(matches!(
+            s.unstaged[1].kind,
+            Kind::Conflict(Conflict::BothModified)
+        ));
     }
 }

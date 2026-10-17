@@ -81,16 +81,32 @@ impl StatusState {
     /// Refreshes path caches and row models; keeps cursors valid.
     fn sync(&mut self, snap: &Snapshot, tree_mode: bool) {
         if self.paths.status_gen != Some(snap.status_gen) {
-            self.paths.staged = snap.status.staged.iter().map(|e| e.path.to_string()).collect();
-            self.paths.unstaged = snap.status.unstaged.iter().map(|e| e.path.to_string()).collect();
+            self.paths.staged = snap
+                .status
+                .staged
+                .iter()
+                .map(|e| e.path.to_string())
+                .collect();
+            self.paths.unstaged = snap
+                .status
+                .unstaged
+                .iter()
+                .map(|e| e.path.to_string())
+                .collect();
             self.paths.conflicts = snap.status.conflicts().count();
             self.paths.status_gen = Some(snap.status_gen);
         }
         let g = snap.status_gen;
-        if self.staged.sync(g, &self.paths.staged, &self.filter, tree_mode) {
+        if self
+            .staged
+            .sync(g, &self.paths.staged, &self.filter, tree_mode)
+        {
             self.staged.repair_cursor(&self.paths.staged);
         }
-        if self.unstaged.sync(g, &self.paths.unstaged, &self.filter, tree_mode) {
+        if self
+            .unstaged
+            .sync(g, &self.paths.unstaged, &self.filter, tree_mode)
+        {
             self.unstaged.repair_cursor(&self.paths.unstaged);
         }
         if let Some(p) = &self.pending {
@@ -125,11 +141,18 @@ impl StatusState {
         let path = cursor.clone();
         Some(match self.active {
             Side::Staged => (
-                DiffTarget::Staged { path, old_path: e.orig_path.as_ref().map(|o| o.to_string()) },
+                DiffTarget::Staged {
+                    path,
+                    old_path: e.orig_path.as_ref().map(|o| o.to_string()),
+                },
                 DiffMode::Staged,
             ),
             Side::Unstaged => {
-                let mode = if matches!(e.kind, gk_status::Kind::Conflict(_)) { DiffMode::ReadOnly } else { DiffMode::Unstaged };
+                let mode = if matches!(e.kind, gk_status::Kind::Conflict(_)) {
+                    DiffMode::ReadOnly
+                } else {
+                    DiffMode::Unstaged
+                };
                 (DiffTarget::Unstaged { path }, mode)
             }
         })
@@ -163,12 +186,19 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
     egui::CentralPanel::default().show(ui, |ui| {
         let st = &mut tab.status;
         match st.focused(snap) {
-            Some((target, mode)) => st.diff.show(ui, &tab.session, &target, mode, snap.status_gen, shared),
+            Some((target, mode)) => {
+                st.diff
+                    .show(ui, &tab.session, &target, mode, snap.status_gen, shared)
+            }
             None => {
                 st.diff.reset();
                 ui.centered_and_justified(|ui| {
                     let text = if snap.status.is_clean() {
-                        if snap.status_loading { "Reading status…" } else { "Nothing to commit — working tree clean" }
+                        if snap.status_loading {
+                            "Reading status…"
+                        } else {
+                            "Nothing to commit — working tree clean"
+                        }
                     } else {
                         "Select a file to see its changes"
                     };
@@ -181,13 +211,22 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
     modals(ui, tab, snap, shared);
 }
 
-fn lists(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared, events: &mut Vec<(Side, Ev)>) {
+fn lists(
+    ui: &mut Ui,
+    tab: &mut RepoTab,
+    snap: &Snapshot,
+    shared: &mut Shared,
+    events: &mut Vec<(Side, Ev)>,
+) {
     let p = shared.palette;
     ui.horizontal(|ui| {
         let tree = &mut tab.state.file_view_tree;
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.toggle_value(tree, "Tree").on_hover_text("Group files by folder");
-            if !tab.status.filter.is_empty() && ui.small_button("×").on_hover_text("Clear filter").clicked() {
+            ui.toggle_value(tree, "Tree")
+                .on_hover_text("Group files by folder");
+            if !tab.status.filter.is_empty()
+                && ui.small_button("×").on_hover_text("Clear filter").clicked()
+            {
                 tab.status.filter.clear();
             }
             ui.add(
@@ -201,7 +240,11 @@ fn lists(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared, e
     tab.status.sync(snap, tab.state.file_view_tree);
 
     let tree_mode = tab.state.file_view_tree;
-    let has_tool = shared.settings.external_merge_tool.as_ref().is_some_and(|t| !t.command.trim().is_empty());
+    let has_tool = shared
+        .settings
+        .external_merge_tool
+        .as_ref()
+        .is_some_and(|t| !t.command.trim().is_empty());
     let op_running = snap.op.is_some();
     let avail = ui.available_height();
     let key = tab.path.clone();
@@ -214,7 +257,11 @@ fn lists(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared, e
         let filtered = !st.filter.trim().is_empty();
         let shown = st.list(side).model.files;
         let sel = st.list(side).target_count();
-        let pending_here = st.pending.as_ref().is_some_and(|p| p.all == Some(side) || !p.paths.is_empty()) && op_running;
+        let pending_here = st
+            .pending
+            .as_ref()
+            .is_some_and(|p| p.all == Some(side) || !p.paths.is_empty())
+            && op_running;
         let mut evs: Vec<Ev> = Vec::new();
         ui.horizontal(|ui| {
             let title = match side {
@@ -222,7 +269,11 @@ fn lists(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared, e
                 Side::Unstaged => "Unstaged files",
             };
             ui.label(RichText::new(title).strong());
-            let count = if filtered { format!("({shown} of {total})") } else { format!("({total})") };
+            let count = if filtered {
+                format!("({shown} of {total})")
+            } else {
+                format!("({total})")
+            };
             ui.label(RichText::new(count).color(p.muted));
             if pending_here {
                 ui.spinner();
@@ -232,10 +283,16 @@ fn lists(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared, e
                     Side::Staged => ("Unstage all", "Unstage selected"),
                     Side::Unstaged => ("Stage all", "Stage selected"),
                 };
-                if ui.add_enabled(total > 0, egui::Button::new(all).small()).clicked() {
+                if ui
+                    .add_enabled(total > 0, egui::Button::new(all).small())
+                    .clicked()
+                {
                     evs.push(Ev::All);
                 }
-                if ui.add_enabled(sel > 0, egui::Button::new(some).small()).clicked() {
+                if ui
+                    .add_enabled(sel > 0, egui::Button::new(some).small())
+                    .clicked()
+                {
                     evs.push(Ev::Toggle(st.list(side).targets()));
                 }
             });
@@ -244,7 +301,11 @@ fn lists(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared, e
             Side::Staged => &st.paths.staged,
             Side::Unstaged => &st.paths.unstaged,
         };
-        let pending = |path: &str| st.pending.as_ref().is_some_and(|p| p.all == Some(side) || p.paths.contains(path));
+        let pending = |path: &str| {
+            st.pending
+                .as_ref()
+                .is_some_and(|p| p.all == Some(side) || p.paths.contains(path))
+        };
         let ctx = ListCtx {
             side,
             entries,
@@ -293,10 +354,18 @@ fn handle(ui: &Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared, side
             }
             tab.status.set_pending(snap, &paths, None);
             let n = paths.len();
-            let what = if n == 1 { paths[0].clone() } else { format!("{n} files") };
+            let what = if n == 1 {
+                paths[0].clone()
+            } else {
+                format!("{n} files")
+            };
             match side {
-                Side::Unstaged => session.run_index_op(format!("Stage {what}"), move |r| r.stage(&paths)),
-                Side::Staged => session.run_index_op(format!("Unstage {what}"), move |r| r.unstage(&paths)),
+                Side::Unstaged => {
+                    session.run_index_op(format!("Stage {what}"), move |r| r.stage(&paths))
+                }
+                Side::Staged => {
+                    session.run_index_op(format!("Unstage {what}"), move |r| r.unstage(&paths))
+                }
             }
         }
         Ev::All => {
@@ -327,11 +396,15 @@ fn handle(ui: &Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared, side
         Ev::Blame(p) => crate::views::blame::open_blame(tab, p, None),
         Ev::ResolveOurs(paths) => {
             tab.status.set_pending(snap, &paths, None);
-            session.run_index_op("Resolve using mine", move |r| r.resolve_with(&paths, MergeSide::Ours));
+            session.run_index_op("Resolve using mine", move |r| {
+                r.resolve_with(&paths, MergeSide::Ours)
+            });
         }
         Ev::ResolveTheirs(paths) => {
             tab.status.set_pending(snap, &paths, None);
-            session.run_index_op("Resolve using theirs", move |r| r.resolve_with(&paths, MergeSide::Theirs));
+            session.run_index_op("Resolve using theirs", move |r| {
+                r.resolve_with(&paths, MergeSide::Theirs)
+            });
         }
         Ev::MarkResolved(paths) => {
             tab.status.set_pending(snap, &paths, None);
@@ -340,9 +413,14 @@ fn handle(ui: &Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared, side
         Ev::MergeEditor(p) => crate::views::merge::open_merge(tab, p),
         Ev::MergeTool(p) => match shared.settings.external_merge_tool.clone() {
             Some(tool) if !tool.command.trim().is_empty() => {
-                tab.status.tools.launch(tool, session.repo().clone(), p, ui.ctx().clone());
+                tab.status
+                    .tools
+                    .launch(tool, session.repo().clone(), p, ui.ctx().clone());
             }
-            _ => session.push_message(MessageKind::Error, "No external merge tool is configured (Settings)."),
+            _ => session.push_message(
+                MessageKind::Error,
+                "No external merge tool is configured (Settings).",
+            ),
         },
     }
 }
@@ -351,7 +429,9 @@ fn reveal(abs: &std::path::Path) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        let _ = std::process::Command::new("explorer").raw_arg(format!("/select,\"{}\"", abs.display())).spawn();
+        let _ = std::process::Command::new("explorer")
+            .raw_arg(format!("/select,\"{}\"", abs.display()))
+            .spawn();
     }
     #[cfg(not(windows))]
     {
@@ -367,7 +447,10 @@ fn collect_tool_exits(tab: &mut RepoTab) {
                     tab.status.ask_resolved.push(exit.path);
                 }
             }
-            Some(e) => tab.session.push_message(MessageKind::Error, format!("Merge tool for {}: {e}", exit.path)),
+            Some(e) => tab.session.push_message(
+                MessageKind::Error,
+                format!("Merge tool for {}: {e}", exit.path),
+            ),
         }
     }
 }
@@ -397,7 +480,10 @@ fn banner(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &Shared) {
                 ui.label(RichText::new(title).strong());
                 if conflicts > 0 {
                     ui.label(
-                        RichText::new(format!("{conflicts} conflicted file(s) — resolve them, then continue")).color(p.conflict),
+                        RichText::new(format!(
+                            "{conflicts} conflicted file(s) — resolve them, then continue"
+                        ))
+                        .color(p.conflict),
                     );
                     if tab.status.tools.is_running() {
                         ui.spinner();
@@ -407,19 +493,32 @@ fn banner(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &Shared) {
                     ui.label(RichText::new("All conflicts resolved").color(p.muted));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let abort = if state == RepoState::Bisecting { "Reset" } else { "Abort" };
+                    let abort = if state == RepoState::Bisecting {
+                        "Reset"
+                    } else {
+                        "Abort"
+                    };
                     if ui.add_enabled(!busy, egui::Button::new(abort)).clicked() {
                         tab.status.confirm_abort = true;
                     }
-                    if can_skip && ui.add_enabled(!busy, egui::Button::new("Skip")).on_hover_text("Skip the current commit").clicked() {
+                    if can_skip
+                        && ui
+                            .add_enabled(!busy, egui::Button::new("Skip"))
+                            .on_hover_text("Skip the current commit")
+                            .clicked()
+                    {
                         tab.session.run_op("Skip", move |r, _, _| r.skip_op(state));
                     }
                     if can_continue {
                         let b = ui
-                            .add_enabled(!busy && conflicts == 0, egui::Button::new(RichText::new("Continue").strong()))
+                            .add_enabled(
+                                !busy && conflicts == 0,
+                                egui::Button::new(RichText::new("Continue").strong()),
+                            )
                             .on_disabled_hover_text("Resolve all conflicts first");
                         if b.clicked() {
-                            tab.session.run_op("Continue", move |r, _, _| r.continue_op(state));
+                            tab.session
+                                .run_op("Continue", move |r, _, _| r.continue_op(state));
                         }
                     }
                 });
@@ -435,10 +534,16 @@ fn modals(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &Shared) {
         let resp = egui::Modal::new(Id::new(("fs-abort", &tab.path))).show(ui.ctx(), |ui| {
             ui.set_width(400.0);
             ui.heading("Abort operation");
-            ui.label(format!("Abort the {}? Conflict resolutions made so far are lost.", state.label().to_lowercase()));
+            ui.label(format!(
+                "Abort the {}? Conflict resolutions made so far are lost.",
+                state.label().to_lowercase()
+            ));
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                if ui.button(RichText::new("Abort").color(p.removed_fg)).clicked() {
+                if ui
+                    .button(RichText::new("Abort").color(p.removed_fg))
+                    .clicked()
+                {
                     decision = Some(true);
                 }
                 if ui.button("Cancel").clicked() {
@@ -452,27 +557,30 @@ fn modals(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &Shared) {
         if let Some(d) = decision {
             tab.status.confirm_abort = false;
             if d && state != RepoState::Clean {
-                tab.session.run_op("Abort", move |r, _, _| r.abort_op(state).map(|_| String::new()));
+                tab.session.run_op("Abort", move |r, _, _| {
+                    r.abort_op(state).map(|_| String::new())
+                });
             }
         }
     }
 
     if let Some(path) = tab.status.ask_resolved.first().cloned() {
         let mut decision: Option<bool> = None;
-        let resp = egui::Modal::new(Id::new(("fs-mark-resolved", &tab.path))).show(ui.ctx(), |ui| {
-            ui.set_width(420.0);
-            ui.heading("Merge tool closed");
-            ui.label(format!("Mark {path} as resolved?"));
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                if ui.button("Mark resolved").clicked() {
-                    decision = Some(true);
-                }
-                if ui.button("Not yet").clicked() {
-                    decision = Some(false);
-                }
+        let resp =
+            egui::Modal::new(Id::new(("fs-mark-resolved", &tab.path))).show(ui.ctx(), |ui| {
+                ui.set_width(420.0);
+                ui.heading("Merge tool closed");
+                ui.label(format!("Mark {path} as resolved?"));
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Mark resolved").clicked() {
+                        decision = Some(true);
+                    }
+                    if ui.button("Not yet").clicked() {
+                        decision = Some(false);
+                    }
+                });
             });
-        });
         if resp.should_close() && decision.is_none() {
             decision = Some(false);
         }
@@ -481,7 +589,8 @@ fn modals(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &Shared) {
             if d {
                 let paths = vec![path];
                 tab.status.set_pending(snap, &paths, None);
-                tab.session.run_index_op("Mark resolved", move |r| r.mark_resolved(&paths));
+                tab.session
+                    .run_index_op("Mark resolved", move |r| r.mark_resolved(&paths));
             }
         }
     }
@@ -495,7 +604,11 @@ mod smoke {
     use std::path::Path;
 
     fn git(dir: &Path, args: &[&str]) {
-        let ok = std::process::Command::new("git").args(args).current_dir(dir).output().map(|o| o.status.success());
+        let ok = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .map(|o| o.status.success());
         assert!(matches!(ok, Ok(true)), "git {args:?} failed");
     }
 
@@ -514,7 +627,10 @@ mod smoke {
         std::fs::write(repo.join("src/deep/a.rs"), "fn a() {}\n").unwrap();
         git(&repo, &["add", "-A"]);
         git(&repo, &["commit", "-qm", "init"]);
-        let new = old.replace("line 3\t", "LINE three\t").replace("line 50\tx\n", "") + "tail";
+        let new = old
+            .replace("line 3\t", "LINE three\t")
+            .replace("line 50\tx\n", "")
+            + "tail";
         std::fs::write(repo.join("f.txt"), new).unwrap();
         std::fs::write(repo.join("src/deep/a.rs"), "fn a() { b() }\n").unwrap();
         std::fs::write(repo.join("bin.dat"), [0u8, 1, 2, 3]).unwrap();
@@ -530,7 +646,10 @@ mod smoke {
         let mut frames = |tab: &mut RepoTab, settings: &mut gk_settings::Settings, n: usize| {
             for _ in 0..n {
                 let input = egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0))),
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1400.0, 900.0),
+                    )),
                     ..Default::default()
                 };
                 let snap = tab.session.snapshot();
@@ -560,29 +679,62 @@ mod smoke {
         let snap = tab.session.snapshot();
         assert!(snap.status.unstaged.iter().any(|e| e.path == "f.txt"));
 
-        let row = tab.status.unstaged.row_of("f.txt", &tab.status.paths.unstaged).unwrap();
+        let row = tab
+            .status
+            .unstaged
+            .row_of("f.txt", &tab.status.paths.unstaged)
+            .unwrap();
         tab.status.unstaged.select_only("f.txt".into(), row);
         tab.status.active = Side::Unstaged;
-        assert!(matches!(tab.status.focused(&snap), Some((DiffTarget::Unstaged { .. }, DiffMode::Unstaged))));
+        assert!(matches!(
+            tab.status.focused(&snap),
+            Some((DiffTarget::Unstaged { .. }, DiffMode::Unstaged))
+        ));
         frames(&mut tab, &mut settings, 40);
         let (lines, rows, _) = tab.status.diff.shown_stats().expect("diff loaded");
-        assert!(lines >= 4 && rows > lines, "unified rows include hunk headers");
+        assert!(
+            lines >= 4 && rows > lines,
+            "unified rows include hunk headers"
+        );
 
         // Tree mode, side by side, whole status.
         tab.state.file_view_tree = true;
         settings.diff.side_by_side = true;
         tab.status.diff = DiffView::default();
         frames(&mut tab, &mut settings, 40);
-        let (lines, rows, bin) = tab.status.diff.shown_stats().expect("side-by-side diff loaded");
+        let (lines, rows, bin) = tab
+            .status
+            .diff
+            .shown_stats()
+            .expect("side-by-side diff loaded");
         assert!(lines > 0 && rows > 0 && !bin);
-        assert!(tab.status.unstaged.model.rows.iter().any(|r| matches!(r, list::Row::Dir { .. })) || tab.status.staged.model.tree.is_some());
+        assert!(
+            tab.status
+                .unstaged
+                .model
+                .rows
+                .iter()
+                .any(|r| matches!(r, list::Row::Dir { .. }))
+                || tab.status.staged.model.tree.is_some()
+        );
 
         // Binary file and a staged file.
-        let row = tab.status.unstaged.row_of("bin.dat", &tab.status.paths.unstaged).unwrap();
+        let row = tab
+            .status
+            .unstaged
+            .row_of("bin.dat", &tab.status.paths.unstaged)
+            .unwrap();
         tab.status.unstaged.select_only("bin.dat".into(), row);
         frames(&mut tab, &mut settings, 20);
-        assert!(tab.status.diff.shown_stats().is_some_and(|s| s.2), "binary diff");
-        let row = tab.status.staged.row_of("src/deep/a.rs", &tab.status.paths.staged).unwrap();
+        assert!(
+            tab.status.diff.shown_stats().is_some_and(|s| s.2),
+            "binary diff"
+        );
+        let row = tab
+            .status
+            .staged
+            .row_of("src/deep/a.rs", &tab.status.paths.staged)
+            .unwrap();
         tab.status.staged.select_only("src/deep/a.rs".into(), row);
         tab.status.active = Side::Staged;
         frames(&mut tab, &mut settings, 30);

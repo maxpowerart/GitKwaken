@@ -6,7 +6,8 @@ use crate::tab::{RepoTab, View};
 use gk_core::{RepoState, Snapshot};
 
 fn tool(ui: &mut egui::Ui, icon: &str, label: &str, hint: &str) -> bool {
-    let b = egui::Button::new(egui::RichText::new(format!("{icon}\n{label}")).size(12.0)).min_size(egui::vec2(54.0, 40.0));
+    let b = egui::Button::new(egui::RichText::new(format!("{icon}\n{label}")).size(12.0))
+        .min_size(egui::vec2(54.0, 40.0));
     ui.add(b).on_hover_text(hint).clicked()
 }
 
@@ -16,7 +17,8 @@ type MakeDialog = fn(&Snapshot) -> Dialog;
 
 /// The "More" menu of less frequent tools; returns the dialog to open.
 fn more_menu(ui: &mut egui::Ui, snap: &Snapshot) -> Option<Dialog> {
-    let button = egui::Button::new(egui::RichText::new("⋯\nMore").size(12.0)).min_size(egui::vec2(54.0, 40.0));
+    let button = egui::Button::new(egui::RichText::new("⋯\nMore").size(12.0))
+        .min_size(egui::vec2(54.0, 40.0));
     let (resp, inner) = egui::containers::menu::MenuButton::from_button(button).ui(ui, |ui| {
         let items: [(&str, MakeDialog); 8] = [
             ("Bisect…", Dialog::bisect),
@@ -76,14 +78,28 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
             if tool(ui, "🏷", "Tag", "Create a tag") {
                 tab.dialog = Some(Dialog::tag(None));
             }
-            if tool(ui, "⚑", "Git Flow", "Git Flow: start or finish features, releases and hotfixes") {
+            if tool(
+                ui,
+                "⚑",
+                "Git Flow",
+                "Git Flow: start or finish features, releases and hotfixes",
+            ) {
                 tab.dialog = Some(Dialog::git_flow(snap));
             }
             if snap.refs.state == RepoState::Bisecting {
-                let b = egui::Button::new(egui::RichText::new("🔍\nBisect").size(12.0).strong().color(egui::Color32::BLACK))
-                    .fill(BISECT_FILL)
-                    .min_size(egui::vec2(54.0, 40.0));
-                if ui.add(b).on_hover_text("A bisect is in progress: mark commits good or bad").clicked() {
+                let b = egui::Button::new(
+                    egui::RichText::new("🔍\nBisect")
+                        .size(12.0)
+                        .strong()
+                        .color(egui::Color32::BLACK),
+                )
+                .fill(BISECT_FILL)
+                .min_size(egui::vec2(54.0, 40.0));
+                if ui
+                    .add(b)
+                    .on_hover_text("A bisect is in progress: mark commits good or bad")
+                    .clicked()
+                {
                     tab.dialog = Some(Dialog::bisect(snap));
                 }
             }
@@ -98,14 +114,27 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
                 let _ = open::that(&tab.path);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.selectable_label(tab.view == View::Search, "Search").clicked() {
+                if ui
+                    .selectable_label(tab.view == View::Search, "Search")
+                    .clicked()
+                {
                     tab.view = View::Search;
                 }
-                if ui.selectable_label(tab.view == View::History, "History").clicked() {
+                if ui
+                    .selectable_label(tab.view == View::History, "History")
+                    .clicked()
+                {
                     tab.view = View::History;
                 }
-                let label = if changes > 0 { format!("File Status ({changes})") } else { "File Status".to_string() };
-                if ui.selectable_label(tab.view == View::FileStatus, label).clicked() {
+                let label = if changes > 0 {
+                    format!("File Status ({changes})")
+                } else {
+                    "File Status".to_string()
+                };
+                if ui
+                    .selectable_label(tab.view == View::FileStatus, label)
+                    .clicked()
+                {
                     tab.view = View::FileStatus;
                 }
             });
@@ -126,15 +155,25 @@ pub fn open_terminal(path: &std::path::Path, shared: &Shared) {
     {
         // Prefer Git Bash when available, else Windows Terminal / cmd.
         let git = gk_cli::find_git();
-        let bash = git.parent().and_then(|d| d.parent()).map(|d| d.join("git-bash.exe"));
+        let bash = git
+            .parent()
+            .and_then(|d| d.parent())
+            .map(|d| d.join("git-bash.exe"));
         if let Some(b) = bash.filter(|b| b.is_file()) {
-            let _ = std::process::Command::new(b).arg(format!("--cd={}", path.display())).spawn();
+            let _ = std::process::Command::new(b)
+                .arg(format!("--cd={}", path.display()))
+                .spawn();
         } else {
-            let _ = std::process::Command::new("cmd").args(["/C", "start", "cmd"]).current_dir(path).spawn();
+            let _ = std::process::Command::new("cmd")
+                .args(["/C", "start", "cmd"])
+                .current_dir(path)
+                .spawn();
         }
     }
     #[cfg(not(windows))]
     {
-        let _ = std::process::Command::new("x-terminal-emulator").current_dir(path).spawn();
+        let _ = std::process::Command::new("x-terminal-emulator")
+            .current_dir(path)
+            .spawn();
     }
 }

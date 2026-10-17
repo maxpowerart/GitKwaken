@@ -37,12 +37,24 @@ fn main() -> Result<()> {
 fn generate(dir: &Path, n: usize) -> Result<()> {
     std::fs::create_dir_all(dir)?;
     let t = Instant::now();
-    let leaf_dir = |leaf: usize| dir.join(format!("d{:03}/e{:03}/f{:03}", leaf / 10_000, (leaf / 100) % 100, leaf % 100));
-    (0..n.div_ceil(100)).into_par_iter().try_for_each(|l| std::fs::create_dir_all(leaf_dir(l)))?;
+    let leaf_dir = |leaf: usize| {
+        dir.join(format!(
+            "d{:03}/e{:03}/f{:03}",
+            leaf / 10_000,
+            (leaf / 100) % 100,
+            leaf % 100
+        ))
+    };
+    (0..n.div_ceil(100))
+        .into_par_iter()
+        .try_for_each(|l| std::fs::create_dir_all(leaf_dir(l)))?;
     (0..n).into_par_iter().try_for_each(|i| -> Result<()> {
         let p = leaf_dir(i / 100);
         // Few distinct contents keep object writes cheap; status cost is per file anyway.
-        std::fs::write(p.join(format!("file{i}.txt")), format!("content of file {}\n", i % 1000))?;
+        std::fs::write(
+            p.join(format!("file{i}.txt")),
+            format!("content of file {}\n", i % 1000),
+        )?;
         Ok(())
     })?;
     println!("wrote {n} files in {:.1}s", t.elapsed().as_secs_f32());
@@ -89,11 +101,16 @@ fn bench_history(dir: &Path) -> Result<()> {
     let g = repo.gix();
     let first: Vec<_> = h.ids.iter().take(60).copied().collect();
     time("commit_meta x60 (one screen)", 3, || {
-        first.iter().map(|id| history::commit_meta(&g, *id)).collect::<Result<Vec<_>>>()
+        first
+            .iter()
+            .map(|id| history::commit_meta(&g, *id))
+            .collect::<Result<Vec<_>>>()
     })?;
     let mid: Vec<_> = h.ids.iter().skip(h.len() / 2).take(60).copied().collect();
     time("commit_meta x60 (middle of history)", 3, || {
-        mid.iter().map(|id| history::commit_meta(&g, *id)).collect::<Result<Vec<_>>>()
+        mid.iter()
+            .map(|id| history::commit_meta(&g, *id))
+            .collect::<Result<Vec<_>>>()
     })?;
     time("search 'fix' over all commits", 1, || {
         Ok(history::search(&repo, &h, "fix", &AtomicBool::new(false)).len())
@@ -104,7 +121,12 @@ fn bench_history(dir: &Path) -> Result<()> {
 fn bench_status(dir: &Path, runs: usize) -> Result<()> {
     let git = Git::new(dir, CommandLog::default());
     let stop = Arc::new(AtomicBool::new(false));
-    let files = git.run(&["ls-files", "-z"])?.stdout.iter().filter(|b| **b == 0).count();
+    let files = git
+        .run(&["ls-files", "-z"])?
+        .stdout
+        .iter()
+        .filter(|b| **b == 0)
+        .count();
     println!("repository: {} ({files} tracked files)", dir.display());
 
     // Touch a few files so there is something to report.
@@ -126,25 +148,69 @@ fn bench_status(dir: &Path, runs: usize) -> Result<()> {
         git.run(&["status", "--porcelain=v2", "-z", "-uall"])
     })?;
     let gix = time("gitkwaken gix engine (full)", runs, || {
-        compute(dir, &git, &[], &Options { engine: Engine::Gix, untracked: Untracked::All }, &stop)
+        compute(
+            dir,
+            &git,
+            &[],
+            &Options {
+                engine: Engine::Gix,
+                untracked: Untracked::All,
+            },
+            &stop,
+        )
     })?;
     let cli = time("gitkwaken cli engine (full)", runs, || {
-        compute(dir, &git, &[], &Options { engine: Engine::Cli, untracked: Untracked::All }, &stop)
+        compute(
+            dir,
+            &git,
+            &[],
+            &Options {
+                engine: Engine::Cli,
+                untracked: Untracked::All,
+            },
+            &stop,
+        )
     })?;
-    println!("changes: gix {} / cli {}", gix.unstaged.len(), cli.unstaged.len());
+    println!(
+        "changes: gix {} / cli {}",
+        gix.unstaged.len(),
+        cli.unstaged.len()
+    );
     let scope: Vec<bstr::BString> = sample.iter().map(|s| s.as_str().into()).collect();
     time("gitkwaken gix engine (10 paths)", runs, || {
-        compute(dir, &git, &scope, &Options { engine: Engine::Gix, untracked: Untracked::All }, &stop)
+        compute(
+            dir,
+            &git,
+            &scope,
+            &Options {
+                engine: Engine::Gix,
+                untracked: Untracked::All,
+            },
+            &stop,
+        )
     })?;
     time("gitkwaken cli engine (10 paths)", runs, || {
-        compute(dir, &git, &scope, &Options { engine: Engine::Cli, untracked: Untracked::All }, &stop)
+        compute(
+            dir,
+            &git,
+            &scope,
+            &Options {
+                engine: Engine::Cli,
+                untracked: Untracked::All,
+            },
+            &stop,
+        )
     })?;
 
     let mut fast = gk_status::fast::FastStatus::new(dir)?;
     // First call loads the index (once per index change), later ones are what
     // a file-watcher event costs.
-    time("gk fast path, index load + 10 paths", 1, || fast.refresh(&scope, Untracked::All))?;
-    let out = time("gk fast path (10 paths, index cached)", runs, || fast.refresh(&scope, Untracked::All))?;
+    time("gk fast path, index load + 10 paths", 1, || {
+        fast.refresh(&scope, Untracked::All)
+    })?;
+    let out = time("gk fast path (10 paths, index cached)", runs, || {
+        fast.refresh(&scope, Untracked::All)
+    })?;
     if let gk_status::fast::Outcome::Updated(v) = out {
         println!("fast path changes: {}", v.len());
     }

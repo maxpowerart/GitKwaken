@@ -69,7 +69,11 @@ impl SettingsDialog {
         self.diff_tool = s.external_diff_tool.clone().unwrap_or_default();
         self.merge_tool = s.external_merge_tool.clone().unwrap_or_default();
         self.terminal = s.terminal.clone().unwrap_or_default();
-        self.git_path = s.git_path.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
+        self.git_path = s
+            .git_path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
         self.draft = Some(s);
         let log = shared.log.clone();
         self.identity_task = Some(Task::spawn(ctx, move || {
@@ -81,7 +85,10 @@ impl SettingsDialog {
                     .map(|o| o.stdout_str().trim().to_string())
                     .unwrap_or_default()
             };
-            Identity { name: get("user.name"), email: get("user.email") }
+            Identity {
+                name: get("user.name"),
+                email: get("user.email"),
+            }
         }));
     }
 
@@ -110,7 +117,10 @@ impl SettingsDialog {
 }
 
 fn grid(ui: &mut Ui, id: &str, add: impl FnOnce(&mut Ui)) {
-    egui::Grid::new(id).num_columns(2).spacing([16.0, 8.0]).show(ui, add);
+    egui::Grid::new(id)
+        .num_columns(2)
+        .spacing([16.0, 8.0])
+        .show(ui, add);
 }
 
 fn tool_editor(ui: &mut Ui, id: &str, t: &mut ExternalTool, help: &str) {
@@ -120,16 +130,26 @@ fn tool_editor(ui: &mut Ui, id: &str, t: &mut ExternalTool, help: &str) {
         ui.end_row();
         ui.label("Command:");
         ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut t.command).desired_width(240.0).hint_text("program path"));
+            ui.add(
+                egui::TextEdit::singleline(&mut t.command)
+                    .desired_width(240.0)
+                    .hint_text("program path"),
+            );
             if ui.button("Browse…").clicked()
-                && let Some(p) = rfd::FileDialog::new().add_filter("Programs", &["exe", "cmd", "bat"]).pick_file()
+                && let Some(p) = rfd::FileDialog::new()
+                    .add_filter("Programs", &["exe", "cmd", "bat"])
+                    .pick_file()
             {
                 t.command = p.display().to_string();
             }
         });
         ui.end_row();
         ui.label("Arguments:");
-        ui.add(egui::TextEdit::singleline(&mut t.args).desired_width(320.0).font(egui::TextStyle::Monospace));
+        ui.add(
+            egui::TextEdit::singleline(&mut t.args)
+                .desired_width(320.0)
+                .font(egui::TextStyle::Monospace),
+        );
         ui.end_row();
     });
     hint(ui, help);
@@ -343,7 +363,10 @@ impl AppDialog for SettingsDialog {
             Outcome::Ok => {
                 self.apply(shared.settings);
                 shared.actions.push(Action::ApplySettings);
-                let changed = self.identity_loaded.as_ref().is_some_and(|l| *l != self.identity);
+                let changed = self
+                    .identity_loaded
+                    .as_ref()
+                    .is_some_and(|l| *l != self.identity);
                 if !changed {
                     return false;
                 }
@@ -353,7 +376,10 @@ impl AppDialog for SettingsDialog {
                 self.save_error = None;
                 self.saving = Some(Task::spawn(ctx, move || {
                     let git = gk_cli::Git::new(std::env::temp_dir(), log);
-                    for (key, old, v) in [("user.name", &loaded.name, &new.name), ("user.email", &loaded.email, &new.email)] {
+                    for (key, old, v) in [
+                        ("user.name", &loaded.name, &new.name),
+                        ("user.email", &loaded.email, &new.email),
+                    ] {
                         let v = v.trim();
                         if v == old.trim() {
                             continue;

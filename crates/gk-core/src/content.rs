@@ -47,15 +47,24 @@ pub enum DiffTarget {
     /// Index vs worktree (includes untracked and conflicted files).
     Unstaged { path: String },
     /// HEAD vs index.
-    Staged { path: String, old_path: Option<String> },
+    Staged {
+        path: String,
+        old_path: Option<String>,
+    },
     /// Two blobs, e.g. a file in a commit vs its parent.
-    Blobs { path: String, old: Option<ObjectId>, new: Option<ObjectId> },
+    Blobs {
+        path: String,
+        old: Option<ObjectId>,
+        new: Option<ObjectId>,
+    },
 }
 
 impl DiffTarget {
     pub fn path(&self) -> &str {
         match self {
-            DiffTarget::Unstaged { path } | DiffTarget::Staged { path, .. } | DiffTarget::Blobs { path, .. } => path,
+            DiffTarget::Unstaged { path }
+            | DiffTarget::Staged { path, .. }
+            | DiffTarget::Blobs { path, .. } => path,
         }
     }
 }
@@ -63,7 +72,10 @@ impl DiffTarget {
 pub fn blob(g: &gix::Repository, id: ObjectId) -> Result<Vec<u8>> {
     let obj = g.find_object(id).map_err(gix_err)?;
     if obj.data.len() as u64 > MAX_DIFF_BYTES {
-        bail!("file too large to diff ({} MB)", obj.data.len() / (1024 * 1024));
+        bail!(
+            "file too large to diff ({} MB)",
+            obj.data.len() / (1024 * 1024)
+        );
     }
     Ok(obj.detach().data)
 }
@@ -84,7 +96,9 @@ pub fn index_blob(g: &gix::Repository, path: &str, stage: u32) -> Result<Option<
 }
 
 pub fn head_blob(g: &gix::Repository, path: &str) -> Result<Option<Vec<u8>>> {
-    let Ok(commit) = g.head_commit() else { return Ok(None) };
+    let Ok(commit) = g.head_commit() else {
+        return Ok(None);
+    };
     tree_blob(g, commit.tree_id().map_err(gix_err)?.detach(), path)
 }
 
@@ -108,7 +122,9 @@ pub fn worktree_clean(repo: &Repo, g: &gix::Repository, path: &str) -> Result<Op
     }
     if meta.is_symlink() {
         let target = std::fs::read_link(&abs)?;
-        return Ok(Some(target.to_string_lossy().replace('\\', "/").into_bytes()));
+        return Ok(Some(
+            target.to_string_lossy().replace('\\', "/").into_bytes(),
+        ));
     }
     if meta.len() > MAX_DIFF_BYTES {
         bail!("file too large to diff ({} MB)", meta.len() / (1024 * 1024));
@@ -116,7 +132,9 @@ pub fn worktree_clean(repo: &Repo, g: &gix::Repository, path: &str) -> Result<Op
     let raw = std::fs::read(&abs)?;
     let (mut pipeline, index) = g.filter_pipeline(None).map_err(gix_err)?;
     let rel = std::path::PathBuf::from(path);
-    let outcome = pipeline.convert_to_git(raw.as_slice(), &rel, &index).map_err(gix_err)?;
+    let outcome = pipeline
+        .convert_to_git(raw.as_slice(), &rel, &index)
+        .map_err(gix_err)?;
     use gix::filter::plumbing::pipeline::convert::ToGitOutcome;
     let mut out = Vec::new();
     match outcome {
@@ -175,27 +193,62 @@ pub fn load_sides(repo: &Repo, target: &DiffTarget) -> Result<Sides> {
 }
 
 /// Files changed between two trees (`old` = None means the empty tree).
-pub fn tree_changes(g: &gix::Repository, old: Option<ObjectId>, new: ObjectId) -> Result<Vec<ChangedFile>> {
+pub fn tree_changes(
+    g: &gix::Repository,
+    old: Option<ObjectId>,
+    new: ObjectId,
+) -> Result<Vec<ChangedFile>> {
     let new_tree = g.find_tree(new).map_err(gix_err)?;
     let old_tree = old.map(|o| g.find_tree(o)).transpose().map_err(gix_err)?;
-    let changes = g.diff_tree_to_tree(old_tree.as_ref(), Some(&new_tree), None).map_err(gix_err)?;
+    let changes = g
+        .diff_tree_to_tree(old_tree.as_ref(), Some(&new_tree), None)
+        .map_err(gix_err)?;
     use gix::object::tree::diff::ChangeDetached as C;
     let mut out = Vec::new();
     for c in changes {
         let f = match c {
-            C::Addition { location, entry_mode, id, .. } => {
+            C::Addition {
+                location,
+                entry_mode,
+                id,
+                ..
+            } => {
                 if entry_mode.is_tree() {
                     continue;
                 }
-                ChangedFile { path: location.to_string(), old_path: None, kind: ChangeKind::Added, old_id: None, new_id: Some(id) }
+                ChangedFile {
+                    path: location.to_string(),
+                    old_path: None,
+                    kind: ChangeKind::Added,
+                    old_id: None,
+                    new_id: Some(id),
+                }
             }
-            C::Deletion { location, entry_mode, id, .. } => {
+            C::Deletion {
+                location,
+                entry_mode,
+                id,
+                ..
+            } => {
                 if entry_mode.is_tree() {
                     continue;
                 }
-                ChangedFile { path: location.to_string(), old_path: None, kind: ChangeKind::Deleted, old_id: Some(id), new_id: None }
+                ChangedFile {
+                    path: location.to_string(),
+                    old_path: None,
+                    kind: ChangeKind::Deleted,
+                    old_id: Some(id),
+                    new_id: None,
+                }
             }
-            C::Modification { location, previous_entry_mode, previous_id, entry_mode, id, .. } => {
+            C::Modification {
+                location,
+                previous_entry_mode,
+                previous_id,
+                entry_mode,
+                id,
+                ..
+            } => {
                 if entry_mode.is_tree() {
                     continue;
                 }
@@ -204,16 +257,34 @@ pub fn tree_changes(g: &gix::Repository, old: Option<ObjectId>, new: ObjectId) -
                 } else {
                     ChangeKind::Modified
                 };
-                ChangedFile { path: location.to_string(), old_path: None, kind, old_id: Some(previous_id), new_id: Some(id) }
+                ChangedFile {
+                    path: location.to_string(),
+                    old_path: None,
+                    kind,
+                    old_id: Some(previous_id),
+                    new_id: Some(id),
+                }
             }
-            C::Rewrite { source_location, source_id, location, id, copy, entry_mode, .. } => {
+            C::Rewrite {
+                source_location,
+                source_id,
+                location,
+                id,
+                copy,
+                entry_mode,
+                ..
+            } => {
                 if entry_mode.is_tree() {
                     continue;
                 }
                 ChangedFile {
                     path: location.to_string(),
                     old_path: Some(source_location.to_string()),
-                    kind: if copy { ChangeKind::Copied } else { ChangeKind::Renamed },
+                    kind: if copy {
+                        ChangeKind::Copied
+                    } else {
+                        ChangeKind::Renamed
+                    },
                     old_id: Some(source_id),
                     new_id: Some(id),
                 }
@@ -253,7 +324,13 @@ pub fn commit_details(repo: &Repo, id: ObjectId) -> Result<CommitDetails> {
     let parents: Vec<ObjectId> = c.parent_ids().map(|p| p.detach()).collect();
     let tree = c.tree_id().map_err(gix_err)?.detach();
     let parent_tree = match parents.first() {
-        Some(p) => Some(g.find_commit(*p).map_err(gix_err)?.tree_id().map_err(gix_err)?.detach()),
+        Some(p) => Some(
+            g.find_commit(*p)
+                .map_err(gix_err)?
+                .tree_id()
+                .map_err(gix_err)?
+                .detach(),
+        ),
         None => None,
     };
     let files = tree_changes(&g, parent_tree, tree)?;
@@ -276,7 +353,17 @@ pub fn commit_details(repo: &Repo, id: ObjectId) -> Result<CommitDetails> {
 /// Changes between two arbitrary commits (`a` older, `b` newer).
 pub fn compare_commits(repo: &Repo, a: ObjectId, b: ObjectId) -> Result<Vec<ChangedFile>> {
     let g = repo.gix();
-    let ta = g.find_commit(a).map_err(gix_err)?.tree_id().map_err(gix_err)?.detach();
-    let tb = g.find_commit(b).map_err(gix_err)?.tree_id().map_err(gix_err)?.detach();
+    let ta = g
+        .find_commit(a)
+        .map_err(gix_err)?
+        .tree_id()
+        .map_err(gix_err)?
+        .detach();
+    let tb = g
+        .find_commit(b)
+        .map_err(gix_err)?
+        .tree_id()
+        .map_err(gix_err)?
+        .detach();
     tree_changes(&g, Some(ta), tb)
 }

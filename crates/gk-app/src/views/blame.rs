@@ -85,10 +85,15 @@ fn spawn_load(tab: &RepoTab, path: &str, rev: Option<String>) -> Slot {
     let slot: Slot = Arc::new(Mutex::new(None));
     let s2 = slot.clone();
     let p = path.to_string();
-    let spawned = std::thread::Builder::new().name("gk-blame".into()).spawn(move || {
-        let r = repo.blame(&p, rev.as_deref()).map(prepare).map_err(|e| format!("{e:#}"));
-        *s2.lock() = Some(r);
-    });
+    let spawned = std::thread::Builder::new()
+        .name("gk-blame".into())
+        .spawn(move || {
+            let r = repo
+                .blame(&p, rev.as_deref())
+                .map(prepare)
+                .map_err(|e| format!("{e:#}"));
+            *s2.lock() = Some(r);
+        });
     if let Err(e) = spawned {
         *slot.lock() = Some(Err(e.to_string()));
     }
@@ -108,7 +113,11 @@ fn prepare(blame: Blame) -> Prepared {
         run_start.push(start);
         odd_run.push(odd);
     }
-    let times = blame.commits.iter().filter(|c| c.id != UNCOMMITTED).map(|c| c.author_time);
+    let times = blame
+        .commits
+        .iter()
+        .filter(|c| c.id != UNCOMMITTED)
+        .map(|c| c.author_time);
     let (lo, hi) = times.fold((i64::MAX, i64::MIN), |(a, b), t| (a.min(t), b.max(t)));
     let heat = blame
         .commits
@@ -121,8 +130,20 @@ fn prepare(blame: Blame) -> Prepared {
             }
         })
         .collect();
-    let max_cols = blame.text.iter().map(|t| t.chars().count() + 3 * t.matches('\t').count()).max().unwrap_or(0);
-    Prepared { digits: n.max(1).to_string().len(), run_start, odd_run, heat, max_cols, blame }
+    let max_cols = blame
+        .text
+        .iter()
+        .map(|t| t.chars().count() + 3 * t.matches('\t').count())
+        .max()
+        .unwrap_or(0);
+    Prepared {
+        digits: n.max(1).to_string().len(),
+        run_start,
+        odd_run,
+        heat,
+        max_cols,
+        blame,
+    }
 }
 
 /// ASCII-case-insensitive substring search; byte offsets match `hay`.
@@ -139,7 +160,9 @@ impl BlameState {
         if self.data.is_some() || self.error.is_some() {
             return;
         }
-        let Some(r) = self.slot.lock().take() else { return };
+        let Some(r) = self.slot.lock().take() else {
+            return;
+        };
         match r {
             Ok(d) => {
                 self.data = Some(Arc::new(d));
@@ -199,34 +222,64 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, _snap: &Snapshot, shared: &mut Share
     egui::Panel::top(egui::Id::new(("blame-head", &tab.path))).show(ui, |ui| {
         ui.add_space(2.0);
         ui.horizontal(|ui| {
-            let back_hint = if st.stack.is_empty() { "Back to the previous view" } else { "Back to the previous blame" };
+            let back_hint = if st.stack.is_empty() {
+                "Back to the previous view"
+            } else {
+                "Back to the previous blame"
+            };
             if ui.button("◀ Back").on_hover_text(back_hint).clicked() {
                 act = Some(Act::Back);
             }
             ui.label(egui::RichText::new("Blame").strong());
             ui.label(egui::RichText::new(&st.path).monospace());
-            let rev = st.rev.as_deref().map(|r| if r.len() == 40 { crate::util::short_id(r) } else { r });
-            ui.label(egui::RichText::new(format!("@ {}", rev.unwrap_or("working copy"))).color(p.muted));
+            let rev = st.rev.as_deref().map(|r| {
+                if r.len() == 40 {
+                    crate::util::short_id(r)
+                } else {
+                    r
+                }
+            });
+            ui.label(
+                egui::RichText::new(format!("@ {}", rev.unwrap_or("working copy"))).color(p.muted),
+            );
             if let Some(d) = &st.data {
                 ui.label(
-                    egui::RichText::new(format!("{} lines · {} commits", d.blame.lines.len(), d.blame.commits.len()))
-                        .color(p.muted),
+                    egui::RichText::new(format!(
+                        "{} lines · {} commits",
+                        d.blame.lines.len(),
+                        d.blame.commits.len()
+                    ))
+                    .color(p.muted),
                 );
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let total = st.matches.len();
-                if ui.add_enabled(total > 0, egui::Button::new("▼")).on_hover_text("Next match (Enter)").clicked() {
+                if ui
+                    .add_enabled(total > 0, egui::Button::new("▼"))
+                    .on_hover_text("Next match (Enter)")
+                    .clicked()
+                {
                     st.step(1);
                 }
-                if ui.add_enabled(total > 0, egui::Button::new("▲")).on_hover_text("Previous match (Shift+Enter)").clicked() {
+                if ui
+                    .add_enabled(total > 0, egui::Button::new("▲"))
+                    .on_hover_text("Previous match (Shift+Enter)")
+                    .clicked()
+                {
                     st.step(-1);
                 }
                 if !st.query.is_empty() {
-                    let t = if total == 0 { "no matches".to_string() } else { format!("{} of {total}", st.current + 1) };
+                    let t = if total == 0 {
+                        "no matches".to_string()
+                    } else {
+                        format!("{} of {total}", st.current + 1)
+                    };
                     ui.label(egui::RichText::new(t).color(p.muted));
                 }
                 let r = ui.add(
-                    egui::TextEdit::singleline(&mut st.query).hint_text("Find (Ctrl+F)").desired_width(200.0),
+                    egui::TextEdit::singleline(&mut st.query)
+                        .hint_text("Find (Ctrl+F)")
+                        .desired_width(200.0),
                 );
                 if st.focus_search {
                     r.request_focus();
@@ -296,13 +349,23 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, _snap: &Snapshot, shared: &mut Share
 fn heat_color(p: &crate::theme::Palette, heat: f32) -> Color32 {
     // Old: dim gray; new: bright orange.
     let (lo, hi) = if p.dark {
-        (Color32::from_rgb(0x45, 0x48, 0x50), Color32::from_rgb(0xFF, 0x9A, 0x3C))
+        (
+            Color32::from_rgb(0x45, 0x48, 0x50),
+            Color32::from_rgb(0xFF, 0x9A, 0x3C),
+        )
     } else {
-        (Color32::from_rgb(0xD8, 0xD8, 0xDC), Color32::from_rgb(0xF0, 0x7A, 0x1A))
+        (
+            Color32::from_rgb(0xD8, 0xD8, 0xDC),
+            Color32::from_rgb(0xF0, 0x7A, 0x1A),
+        )
     };
     let t = heat.clamp(0.0, 1.0);
     let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
-    Color32::from_rgb(mix(lo.r(), hi.r()), mix(lo.g(), hi.g()), mix(lo.b(), hi.b()))
+    Color32::from_rgb(
+        mix(lo.r(), hi.r()),
+        mix(lo.g(), hi.g()),
+        mix(lo.b(), hi.b()),
+    )
 }
 
 fn body(
@@ -316,7 +379,9 @@ fn body(
     let b = &d.blame;
     let font = egui::TextStyle::Monospace.resolve(ui.style());
     let small = egui::TextStyle::Small.resolve(ui.style());
-    let (font_h, char_w) = ui.ctx().fonts_mut(|f| (f.row_height(&font), f.glyph_width(&font, '0')));
+    let (font_h, char_w) = ui
+        .ctx()
+        .fonts_mut(|f| (f.row_height(&font), f.glyph_width(&font, '0')));
     let row_h = (font_h + 4.0).round().max(16.0);
     let text_color = ui.visuals().text_color();
     let faint = ui.visuals().faint_bg_color;
@@ -332,7 +397,9 @@ fn body(
     let current_line = st.matches.get(st.current).copied();
     let is_match = |i: usize| st.matches.binary_search(&i).is_ok();
 
-    let mut sa = egui::ScrollArea::both().auto_shrink([false, false]).id_salt("gk-blame-scroll");
+    let mut sa = egui::ScrollArea::both()
+        .auto_shrink([false, false])
+        .id_salt("gk-blame-scroll");
     if let Some(line) = st.scroll_to.take() {
         let view_h = ui.available_height();
         sa = sa.vertical_scroll_offset((line as f32 * row_h - view_h / 2.0).max(0.0));
@@ -365,13 +432,24 @@ fn body(
             // Code.
             let code_pos = Pos2::new(gx + code_x, y + row_h / 2.0);
             let raw = &b.text[i];
-            let shown: std::borrow::Cow<str> =
-                if raw.contains('\t') { raw.replace('\t', "    ").into() } else { raw.as_str().into() };
+            let shown: std::borrow::Cow<str> = if raw.contains('\t') {
+                raw.replace('\t', "    ").into()
+            } else {
+                raw.as_str().into()
+            };
             if Some(i) == current_line || is_match(i) {
-                let bg = if Some(i) == current_line { match_cur } else { match_bg };
+                let bg = if Some(i) == current_line {
+                    match_cur
+                } else {
+                    match_bg
+                };
                 let job = highlight_job(&shown, &query, &font, text_color, bg);
                 let galley = ui.ctx().fonts_mut(|f| f.layout_job(job));
-                painter.galley(Pos2::new(code_pos.x - vp.min.x, y + (row_h - galley.size().y) / 2.0), galley, text_color);
+                painter.galley(
+                    Pos2::new(code_pos.x - vp.min.x, y + (row_h - galley.size().y) / 2.0),
+                    galley,
+                    text_color,
+                );
             } else {
                 painter.text(
                     Pos2::new(code_pos.x - vp.min.x, code_pos.y),
@@ -383,7 +461,11 @@ fn body(
             }
             // Gutter (painted over the code when scrolled horizontally).
             let gutter = Rect::from_min_size(Pos2::new(gx, y), vec2(gutter_w + num_w, row_h));
-            let gutter_bg = if d.odd_run[i] { faint } else { ui.visuals().panel_fill };
+            let gutter_bg = if d.odd_run[i] {
+                faint
+            } else {
+                ui.visuals().panel_fill
+            };
             painter.rect_filled(gutter, 0.0, gutter_bg);
             if st.selected == Some(i) {
                 painter.rect_filled(gutter, 0.0, p.selection);
@@ -402,19 +484,35 @@ fn body(
                 } else {
                     (crate::util::short_id(&c.id).to_string(), p.branch)
                 };
-                clip.text(Pos2::new(gx + 10.0, mid), egui::Align2::LEFT_CENTER, id_text, font.clone(), id_color);
-                let author = if uncommitted { "Not committed yet" } else { c.author.as_str() };
-                let ar = Rect::from_min_size(Pos2::new(gx + 10.0 + id_w, y), vec2(author_w, row_h));
-                painter.with_clip_rect(ar.intersect(painter.clip_rect())).text(
-                    ar.left_center(),
+                clip.text(
+                    Pos2::new(gx + 10.0, mid),
                     egui::Align2::LEFT_CENTER,
-                    author,
-                    small.clone(),
-                    text_color,
+                    id_text,
+                    font.clone(),
+                    id_color,
                 );
+                let author = if uncommitted {
+                    "Not committed yet"
+                } else {
+                    c.author.as_str()
+                };
+                let ar = Rect::from_min_size(Pos2::new(gx + 10.0 + id_w, y), vec2(author_w, row_h));
+                painter
+                    .with_clip_rect(ar.intersect(painter.clip_rect()))
+                    .text(
+                        ar.left_center(),
+                        egui::Align2::LEFT_CENTER,
+                        author,
+                        small.clone(),
+                        text_color,
+                    );
                 if !uncommitted {
                     let date = crate::util::format_time(c.author_time, 0, relative);
-                    let date = if relative { date } else { date.chars().take(10).collect() };
+                    let date = if relative {
+                        date
+                    } else {
+                        date.chars().take(10).collect()
+                    };
                     clip.text(
                         Pos2::new(gx + 10.0 + id_w + author_w + 8.0, mid),
                         egui::Align2::LEFT_CENTER,
@@ -445,7 +543,11 @@ fn body(
                     return;
                 }
                 ui.label(egui::RichText::new(&c.summary).strong());
-                ui.label(format!("{} · {}", c.author, crate::util::format_time(c.author_time, 0, false)));
+                ui.label(format!(
+                    "{} · {}",
+                    c.author,
+                    crate::util::format_time(c.author_time, 0, false)
+                ));
                 ui.label(egui::RichText::new(&c.id).monospace().color(p.muted));
                 if let Some((_, prev_path)) = &c.previous
                     && prev_path != &st.path
@@ -472,11 +574,17 @@ fn body(
                     }
                     ui.close();
                 }
-                if ui.add_enabled(!uncommitted, egui::Button::new("Show in History")).clicked() {
+                if ui
+                    .add_enabled(!uncommitted, egui::Button::new("Show in History"))
+                    .clicked()
+                {
                     *act = Some(Act::Jump(c.id.clone()));
                     ui.close();
                 }
-                if ui.add_enabled(!uncommitted, egui::Button::new("Copy commit id")).clicked() {
+                if ui
+                    .add_enabled(!uncommitted, egui::Button::new("Copy commit id"))
+                    .clicked()
+                {
                     ui.ctx().copy_text(c.id.clone());
                     ui.close();
                 }
@@ -503,10 +611,23 @@ fn body(
 }
 
 /// Code line with every case-insensitive occurrence of `query` highlighted.
-fn highlight_job(text: &str, query: &str, font: &egui::FontId, color: Color32, bg: Color32) -> LayoutJob {
+fn highlight_job(
+    text: &str,
+    query: &str,
+    font: &egui::FontId,
+    color: Color32,
+    bg: Color32,
+) -> LayoutJob {
     let mut job = LayoutJob::default();
-    let plain = TextFormat { font_id: font.clone(), color, ..Default::default() };
-    let hit = TextFormat { background: bg, ..plain.clone() };
+    let plain = TextFormat {
+        font_id: font.clone(),
+        color,
+        ..Default::default()
+    };
+    let hit = TextFormat {
+        background: bg,
+        ..plain.clone()
+    };
     let mut pos = 0;
     while let Some(i) = find_ci(text, query, pos) {
         job.append(&text[pos..i], 0.0, plain.clone());
@@ -535,7 +656,10 @@ mod tests {
         assert_eq!(p.run_start, [true, false, true, true]);
         assert_eq!(p.odd_run, [false, false, true, false]);
         assert_eq!(p.heat, [0.0, 1.0]);
-        assert_eq!(p.blame.commits[1].previous, Some((a.clone(), "old".to_string())));
+        assert_eq!(
+            p.blame.commits[1].previous,
+            Some((a.clone(), "old".to_string()))
+        );
     }
 
     #[test]
@@ -549,8 +673,20 @@ mod tests {
 
     #[test]
     fn highlight_sections() {
-        let j = highlight_job("foo bar FOO", "foo", &egui::FontId::monospace(12.0), Color32::WHITE, Color32::RED);
+        let j = highlight_job(
+            "foo bar FOO",
+            "foo",
+            &egui::FontId::monospace(12.0),
+            Color32::WHITE,
+            Color32::RED,
+        );
         assert_eq!(j.text, "foo bar FOO");
-        assert_eq!(j.sections.iter().filter(|s| s.format.background == Color32::RED).count(), 2);
+        assert_eq!(
+            j.sections
+                .iter()
+                .filter(|s| s.format.background == Color32::RED)
+                .count(),
+            2
+        );
     }
 }

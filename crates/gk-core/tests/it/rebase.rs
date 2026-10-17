@@ -48,18 +48,29 @@ fn rebase_conflict_continue_skip_abort() {
     t.repo.save_resolution("c.txt", b"both\n").unwrap();
     t.repo.continue_op(state(&t)).unwrap();
     assert_eq!(state(&t), RepoState::Clean);
-    assert_eq!(t.subjects("HEAD"), ["topic extra", "topic change", "main change", "base"]);
+    assert_eq!(
+        t.subjects("HEAD"),
+        ["topic extra", "topic change", "main change", "base"]
+    );
     assert_eq!(t.git(&["show", "HEAD~1:c.txt"]), "both");
 }
 
 /// base + five commits, each adding its own file.
 fn five(t: &TestRepo) -> Vec<String> {
     t.commit_file("base.txt", "b\n", "base");
-    ["one", "two", "three", "four", "five"].iter().map(|n| t.commit_file(&format!("{n}.txt"), "x\n", n)).collect()
+    ["one", "two", "three", "four", "five"]
+        .iter()
+        .map(|n| t.commit_file(&format!("{n}.txt"), "x\n", n))
+        .collect()
 }
 
 fn item(action: TodoAction, id: &str, summary: &str) -> TodoItem {
-    TodoItem { action, id: id.to_string(), summary: summary.to_string(), new_message: None }
+    TodoItem {
+        action,
+        id: id.to_string(),
+        summary: summary.to_string(),
+        new_message: None,
+    }
 }
 
 #[test]
@@ -68,7 +79,10 @@ fn interactive_reword_squash_fixup_drop() {
     let c = five(&t);
     let todo = vec![
         item(TodoAction::Pick, &c[0], "one"),
-        TodoItem { new_message: Some(s("Two reworded\n\nWith a body line\nand a second one\n")), ..item(TodoAction::Reword, &c[1], "two") },
+        TodoItem {
+            new_message: Some(s("Two reworded\n\nWith a body line\nand a second one\n")),
+            ..item(TodoAction::Reword, &c[1], "two")
+        },
         item(TodoAction::Squash, &c[2], "three"),
         item(TodoAction::Fixup, &c[3], "four"),
         item(TodoAction::Drop, &c[4], "five"),
@@ -80,7 +94,10 @@ fn interactive_reword_squash_fixup_drop() {
         t.git(&["log", "-1", "--format=%B"]),
         "Two reworded\n\nWith a body line\nand a second one\n\nthree"
     );
-    assert_eq!(t.git(&["ls-tree", "--name-only", "HEAD"]), "base.txt\nfour.txt\none.txt\nthree.txt\ntwo.txt");
+    assert_eq!(
+        t.git(&["ls-tree", "--name-only", "HEAD"]),
+        "base.txt\nfour.txt\none.txt\nthree.txt\ntwo.txt"
+    );
     assert_eq!(t.status(), "");
 }
 
@@ -95,8 +112,13 @@ fn interactive_reorder_and_plain_reword() {
         item(TodoAction::Pick, &c[4], "five"),
         item(TodoAction::Pick, &c[3], "four"),
     ];
-    t.repo.rebase_interactive(&format!("{}~1", c[0]), &todo, true).unwrap();
-    assert_eq!(t.subjects("HEAD"), ["four", "five", "two", "one", "three", "base"]);
+    t.repo
+        .rebase_interactive(&format!("{}~1", c[0]), &todo, true)
+        .unwrap();
+    assert_eq!(
+        t.subjects("HEAD"),
+        ["four", "five", "two", "one", "three", "base"]
+    );
 }
 
 #[test]
@@ -104,7 +126,10 @@ fn interactive_reword_quotes_in_message() {
     let t = TestRepo::new();
     let c = five(&t);
     let msg = "It's \"quoted\" $HOME `x`\n";
-    let todo = vec![TodoItem { new_message: Some(s(msg)), ..item(TodoAction::Reword, &c[4], "five") }];
+    let todo = vec![TodoItem {
+        new_message: Some(s(msg)),
+        ..item(TodoAction::Reword, &c[4], "five")
+    }];
     t.repo.rebase_interactive("HEAD~1", &todo, false).unwrap();
     assert_eq!(t.git(&["log", "-1", "--format=%B"]), msg.trim_end());
 }
@@ -124,7 +149,18 @@ fn interactive_edit_stops() {
     t.commit_file("extra.txt", "e\n", "inserted while editing");
     t.repo.continue_op(state(&t)).unwrap();
     assert_eq!(state(&t), RepoState::Clean);
-    assert_eq!(t.subjects("HEAD"), ["five", "inserted while editing", "four", "three", "two", "one", "base"]);
+    assert_eq!(
+        t.subjects("HEAD"),
+        [
+            "five",
+            "inserted while editing",
+            "four",
+            "three",
+            "two",
+            "one",
+            "base"
+        ]
+    );
 }
 
 #[test]
@@ -135,7 +171,10 @@ fn interactive_conflict_then_abort() {
     let b = t.commit_file("f.txt", "2\n", "b");
     let head = t.head();
     // Swapping two commits that touch the same line conflicts.
-    let todo = vec![item(TodoAction::Pick, &b, "b"), item(TodoAction::Pick, &a, "a")];
+    let todo = vec![
+        item(TodoAction::Pick, &b, "b"),
+        item(TodoAction::Pick, &a, "a"),
+    ];
     let text = t.repo.rebase_interactive("HEAD~2", &todo, false).unwrap();
     assert!(text.to_lowercase().contains("conflict"), "{text}");
     assert_eq!(state(&t), RepoState::Rebasing { interactive: true });
@@ -151,7 +190,10 @@ fn interactive_runs_concurrently() {
             std::thread::spawn(|| {
                 let t = TestRepo::new();
                 let c = five(&t);
-                let todo = vec![item(TodoAction::Pick, &c[4], "five"), item(TodoAction::Pick, &c[3], "four")];
+                let todo = vec![
+                    item(TodoAction::Pick, &c[4], "five"),
+                    item(TodoAction::Pick, &c[3], "four"),
+                ];
                 t.repo.rebase_interactive("HEAD~2", &todo, false).unwrap();
                 assert_eq!(t.subjects("HEAD")[..2], ["four", "five"]);
             })

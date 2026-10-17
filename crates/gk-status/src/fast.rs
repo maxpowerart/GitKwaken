@@ -48,19 +48,27 @@ impl FastStatus {
         let repo = gix::ThreadSafeRepository::discover(workdir).map_err(err)?;
         let local = repo.to_thread_local();
         let index_path = local.index_path();
-        Ok(Self { repo, workdir: workdir.to_path_buf(), index_path, loaded: None })
+        Ok(Self {
+            repo,
+            workdir: workdir.to_path_buf(),
+            index_path,
+            loaded: None,
+        })
     }
 
     fn index(&mut self) -> Result<Arc<gix::index::File>> {
         let meta = std::fs::metadata(&self.index_path)?;
         let stamp = (meta.modified()?, meta.len());
-        if let Some(l) = &self.loaded {
-            if l.stamp == stamp {
-                return Ok(l.index.clone());
-            }
+        if let Some(l) = &self.loaded
+            && l.stamp == stamp
+        {
+            return Ok(l.index.clone());
         }
         let index = Arc::new(self.repo.to_thread_local().open_index().map_err(err)?);
-        self.loaded = Some(Loaded { stamp, index: index.clone() });
+        self.loaded = Some(Loaded {
+            stamp,
+            index: index.clone(),
+        });
         Ok(index)
     }
 
@@ -134,7 +142,9 @@ impl<'a> Ctx<'a> {
                 return Ok(false);
             }
             use gix::index::entry::Flags;
-            if e.flags.intersects(Flags::SKIP_WORKTREE | Flags::ASSUME_VALID | Flags::INTENT_TO_ADD) {
+            if e.flags
+                .intersects(Flags::SKIP_WORKTREE | Flags::ASSUME_VALID | Flags::INTENT_TO_ADD)
+            {
                 if e.flags.contains(Flags::INTENT_TO_ADD) {
                     return Ok(false);
                 }
@@ -149,7 +159,9 @@ impl<'a> Ctx<'a> {
             return Ok(true);
         }
         let abs = self.abs(path);
-        let Ok(meta) = std::fs::symlink_metadata(&abs) else { return Ok(true) };
+        let Ok(meta) = std::fs::symlink_metadata(&abs) else {
+            return Ok(true);
+        };
         if meta.is_dir() {
             let mut found = 0usize;
             if !self.walk(path.to_owned(), &abs, &mut found)? {
@@ -177,7 +189,10 @@ impl<'a> Ctx<'a> {
             return Ok(Some(Kind::Modified));
         }
         // Same mtime and size and not racily clean: unchanged.
-        let mtime = meta.modified().ok().and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok());
+        let mtime = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok());
         if let Some(m) = mtime {
             let same_time = m.as_secs() as u32 == e.stat.mtime.secs
                 && (e.stat.mtime.nsecs == 0 || m.subsec_nanos() == e.stat.mtime.nsecs);
@@ -188,16 +203,20 @@ impl<'a> Ctx<'a> {
             }
         }
         let data = if is_link {
-            std::fs::read_link(&abs)?.to_string_lossy().replace('\\', "/").into_bytes()
+            std::fs::read_link(&abs)?
+                .to_string_lossy()
+                .replace('\\', "/")
+                .into_bytes()
         } else {
             let raw = std::fs::read(&abs)?;
-            self.to_git(rel, raw)?
+            self.git_form(rel, raw)?
         };
-        let id = gix::objs::compute_hash(self.repo.object_hash(), gix::object::Kind::Blob, &data).map_err(err)?;
+        let id = gix::objs::compute_hash(self.repo.object_hash(), gix::object::Kind::Blob, &data)
+            .map_err(err)?;
         Ok((id != e.id).then_some(Kind::Modified))
     }
 
-    fn to_git(&mut self, rel: &BStr, raw: Vec<u8>) -> Result<Vec<u8>> {
+    fn git_form(&mut self, rel: &BStr, raw: Vec<u8>) -> Result<Vec<u8>> {
         if self.pipeline.is_none() {
             let (p, _) = self.repo.filter_pipeline(None).map_err(err)?;
             self.pipeline = Some(p);
@@ -205,7 +224,9 @@ impl<'a> Ctx<'a> {
         let pipeline = self.pipeline.as_mut().expect("pipeline");
         let path = PathBuf::from(rel.to_str_lossy().as_ref());
         use gix::filter::plumbing::pipeline::convert::ToGitOutcome;
-        let outcome = pipeline.convert_to_git(raw.as_slice(), &path, self.index).map_err(err)?;
+        let outcome = pipeline
+            .convert_to_git(raw.as_slice(), &path, self.index)
+            .map_err(err)?;
         Ok(match outcome {
             ToGitOutcome::Unchanged(_) => raw.clone(),
             ToGitOutcome::Buffer(b) => b.to_vec(),
@@ -221,13 +242,26 @@ impl<'a> Ctx<'a> {
         if self.excludes.is_none() {
             let stack = self
                 .repo
-                .excludes(self.index, None, gix::worktree::stack::state::ignore::Source::WorktreeThenIdMappingIfNotSkipped)
+                .excludes(
+                    self.index,
+                    None,
+                    gix::worktree::stack::state::ignore::Source::WorktreeThenIdMappingIfNotSkipped,
+                )
                 .map_err(err)?;
             self.excludes = Some(stack);
         }
-        let mode = if is_dir { Some(gix::index::entry::Mode::DIR) } else { Some(gix::index::entry::Mode::FILE) };
+        let mode = if is_dir {
+            Some(gix::index::entry::Mode::DIR)
+        } else {
+            Some(gix::index::entry::Mode::FILE)
+        };
         let path = PathBuf::from(rel.to_str_lossy().as_ref());
-        let platform = self.excludes.as_mut().expect("excludes").at_path(&path, mode).map_err(err)?;
+        let platform = self
+            .excludes
+            .as_mut()
+            .expect("excludes")
+            .at_path(&path, mode)
+            .map_err(err)?;
         Ok(platform.is_excluded())
     }
 
@@ -236,7 +270,9 @@ impl<'a> Ctx<'a> {
         if self.ignored(rel.as_ref(), true)? {
             return Ok(true);
         }
-        let Ok(rd) = std::fs::read_dir(abs) else { return Ok(true) };
+        let Ok(rd) = std::fs::read_dir(abs) else {
+            return Ok(true);
+        };
         for de in rd.flatten() {
             let name = de.file_name();
             let name = name.to_string_lossy();
@@ -252,7 +288,9 @@ impl<'a> Ctx<'a> {
                 if !self.walk(child, &de.path(), found)? {
                     return Ok(false);
                 }
-            } else if self.index.entry_by_path(child.as_ref()).is_none() && !self.ignored(child.as_ref(), false)? {
+            } else if self.index.entry_by_path(child.as_ref()).is_none()
+                && !self.ignored(child.as_ref(), false)?
+            {
                 *found += 1;
                 if *found > MAX_WALK {
                     return Ok(false);

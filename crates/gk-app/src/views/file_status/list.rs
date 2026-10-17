@@ -19,8 +19,16 @@ const INDENT: f32 = 14.0;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Row {
-    File { entry: u32, depth: u16 },
-    Dir { node: u32, name: String, depth: u16, collapsed: bool },
+    File {
+        entry: u32,
+        depth: u16,
+    },
+    Dir {
+        node: u32,
+        name: String,
+        depth: u16,
+        collapsed: bool,
+    },
 }
 
 /// What the user asked for; handled by the file status view.
@@ -33,7 +41,10 @@ pub enum Ev {
     /// The list was clicked / navigated: it becomes the active one.
     Activate,
     FocusDiff,
-    Discard { tracked: Vec<String>, untracked: Vec<String> },
+    Discard {
+        tracked: Vec<String>,
+        untracked: Vec<String>,
+    },
     Stash(Vec<String>),
     Ignore(Vec<String>),
     Open(String),
@@ -99,8 +110,19 @@ pub struct ListCtx<'a> {
 impl ListState {
     /// Rebuilds rows when the status, filter, mode or collapsed set changed.
     /// Returns true when rebuilt.
-    pub fn sync(&mut self, status_gen: u64, paths: &[String], filter: &str, tree_mode: bool) -> bool {
-        let key = ModelKey { status_gen, filter: filter.to_string(), tree: tree_mode, collapse_ver: self.collapse_ver };
+    pub fn sync(
+        &mut self,
+        status_gen: u64,
+        paths: &[String],
+        filter: &str,
+        tree_mode: bool,
+    ) -> bool {
+        let key = ModelKey {
+            status_gen,
+            filter: filter.to_string(),
+            tree: tree_mode,
+            collapse_ver: self.collapse_ver,
+        };
         if self.model.key.as_ref() == Some(&key) {
             return false;
         }
@@ -118,17 +140,38 @@ impl ListState {
             self.model.rows = tree::flatten(&t, &self.collapsed)
                 .into_iter()
                 .map(|r| match r {
-                    TreeRow::Dir { node, name, depth, collapsed } => Row::Dir { node, name, depth, collapsed },
+                    TreeRow::Dir {
+                        node,
+                        name,
+                        depth,
+                        collapsed,
+                    } => Row::Dir {
+                        node,
+                        name,
+                        depth,
+                        collapsed,
+                    },
                     TreeRow::File { item, depth } => Row::File { entry: item, depth },
                 })
                 .collect();
             self.model.tree = Some(t);
         } else {
-            self.model.rows = items.iter().map(|(i, _)| Row::File { entry: *i, depth: 0 }).collect();
+            self.model.rows = items
+                .iter()
+                .map(|(i, _)| Row::File {
+                    entry: *i,
+                    depth: 0,
+                })
+                .collect();
             self.model.tree = None;
         }
         // Forget selected paths that are gone from the list.
-        if self.model.key.as_ref().is_none_or(|k| k.status_gen != status_gen) {
+        if self
+            .model
+            .key
+            .as_ref()
+            .is_none_or(|k| k.status_gen != status_gen)
+        {
             self.selected.retain(|p| paths.binary_search(p).is_ok());
         }
         self.model.key = Some(key);
@@ -155,12 +198,18 @@ impl ListState {
         let rows = &self.model.rows;
         let is_file = |r: &Row| matches!(r, Row::File { .. });
         let start = row.min(rows.len().saturating_sub(1));
-        (start..rows.len()).find(|&i| is_file(&rows[i])).or_else(|| (0..start).rev().find(|&i| is_file(&rows[i])))
+        (start..rows.len())
+            .find(|&i| is_file(&rows[i]))
+            .or_else(|| (0..start).rev().find(|&i| is_file(&rows[i])))
     }
 
     /// Number of [`targets`](Self::targets), without building them.
     pub fn target_count(&self) -> usize {
-        if self.selected.is_empty() { usize::from(self.cursor.is_some()) } else { self.selected.len() }
+        if self.selected.is_empty() {
+            usize::from(self.cursor.is_some())
+        } else {
+            self.selected.len()
+        }
     }
 
     /// Paths an action applies to: the selection, or the cursor.
@@ -190,11 +239,19 @@ impl ListState {
 
     /// Selects the files between the anchor and `row`.
     fn select_range(&mut self, row: usize, paths: &[String], additive: bool) {
-        let anchor_row = self.anchor.as_deref().and_then(|a| self.row_of(a, paths)).unwrap_or(row);
+        let anchor_row = self
+            .anchor
+            .as_deref()
+            .and_then(|a| self.row_of(a, paths))
+            .unwrap_or(row);
         if !additive {
             self.selected.clear();
         }
-        let (lo, hi) = if anchor_row <= row { (anchor_row, row) } else { (row, anchor_row) };
+        let (lo, hi) = if anchor_row <= row {
+            (anchor_row, row)
+        } else {
+            (row, anchor_row)
+        };
         for r in lo..=hi {
             if let Some(p) = self.path_at(r, paths) {
                 self.selected.insert(p);
@@ -210,12 +267,17 @@ impl ListState {
     /// Keeps the cursor on an existing row: when its file vanished (e.g. it
     /// was staged), the file now at its old row takes over.
     pub fn repair_cursor(&mut self, paths: &[String]) -> bool {
-        let Some(c) = self.cursor.clone() else { return false };
+        let Some(c) = self.cursor.clone() else {
+            return false;
+        };
         if let Some(r) = self.row_of(&c, paths) {
             self.cursor_row = r;
             return false;
         }
-        match self.file_row_near(self.cursor_row).and_then(|r| self.path_at(r, paths).map(|p| (r, p))) {
+        match self
+            .file_row_near(self.cursor_row)
+            .and_then(|r| self.path_at(r, paths).map(|p| (r, p)))
+        {
             Some((r, p)) => self.select_only(p, r),
             None => self.clear(),
         }
@@ -224,8 +286,12 @@ impl ListState {
 
     /// All files below a directory row.
     fn dir_files(&self, node: u32, paths: &[String]) -> Vec<String> {
-        let Some(t) = &self.model.tree else { return Vec::new() };
-        let Some(n) = t.nodes.get(node as usize) else { return Vec::new() };
+        let Some(t) = &self.model.tree else {
+            return Vec::new();
+        };
+        let Some(n) = t.nodes.get(node as usize) else {
+            return Vec::new();
+        };
         t.order[n.range.start as usize..n.range.end as usize]
             .iter()
             .filter_map(|&i| paths.get(i as usize).cloned())
@@ -233,14 +299,28 @@ impl ListState {
     }
 
     fn dir_path(&self, node: u32) -> String {
-        self.model.tree.as_ref().and_then(|t| t.nodes.get(node as usize)).map(|n| n.path.clone()).unwrap_or_default()
+        self.model
+            .tree
+            .as_ref()
+            .and_then(|t| t.nodes.get(node as usize))
+            .map(|n| n.path.clone())
+            .unwrap_or_default()
     }
 }
 
 enum Click {
-    File { row: usize, path: String, mods: egui::Modifiers },
-    Dir { node: u32 },
-    Secondary { row: usize, path: String },
+    File {
+        row: usize,
+        path: String,
+        mods: egui::Modifiers,
+    },
+    Dir {
+        node: u32,
+    },
+    Secondary {
+        row: usize,
+        path: String,
+    },
     Background,
 }
 
@@ -267,7 +347,9 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
         return;
     }
 
-    let mut sa = egui::ScrollArea::vertical().id_salt(("gk-file-list-scroll", c.side)).auto_shrink([false, false]);
+    let mut sa = egui::ScrollArea::vertical()
+        .id_salt(("gk-file-list-scroll", c.side))
+        .auto_shrink([false, false]);
     if let Some(r) = ls.scroll_to_row.take() {
         let top = r as f32 * row_h;
         if top < ls.offset {
@@ -281,7 +363,12 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
     let mut toggle_dir: Option<String> = None;
     let focused = ui.memory(|m| m.focused() == Some(list_id));
     let strong = ui.visuals().strong_text_color();
-    let hover_fill = ui.visuals().widgets.hovered.weak_bg_fill.gamma_multiply(0.5);
+    let hover_fill = ui
+        .visuals()
+        .widgets
+        .hovered
+        .weak_bg_fill
+        .gamma_multiply(0.5);
     let stroke_color = ui.visuals().widgets.inactive.fg_stroke.color;
 
     let sa_out = sa.show_viewport(ui, |ui, vp| {
@@ -300,28 +387,62 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
             let rect = Rect::from_min_size(pos2(vis.left(), y), vec2(vis.width(), row_h));
             match &ls.model.rows[r] {
                 Row::File { entry, depth } => {
-                    let Some(e) = c.entries.get(*entry as usize) else { continue };
+                    let Some(e) = c.entries.get(*entry as usize) else {
+                        continue;
+                    };
                     let path = &c.paths[*entry as usize];
                     let id = list_id.with(path.as_str());
                     let resp = ui.interact(rect, id, Sense::click());
                     let selected = ls.selected.contains(path);
                     let is_cursor = ls.cursor.as_deref() == Some(path.as_str());
                     if selected {
-                        let fill = if c.active { p.selection } else { p.selection.gamma_multiply(0.5) };
+                        let fill = if c.active {
+                            p.selection
+                        } else {
+                            p.selection.gamma_multiply(0.5)
+                        };
                         painter.rect_filled(rect, 0.0, fill);
                     } else if resp.hovered() {
                         painter.rect_filled(rect, 0.0, hover_fill);
                     }
                     if is_cursor && focused {
-                        painter.rect_stroke(rect.shrink(0.5), 0.0, (1.0, p.branch), egui::StrokeKind::Inside);
+                        painter.rect_stroke(
+                            rect.shrink(0.5),
+                            0.0,
+                            (1.0, p.branch),
+                            egui::StrokeKind::Inside,
+                        );
                     }
                     let pending = (c.pending)(path);
-                    let dim = |col: Color32| if pending { col.gamma_multiply(0.4) } else { col };
-                    let mut x = rect.left() + 4.0 + *depth as f32 * INDENT + if c.tree { INDENT } else { 0.0 };
+                    let dim = |col: Color32| {
+                        if pending {
+                            col.gamma_multiply(0.4)
+                        } else {
+                            col
+                        }
+                    };
+                    let mut x = rect.left()
+                        + 4.0
+                        + *depth as f32 * INDENT
+                        + if c.tree { INDENT } else { 0.0 };
                     let cy = rect.center().y;
-                    let cb = checkbox(ui, &painter, id.with("cb"), pos2(x, cy), c.side == Side::Staged, dim(stroke_color), dim(p.head));
+                    let cb = checkbox(
+                        ui,
+                        &painter,
+                        id.with("cb"),
+                        pos2(x, cy),
+                        c.side == Side::Staged,
+                        dim(stroke_color),
+                        dim(p.head),
+                    );
                     x += 18.0;
-                    painter.text(pos2(x, cy), Align2::LEFT_CENTER, e.kind.code(), mono.clone(), dim(crate::util::status_color(&p, e.kind)));
+                    painter.text(
+                        pos2(x, cy),
+                        Align2::LEFT_CENTER,
+                        e.kind.code(),
+                        mono.clone(),
+                        dim(crate::util::status_color(&p, e.kind)),
+                    );
                     x += 14.0;
                     let (dir, name) = crate::views::diff::split_path(path);
                     let clip = painter.with_clip_rect(rect.intersect(vis));
@@ -337,7 +458,13 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
                         extra.push_str(&format!("  ← {o}"));
                     }
                     if !extra.is_empty() {
-                        clip.text(pos2(x, cy), Align2::LEFT_CENTER, extra, body_font.clone(), dim(p.muted));
+                        clip.text(
+                            pos2(x, cy),
+                            Align2::LEFT_CENTER,
+                            extra,
+                            body_font.clone(),
+                            dim(p.muted),
+                        );
                     }
                     if resp.double_clicked() && matches!(e.kind, Kind::Conflict(_)) {
                         // Staging a conflicted file would commit its markers: open the editor.
@@ -346,9 +473,16 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
                         out.push(Ev::Toggle(vec![path.clone()]));
                     } else if resp.clicked() {
                         let mods = ui.input(|i| i.modifiers);
-                        click = Some(Click::File { row: r, path: path.clone(), mods });
+                        click = Some(Click::File {
+                            row: r,
+                            path: path.clone(),
+                            mods,
+                        });
                     } else if resp.secondary_clicked() && !selected {
-                        click = Some(Click::Secondary { row: r, path: path.clone() });
+                        click = Some(Click::Secondary {
+                            row: r,
+                            path: path.clone(),
+                        });
                     }
                     let resp = if let Kind::Conflict(k) = e.kind {
                         resp.on_hover_text(format!("{path}\nConflict: {}", k.label()))
@@ -358,11 +492,20 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
                         resp
                     };
                     resp.context_menu(|ui| {
-                        let targets = if selected && ls.selected.len() > 1 { ls.targets() } else { vec![path.clone()] };
+                        let targets = if selected && ls.selected.len() > 1 {
+                            ls.targets()
+                        } else {
+                            vec![path.clone()]
+                        };
                         file_menu(ui, c, &targets, out);
                     });
                 }
-                Row::Dir { node, name, depth, collapsed } => {
+                Row::Dir {
+                    node,
+                    name,
+                    depth,
+                    collapsed,
+                } => {
                     let id = list_id.with(("dir", *node, name.as_str()));
                     let resp = ui.interact(rect, id, Sense::click());
                     if resp.hovered() {
@@ -378,7 +521,15 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
                         p.muted,
                     );
                     x += INDENT;
-                    let cb = checkbox(ui, &painter, id.with("cb"), pos2(x, cy), c.side == Side::Staged, stroke_color, p.head);
+                    let cb = checkbox(
+                        ui,
+                        &painter,
+                        id.with("cb"),
+                        pos2(x, cy),
+                        c.side == Side::Staged,
+                        stroke_color,
+                        p.head,
+                    );
                     x += 18.0;
                     let clip = painter.with_clip_rect(rect.intersect(vis));
                     let g = clip.layout_no_wrap(format!("📁 {name}"), body_font.clone(), strong);
@@ -391,7 +542,13 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
                         .and_then(|t| t.nodes.get(*node as usize))
                         .map(|n| n.range.len())
                         .unwrap_or(0);
-                    clip.text(pos2(x + w + 6.0, cy), Align2::LEFT_CENTER, format!("({count})"), body_font.clone(), p.muted);
+                    clip.text(
+                        pos2(x + w + 6.0, cy),
+                        Align2::LEFT_CENTER,
+                        format!("({count})"),
+                        body_font.clone(),
+                        p.muted,
+                    );
                     if cb.clicked() {
                         out.push(Ev::Toggle(ls.dir_files(*node, c.paths)));
                     } else if resp.clicked() {
@@ -452,7 +609,12 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
         ui.memory_mut(|m| {
             m.set_focus_lock_filter(
                 list_id,
-                egui::EventFilter { tab: false, horizontal_arrows: true, vertical_arrows: true, escape: false },
+                egui::EventFilter {
+                    tab: false,
+                    horizontal_arrows: true,
+                    vertical_arrows: true,
+                    escape: false,
+                },
             )
         });
         use egui::Key;
@@ -521,13 +683,29 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
 }
 
 /// Small stage toggle; `checked` in the staged list.
-fn checkbox(ui: &mut Ui, painter: &egui::Painter, id: Id, left_center: Pos2, checked: bool, stroke: Color32, fill: Color32) -> egui::Response {
+fn checkbox(
+    ui: &mut Ui,
+    painter: &egui::Painter,
+    id: Id,
+    left_center: Pos2,
+    checked: bool,
+    stroke: Color32,
+    fill: Color32,
+) -> egui::Response {
     let r = Rect::from_center_size(left_center + vec2(6.5, 0.0), vec2(13.0, 13.0));
     let resp = ui.interact(r.expand(2.0), id, Sense::click());
-    let stroke = if resp.hovered() { ui.visuals().widgets.hovered.fg_stroke.color } else { stroke };
+    let stroke = if resp.hovered() {
+        ui.visuals().widgets.hovered.fg_stroke.color
+    } else {
+        stroke
+    };
     if checked {
         painter.rect_filled(r, 2.0, fill);
-        let pts = [r.left_center() + vec2(3.0, 0.0), r.center_bottom() + vec2(-1.0, -3.0), r.right_top() + vec2(-3.0, 3.0)];
+        let pts = [
+            r.left_center() + vec2(3.0, 0.0),
+            r.center_bottom() + vec2(-1.0, -3.0),
+            r.right_top() + vec2(-3.0, 3.0),
+        ];
         painter.line_segment([pts[0], pts[1]], (1.6, Color32::WHITE));
         painter.line_segment([pts[1], pts[2]], (1.6, Color32::WHITE));
     } else {
@@ -537,7 +715,10 @@ fn checkbox(ui: &mut Ui, painter: &egui::Painter, id: Id, left_center: Pos2, che
 }
 
 fn kind_of<'a>(c: &'a ListCtx, path: &str) -> Option<&'a Entry> {
-    c.paths.binary_search_by(|p| p.as_str().cmp(path)).ok().and_then(|i| c.entries.get(i))
+    c.paths
+        .binary_search_by(|p| p.as_str().cmp(path))
+        .ok()
+        .and_then(|i| c.entries.get(i))
 }
 
 fn file_menu(ui: &mut Ui, c: &ListCtx, targets: &[String], out: &mut Vec<Ev>) {
@@ -558,10 +739,23 @@ fn file_menu(ui: &mut Ui, c: &ListCtx, targets: &[String], out: &mut Vec<Ev>) {
             _ => tracked.push(t.clone()),
         }
     }
-    let label = |verb: &str| if n == 1 { verb.to_string() } else { format!("{verb} {n} files") };
+    let label = |verb: &str| {
+        if n == 1 {
+            verb.to_string()
+        } else {
+            format!("{verb} {n} files")
+        }
+    };
     match c.side {
         Side::Unstaged => {
-            if ui.button(label(if conflicts == n { "Mark resolved (stage)" } else { "Stage" })).clicked() {
+            if ui
+                .button(label(if conflicts == n {
+                    "Mark resolved (stage)"
+                } else {
+                    "Stage"
+                }))
+                .clicked()
+            {
                 emit(ui, Ev::Toggle(targets.to_vec()));
             }
         }
@@ -587,7 +781,10 @@ fn file_menu(ui: &mut Ui, c: &ListCtx, targets: &[String], out: &mut Vec<Ev>) {
                 emit(ui, Ev::MergeEditor(p.clone()));
             }
             let b = ui
-                .add_enabled(c.has_merge_tool, egui::Button::new("Open in external merge tool"))
+                .add_enabled(
+                    c.has_merge_tool,
+                    egui::Button::new("Open in external merge tool"),
+                )
                 .on_disabled_hover_text("Configure an external merge tool in Settings");
             if b.clicked() {
                 emit(ui, Ev::MergeTool(p.clone()));
@@ -596,7 +793,13 @@ fn file_menu(ui: &mut Ui, c: &ListCtx, targets: &[String], out: &mut Vec<Ev>) {
     }
     ui.separator();
     if c.side == Side::Unstaged && ui.button(label("Discard") + "…").clicked() {
-        emit(ui, Ev::Discard { tracked: tracked.clone(), untracked: untracked.clone() });
+        emit(
+            ui,
+            Ev::Discard {
+                tracked: tracked.clone(),
+                untracked: untracked.clone(),
+            },
+        );
     }
     if ui.button(label("Stash") + "…").clicked() {
         emit(ui, Ev::Stash(targets.to_vec()));
@@ -619,7 +822,10 @@ fn file_menu(ui: &mut Ui, c: &ListCtx, targets: &[String], out: &mut Vec<Ev>) {
                     emit(ui, Ev::Ignore(vec![format!("/{dir}/")]));
                 }
             } else if ui.button(format!("Ignore {n} selected files")).clicked() {
-                emit(ui, Ev::Ignore(targets.iter().map(|t| format!("/{t}")).collect()));
+                emit(
+                    ui,
+                    Ev::Ignore(targets.iter().map(|t| format!("/{t}")).collect()),
+                );
             }
         });
     }
@@ -632,7 +838,10 @@ fn file_menu(ui: &mut Ui, c: &ListCtx, targets: &[String], out: &mut Vec<Ev>) {
             emit(ui, Ev::Reveal(p.clone()));
         }
     }
-    if ui.button(if n == 1 { "Copy path" } else { "Copy paths" }).clicked() {
+    if ui
+        .button(if n == 1 { "Copy path" } else { "Copy paths" })
+        .clicked()
+    {
         emit(ui, Ev::Copy(targets.join("\n")));
     }
     if let Some(p) = &single {
@@ -652,14 +861,20 @@ fn dir_menu(ui: &mut Ui, c: &ListCtx, dir: &str, files: &[String], out: &mut Vec
         ui.close();
     };
     let n = files.len();
-    let verb = if c.side == Side::Staged { "Unstage" } else { "Stage" };
+    let verb = if c.side == Side::Staged {
+        "Unstage"
+    } else {
+        "Stage"
+    };
     if ui.button(format!("{verb} folder ({n} files)")).clicked() {
         emit(ui, Ev::Toggle(files.to_vec()));
     }
     ui.separator();
     if c.side == Side::Unstaged && ui.button("Discard folder…").clicked() {
-        let (untracked, tracked): (Vec<String>, Vec<String>) =
-            files.iter().cloned().partition(|f| kind_of(c, f).is_some_and(|e| e.kind == Kind::Untracked));
+        let (untracked, tracked): (Vec<String>, Vec<String>) = files
+            .iter()
+            .cloned()
+            .partition(|f| kind_of(c, f).is_some_and(|e| e.kind == Kind::Untracked));
         emit(ui, Ev::Discard { tracked, untracked });
     }
     if ui.button("Stash folder…").clicked() {

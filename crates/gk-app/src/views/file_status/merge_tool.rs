@@ -30,12 +30,17 @@ impl MergeTools {
         self.running.lock().push(path.clone());
         let done = self.done.clone();
         let running = self.running.clone();
-        let spawned = std::thread::Builder::new().name("gk-mergetool".into()).spawn(move || {
-            let r = run(&tool, &repo, &path);
-            running.lock().retain(|p| p != &path);
-            done.lock().push(ToolExit { path, error: r.err().map(|e| format!("{e:#}")) });
-            ctx.request_repaint();
-        });
+        let spawned = std::thread::Builder::new()
+            .name("gk-mergetool".into())
+            .spawn(move || {
+                let r = run(&tool, &repo, &path);
+                running.lock().retain(|p| p != &path);
+                done.lock().push(ToolExit {
+                    path,
+                    error: r.err().map(|e| format!("{e:#}")),
+                });
+                ctx.request_repaint();
+            });
         if spawned.is_err() {
             self.running.lock().clear();
         }
@@ -66,7 +71,14 @@ fn run(tool: &ExternalTool, repo: &Repo, path: &str) -> Result<()> {
         let out = repo.git().run_raw(&["show", &spec], None)?;
         let p = dir.join(format!("{stem}.{tag}{ext}"));
         // A missing stage (added/deleted on one side) becomes an empty file.
-        std::fs::write(&p, if out.success() { out.stdout.as_slice() } else { &[] })?;
+        std::fs::write(
+            &p,
+            if out.success() {
+                out.stdout.as_slice()
+            } else {
+                &[]
+            },
+        )?;
         sides.push(p);
     }
     let s = |p: &Path| p.to_string_lossy().into_owned();
@@ -82,10 +94,16 @@ fn run(tool: &ExternalTool, repo: &Repo, path: &str) -> Result<()> {
     }
     #[cfg(not(windows))]
     cmd.args(split_args(&args));
-    let status = cmd.status().with_context(|| format!("cannot start {}", tool.command))?;
+    let status = cmd
+        .status()
+        .with_context(|| format!("cannot start {}", tool.command))?;
     let _ = std::fs::remove_dir_all(&dir);
     if !status.success() {
-        let name = if tool.name.is_empty() { &tool.command } else { &tool.name };
+        let name = if tool.name.is_empty() {
+            &tool.command
+        } else {
+            &tool.name
+        };
         bail!("{name} exited with {status}");
     }
     Ok(())
@@ -128,8 +146,18 @@ mod tests {
 
     #[test]
     fn splits_quoted_args() {
-        assert_eq!(split_args(r#"-m "a b.txt"  "" c"#), vec!["-m", "a b.txt", "", "c"]);
-        let t = ExternalTool { name: "x".into(), command: "x".into(), args: "$LOCAL $REMOTE -o $MERGED".into() };
-        assert_eq!(split_args(&t.expand_args("l 1", "r", "b", "m")), vec!["l 1", "r", "-o", "m"]);
+        assert_eq!(
+            split_args(r#"-m "a b.txt"  "" c"#),
+            vec!["-m", "a b.txt", "", "c"]
+        );
+        let t = ExternalTool {
+            name: "x".into(),
+            command: "x".into(),
+            args: "$LOCAL $REMOTE -o $MERGED".into(),
+        };
+        assert_eq!(
+            split_args(&t.expand_args("l 1", "r", "b", "m")),
+            vec!["l 1", "r", "-o", "m"]
+        );
     }
 }

@@ -87,7 +87,10 @@ impl App for Demo {
         } else if self.frame < FRAMES {
             ctx.request_repaint();
         } else if self.wake.load(Ordering::Relaxed) {
-            println!("idle_frames={} (woken from background thread)", self.idle_frames);
+            println!(
+                "idle_frames={} (woken from background thread)",
+                self.idle_frames
+            );
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         } else {
             self.idle_frames += 1;
@@ -103,7 +106,16 @@ fn main() -> anyhow::Result<()> {
     let vsync = std::env::args().any(|a| a == "--vsync");
     let idle = std::env::args().any(|a| a == "--idle");
     gk_dx11::run(
-        Options { title: "gk-dx11 demo".into(), vsync, ..Default::default() },
-        move |_ctx| Box::new(Demo { idle, ..Demo::default() }),
+        Options {
+            title: "gk-dx11 demo".into(),
+            vsync,
+            ..Default::default()
+        },
+        move |_ctx| {
+            Box::new(Demo {
+                idle,
+                ..Demo::default()
+            })
+        },
     )
 }

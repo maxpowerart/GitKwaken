@@ -64,6 +64,7 @@ pub fn build_tree<'a>(items: impl IntoIterator<Item = (u32, &'a str)>) -> Tree {
 }
 
 impl Tree {
+    #[cfg(test)]
     pub fn leaf_count(&self) -> usize {
         self.leaves.len()
             + self

@@ -46,7 +46,13 @@ impl CommandLog {
         }
         let command = std::iter::once("git")
             .chain(args.iter().copied())
-            .map(|a| if a.contains(' ') { format!("\"{a}\"") } else { a.to_string() })
+            .map(|a| {
+                if a.contains(' ') {
+                    format!("\"{a}\"")
+                } else {
+                    a.to_string()
+                }
+            })
             .collect::<Vec<_>>()
             .join(" ");
         let mut inner = self.0.lock();

@@ -24,7 +24,10 @@ impl Text {
         }
         let no_eol = !s.ends_with('\n');
         let body = s.strip_suffix('\n').unwrap_or(&s);
-        let lines = body.split('\n').map(|l| l.strip_suffix('\r').unwrap_or(l).to_string()).collect();
+        let lines = body
+            .split('\n')
+            .map(|l| l.strip_suffix('\r').unwrap_or(l).to_string())
+            .collect();
         Text { lines, no_eol }
     }
 }
@@ -90,12 +93,18 @@ fn regions(base: &[u8], side: &[u8]) -> Vec<Region> {
                 j += 1;
             }
             LineKind::Removed => {
-                let r = cur.get_or_insert(Region { base: i..i, side: j..j });
+                let r = cur.get_or_insert(Region {
+                    base: i..i,
+                    side: j..j,
+                });
                 i += 1;
                 r.base.end = i;
             }
             LineKind::Added => {
-                let r = cur.get_or_insert(Region { base: i..i, side: j..j });
+                let r = cur.get_or_insert(Region {
+                    base: i..i,
+                    side: j..j,
+                });
                 j += 1;
                 r.side.end = j;
             }
@@ -111,20 +120,33 @@ impl Merge3 {
     pub fn new(base: &[u8], ours: &[u8], theirs: &[u8]) -> Merge3 {
         let ro = regions(base, ours);
         let rt = regions(base, theirs);
-        let mut m = Merge3 { base: Text::parse(base), ours: Text::parse(ours), theirs: Text::parse(theirs), chunks: Vec::new() };
+        let mut m = Merge3 {
+            base: Text::parse(base),
+            ours: Text::parse(ours),
+            theirs: Text::parse(theirs),
+            chunks: Vec::new(),
+        };
         m.chunks = chunks(&m, &ro, &rt);
         m
     }
 
     #[cfg(test)]
     pub fn conflicts(&self) -> impl Iterator<Item = usize> + '_ {
-        self.chunks.iter().enumerate().filter(|(_, c)| c.kind == ChunkKind::Conflict).map(|(i, _)| i)
+        self.chunks
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.kind == ChunkKind::Conflict)
+            .map(|(i, _)| i)
     }
 
     /// Whether the merged file ends without a newline: a side that changed
     /// the flag relative to the base wins.
     pub fn no_eol(&self) -> bool {
-        if self.ours.no_eol == self.base.no_eol { self.theirs.no_eol } else { self.ours.no_eol }
+        if self.ours.no_eol == self.base.no_eol {
+            self.theirs.no_eol
+        } else {
+            self.ours.no_eol
+        }
     }
 
     /// Text of chunk `i` in the result (each line ending with `\n`).
@@ -138,7 +160,9 @@ impl Merge3 {
             }
         };
         match c.kind {
-            ChunkKind::Stable | ChunkKind::Ours | ChunkKind::Same => push(&mut s, &self.ours, &c.ours),
+            ChunkKind::Stable | ChunkKind::Ours | ChunkKind::Same => {
+                push(&mut s, &self.ours, &c.ours)
+            }
             ChunkKind::Theirs => push(&mut s, &self.theirs, &c.theirs),
             ChunkKind::Conflict => match pick {
                 Some(Pick::Ours) => push(&mut s, &self.ours, &c.ours),
@@ -189,7 +213,11 @@ impl Merge3 {
         if self.no_eol() && !last_unresolved && text.ends_with('\n') {
             text.pop();
         }
-        Rendered { text, offsets, lines }
+        Rendered {
+            text,
+            offsets,
+            lines,
+        }
     }
 }
 
@@ -213,7 +241,12 @@ fn chunks(m: &Merge3, ro: &[Region], rt: &[Region]) -> Vec<Chunk> {
         };
         if start > pb {
             let len = start - pb;
-            out.push(Chunk { kind: ChunkKind::Stable, base: pb..start, ours: po..po + len, theirs: pt..pt + len });
+            out.push(Chunk {
+                kind: ChunkKind::Stable,
+                base: pb..start,
+                ours: po..po + len,
+                theirs: pt..pt + len,
+            });
             po += len;
             pt += len;
         }
@@ -233,7 +266,9 @@ fn chunks(m: &Merge3, ro: &[Region], rt: &[Region]) -> Vec<Chunk> {
         }
         let span = |regs: &[Region], pos: usize| -> Range<usize> {
             match (regs.first(), regs.last()) {
-                (Some(f), Some(l)) => f.side.start - (f.base.start - start)..l.side.end + (end - l.base.end),
+                (Some(f), Some(l)) => {
+                    f.side.start - (f.base.start - start)..l.side.end + (end - l.base.end)
+                }
                 _ => pos..pos + (end - start),
             }
         };
@@ -251,7 +286,12 @@ fn chunks(m: &Merge3, ro: &[Region], rt: &[Region]) -> Vec<Chunk> {
         po = ours.end;
         pt = theirs.end;
         if kind != ChunkKind::Conflict {
-            out.push(Chunk { kind, base: start..end, ours, theirs });
+            out.push(Chunk {
+                kind,
+                base: start..end,
+                ours,
+                theirs,
+            });
             continue;
         }
         // Like git's zealous merge: lines both sides share at the start or end
@@ -259,7 +299,13 @@ fn chunks(m: &Merge3, ro: &[Region], rt: &[Region]) -> Vec<Chunk> {
         let (ol, tl) = (&m.ours.lines[ours.clone()], &m.theirs.lines[theirs.clone()]);
         let pre = ol.iter().zip(tl).take_while(|(x, y)| x == y).count();
         let max_suf = ol.len().min(tl.len()) - pre;
-        let suf = ol.iter().rev().zip(tl.iter().rev()).take(max_suf).take_while(|(x, y)| x == y).count();
+        let suf = ol
+            .iter()
+            .rev()
+            .zip(tl.iter().rev())
+            .take(max_suf)
+            .take_while(|(x, y)| x == y)
+            .count();
         if pre > 0 {
             out.push(Chunk {
                 kind: ChunkKind::Same,
@@ -285,7 +331,12 @@ fn chunks(m: &Merge3, ro: &[Region], rt: &[Region]) -> Vec<Chunk> {
     }
     if pb < n {
         let len = n - pb;
-        out.push(Chunk { kind: ChunkKind::Stable, base: pb..n, ours: po..po + len, theirs: pt..pt + len });
+        out.push(Chunk {
+            kind: ChunkKind::Stable,
+            base: pb..n,
+            ours: po..po + len,
+            theirs: pt..pt + len,
+        });
     }
     out
 }
@@ -484,7 +535,9 @@ mod tests {
         };
         let file = |rnd: &mut dyn FnMut(u64) -> u64| -> String {
             let n = rnd(12);
-            let mut s: String = (0..n).map(|_| format!("{}\n", ["a", "b", "c", "d"][rnd(4) as usize])).collect();
+            let mut s: String = (0..n)
+                .map(|_| format!("{}\n", ["a", "b", "c", "d"][rnd(4) as usize]))
+                .collect();
             if rnd(5) == 0 {
                 s.pop();
             }
