@@ -7,6 +7,7 @@ mod common;
 mod config_edit;
 mod diagnostics;
 mod flow;
+mod fsmonitor;
 mod global;
 mod lfs;
 mod misc;

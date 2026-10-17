@@ -396,6 +396,8 @@ pub struct Optimize {
     /// Diagnostics: object write speed measurement.
     diag: Option<Task<Result<super::diagnostics::WriteSpeed, String>>>,
     diag_result: Option<Result<super::diagnostics::WriteSpeed, String>>,
+    /// fsmonitor daemon state and Start / Stop.
+    fsmon: super::fsmonitor::DaemonPanel,
 }
 
 impl Optimize {
@@ -407,6 +409,7 @@ impl Optimize {
             result: None,
             diag: None,
             diag_result: None,
+            fsmon: Default::default(),
         }
     }
 
@@ -496,6 +499,8 @@ impl TabDialog for Optimize {
                         "The built-in file system monitor is only available on Windows and macOS.",
                     );
                 }
+                self.fsmon
+                    .ui(ui, ctx, tab.session.repo().git(), st.fsmonitor);
                 if busy {
                     ctl.invalid();
                     op_progress(ui, snap);

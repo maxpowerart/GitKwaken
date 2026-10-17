@@ -24,6 +24,8 @@ All numbers can be reproduced with the commands next to them.
 | Budget | Measurement | Result | Status |
 |---|---|---|---|
 | Full status warm < 1.5 s at 1M files | `gk-bench status bench-data/r1m` | CLI engine 396-415 ms, gix engine 898 ms, `git status` 407 ms | met |
+| Full status, default (gix) engine with `core.fsmonitor` | `gk-bench status <200k-file repo> 5` without / with `core.fsmonitor=true` + `core.untrackedCache=true` | gix engine full scan 171 ms in-process → 73-75 ms (handed to `git status`, which asks the daemon); `git status` itself 68 → 73 ms (fscache already makes it fast on this tree) | |
+| Status snapshot memory (path interning) | `gk-bench status-mem <r200k with .git/index moved away> 1000000`: 200k staged deletions + 200k untracked; synthetic 1M entries built from those paths. Before: one `BString` per path; after: `PathStr` spans of one shared buffer per scan (`gk-status/src/path.rs`) | `size_of::<Entry>()` 56 → 40 bytes. 400k-entry scan retains 47.1 MB in 400k blocks → 27.4 MB in 4 blocks (-42 %). 1M entries: 103.4 MB → 71.4 MB (-31 %; heap bytes plus ~16 B allocator overhead per block). gix full scan median 381-448 → 300 ms; CLI engine unchanged (~650 ms, dominated by git). 1M-entry status: build 129-159 → 43-53 ms, clone 80-84 → 9-10 ms, drop 27-37 → 6 ms, sort + dedup 48-58 → 16 ms | |
 | Status after save < 50 ms | fast path, 10 paths, index cached | ~0.2 ms (50k files: 0.17-0.24 ms) | met for the computation; the watcher debounce (60 ms) comes on top |
 | History first screen < 100 ms | `gk-bench history bench-data/gitgit` (85k commits) | refs 40 ms + build 97 ms (~100-150 ms total) | over budget on git.git |
 | History, 1.48M commits (linux) | `gk-bench history bench-data/linux` | refs::load 45.6 ms, history::build (walk + topo sort + lane layout) **2,481 ms**, 577 lanes max width, layout 36 MB, search "fix" over all commits 492 ms, peak working set 1,175 MB (whole bench process) | first screen far over budget until layout is chunked |
@@ -137,6 +139,7 @@ It starts real windows on the desktop; do not use the machine meanwhile.
 gk-bench gen <dir> <files>               synthetic working tree
 gk-bench gen-dag <dir> <commits>         synthetic history via git fast-import
 gk-bench status <dir> [runs]             status engines vs git status
+gk-bench status-mem <dir> [entries]      heap retained by a status snapshot (scan + synthetic N entries)
 gk-bench history <dir>                   refs, history build, metadata, search
 gk-bench regress [--record] [--runs N]   regression gate (see above)
 gk-bench stage <repo> [files]            Repo::stage / unstage of N modified files

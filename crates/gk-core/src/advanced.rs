@@ -5,87 +5,15 @@ use crate::Repo;
 use crate::ops::plain;
 use anyhow::{Result, bail};
 use gk_cli::CancelToken;
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 // ---------------------------------------------------------------- blame
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BlameCommit {
-    pub id: String,
-    pub author: String,
-    pub author_time: i64,
-    pub summary: String,
-    pub previous: Option<(String, String)>,
-}
-
-/// One line of a blamed file.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BlameLine {
-    /// Index into [`Blame::commits`].
-    pub commit: usize,
-    /// 1-based line number in the commit that introduced it.
-    pub orig_line: u32,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct Blame {
-    pub commits: Vec<BlameCommit>,
-    pub lines: Vec<BlameLine>,
-    pub text: Vec<String>,
-}
-
-/// Parses `git blame --porcelain` output.
-pub fn parse_blame_porcelain(data: &str) -> Blame {
-    let mut blame = Blame::default();
-    let mut index: HashMap<String, usize> = HashMap::new();
-    let mut current: Option<usize> = None;
-    let mut orig = 0u32;
-    for line in data.lines() {
-        if let Some(text) = line.strip_prefix('\t') {
-            if let Some(c) = current {
-                blame.lines.push(BlameLine {
-                    commit: c,
-                    orig_line: orig,
-                });
-                blame.text.push(text.to_string());
-            }
-            continue;
-        }
-        let mut parts = line.split(' ');
-        let first = parts.next().unwrap_or_default();
-        if first.len() == 40 && first.bytes().all(|b| b.is_ascii_hexdigit()) {
-            orig = parts.next().and_then(|n| n.parse().ok()).unwrap_or(0);
-            let idx = *index.entry(first.to_string()).or_insert_with(|| {
-                blame.commits.push(BlameCommit {
-                    id: first.to_string(),
-                    author: String::new(),
-                    author_time: 0,
-                    summary: String::new(),
-                    previous: None,
-                });
-                blame.commits.len() - 1
-            });
-            current = Some(idx);
-            continue;
-        }
-        let Some(c) = current else { continue };
-        let rest = line.split_once(' ').map(|x| x.1).unwrap_or_default();
-        let commit = &mut blame.commits[c];
-        match first {
-            "author" => commit.author = rest.to_string(),
-            "author-time" => commit.author_time = rest.parse().unwrap_or(0),
-            "summary" => commit.summary = rest.to_string(),
-            "previous" => {
-                if let Some((id, path)) = rest.split_once(' ') {
-                    commit.previous = Some((id.to_string(), path.to_string()));
-                }
-            }
-            _ => {}
-        }
-    }
-    blame
-}
+// Blame lives in `crate::blame`; re-exported here to keep the API.
+pub use crate::blame::{
+    Blame, BlameCommit, BlameFeed, BlameGroup, BlameLine, IncrementalParser, SharedBlameFeed,
+    UNCOMMITTED_ID, parse_blame_porcelain,
+};
 
 // ---------------------------------------------------------------- worktrees / submodules
 
@@ -247,17 +175,6 @@ pub struct Optimization {
 }
 
 impl Repo {
-    // blame -------------------------------------------------------------
-    pub fn blame(&self, path: &str, rev: Option<&str>) -> Result<Blame> {
-        let mut args = vec!["blame", "--porcelain", "-w"];
-        if let Some(r) = rev {
-            args.push(r);
-        }
-        args.extend(["--", path]);
-        let out = self.git().run(&args)?;
-        Ok(parse_blame_porcelain(&out.stdout_str()))
-    }
-
     // worktrees ------------------------------------------------------------
     pub fn worktrees(&self) -> Result<Vec<Worktree>> {
         Ok(parse_worktrees(
@@ -647,16 +564,6 @@ impl Repo {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn blame_porcelain() {
-        let data = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 1 1 2\nauthor Alice\nauthor-time 100\nsummary first\nfilename f\n\thello\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 2 2\n\tworld\n";
-        let b = parse_blame_porcelain(data);
-        assert_eq!(b.commits.len(), 1);
-        assert_eq!(b.commits[0].author, "Alice");
-        assert_eq!(b.text, ["hello", "world"]);
-        assert_eq!(b.lines[1].orig_line, 2);
-    }
 
     #[test]
     fn worktree_porcelain() {

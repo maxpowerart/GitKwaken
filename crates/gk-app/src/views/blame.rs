@@ -1,20 +1,35 @@
 //! Blame view: who last changed each line of a file. Open it with
-//! [`open_blame`]; `git blame` runs on a background thread.
+//! [`open_blame`]. `git blame --incremental` streams on a background thread
+//! into a shared [`gk_core::blame::BlameFeed`]; each frame the view takes what
+//! arrived since the last one, so known lines show their commit right away
+//! and the rest keep a placeholder gutter until git reaches them.
 
 use crate::app::Shared;
 use crate::tab::{RepoTab, View};
 use crate::views::history::table;
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Color32, Pos2, Rect, Sense, Ui, vec2};
+use gk_cli::CancelToken;
 use gk_core::Snapshot;
-use gk_core::advanced::Blame;
-use parking_lot::Mutex;
+use gk_core::blame::{BlameCommit, BlameFeed, BlameGroup, SharedBlameFeed, UNCOMMITTED_ID};
 use std::sync::Arc;
+use std::time::Duration;
 
-const UNCOMMITTED: &str = "0000000000000000000000000000000000000000";
+/// `line_commit` value of a line git has not attributed yet.
+const UNKNOWN: u32 = u32::MAX;
+/// Fallback repaint period while blame streams (the worker also notifies).
+const STREAM_REPAINT: Duration = Duration::from_millis(100);
 
+#[derive(Clone)]
 struct Prepared {
-    blame: Blame,
+    text: Arc<Vec<String>>,
+    commits: Vec<BlameCommit>,
+    /// Per line: index into `commits`, or [`UNKNOWN`].
+    line_commit: Vec<u32>,
+    /// Lines attributed so far.
+    known: usize,
+    /// git finished.
+    done: bool,
     /// Per line: first line of a run of lines from the same commit.
     run_start: Vec<bool>,
     /// Per line: run parity, for alternating backgrounds.
@@ -25,7 +40,105 @@ struct Prepared {
     max_cols: usize,
 }
 
-type Slot = Arc<Mutex<Option<Result<Prepared, String>>>>;
+impl Prepared {
+    fn new(text: Arc<Vec<String>>) -> Self {
+        let n = text.len();
+        let max_cols = text
+            .iter()
+            .map(|t| t.chars().count() + 3 * t.matches('\t').count())
+            .max()
+            .unwrap_or(0);
+        Self {
+            line_commit: vec![UNKNOWN; n],
+            known: 0,
+            done: false,
+            run_start: vec![false; n],
+            odd_run: vec![false; n],
+            heat: Vec::new(),
+            digits: n.max(1).to_string().len(),
+            max_cols,
+            commits: Vec::new(),
+            text,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.line_commit.len()
+    }
+
+    fn text(&self, i: usize) -> &str {
+        self.text.get(i).map_or("", String::as_str)
+    }
+
+    /// Adds the commits and groups the feed gained since the last call.
+    fn apply(&mut self, commits: &[BlameCommit], groups: &[BlameGroup]) {
+        self.commits.extend_from_slice(commits);
+        for g in groups {
+            let start = g.final_start.saturating_sub(1) as usize;
+            let end = start + g.count as usize;
+            if end > self.line_commit.len() {
+                // Only with content filters that change the line count.
+                self.line_commit.resize(end, UNKNOWN);
+                self.digits = end.max(1).to_string().len();
+            }
+            for c in &mut self.line_commit[start..end] {
+                if *c == UNKNOWN {
+                    self.known += 1;
+                }
+                *c = g.commit as u32;
+            }
+        }
+        self.recompute();
+    }
+
+    /// Runs, parity and heat. O(lines); called only when new groups arrived.
+    fn recompute(&mut self) {
+        let n = self.len();
+        self.run_start.clear();
+        self.odd_run.clear();
+        let mut odd = true;
+        for i in 0..n {
+            let c = self.line_commit[i];
+            if c == UNKNOWN {
+                self.run_start.push(false);
+                self.odd_run.push(false);
+                continue;
+            }
+            let start = i == 0 || self.line_commit[i - 1] != c;
+            if start {
+                odd = !odd;
+            }
+            self.run_start.push(start);
+            self.odd_run.push(odd);
+        }
+        let times = self
+            .commits
+            .iter()
+            .filter(|c| c.id != UNCOMMITTED_ID)
+            .map(|c| c.author_time);
+        let (lo, hi) = times.fold((i64::MAX, i64::MIN), |(a, b), t| (a.min(t), b.max(t)));
+        self.heat = self
+            .commits
+            .iter()
+            .map(|c| {
+                if c.id == UNCOMMITTED_ID || hi <= lo {
+                    1.0
+                } else {
+                    (c.author_time - lo) as f32 / (hi - lo) as f32
+                }
+            })
+            .collect();
+    }
+}
+
+/// Cancels the blame process when the view closes or switches files.
+struct CancelOnDrop(CancelToken);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.cancel();
+    }
+}
 
 pub struct BlameState {
     pub path: String,
@@ -34,7 +147,10 @@ pub struct BlameState {
     back: View,
     /// Earlier (path, rev) pairs, for "Back" after "Blame previous revision".
     stack: Vec<(String, Option<String>)>,
-    slot: Slot,
+    feed: SharedBlameFeed,
+    _cancel: CancelOnDrop,
+    /// Groups of `feed` already applied to `data`.
+    seen_groups: usize,
     data: Option<Arc<Prepared>>,
     error: Option<String>,
     query: String,
@@ -62,13 +178,15 @@ pub fn open_blame(tab: &mut RepoTab, path: String, rev: Option<String>) {
     if tab.view != View::Blame {
         stack.clear();
     }
-    let slot = spawn_load(tab, &path, rev.clone());
+    let (feed, cancel) = spawn_load(tab, &path, rev.clone());
     tab.blame = Some(Box::new(BlameState {
         path,
         rev,
         back,
         stack,
-        slot,
+        feed,
+        _cancel: CancelOnDrop(cancel),
+        seen_groups: 0,
         data: None,
         error: None,
         query: String::new(),
@@ -81,70 +199,25 @@ pub fn open_blame(tab: &mut RepoTab, path: String, rev: Option<String>) {
     tab.view = View::Blame;
 }
 
-fn spawn_load(tab: &RepoTab, path: &str, rev: Option<String>) -> Slot {
+fn spawn_load(tab: &RepoTab, path: &str, rev: Option<String>) -> (SharedBlameFeed, CancelToken) {
     let repo = tab.session.repo().clone();
-    let slot: Slot = Arc::new(Mutex::new(None));
-    let s2 = slot.clone();
+    let notify = tab.session.repaint_handle();
+    let feed = SharedBlameFeed::default();
+    let cancel = CancelToken::new();
+    let (f2, c2) = (feed.clone(), cancel.clone());
     let p = path.to_string();
     let spawned = std::thread::Builder::new()
         .name("gk-blame".into())
         .spawn(move || {
-            let r = repo
-                .blame(&p, rev.as_deref())
-                .map(prepare)
-                .map_err(|e| format!("{e:#}"));
-            *s2.lock() = Some(r);
+            // Errors land in the feed.
+            let _ = repo.blame_streaming(&p, rev.as_deref(), &c2, &f2, &notify);
         });
     if let Err(e) = spawned {
-        *slot.lock() = Some(Err(e.to_string()));
+        let mut f = feed.lock();
+        f.error = Some(e.to_string());
+        f.done = true;
     }
-    slot
-}
-
-fn prepare(blame: Blame) -> Prepared {
-    let n = blame.lines.len();
-    let mut run_start = Vec::with_capacity(n);
-    let mut odd_run = Vec::with_capacity(n);
-    let mut odd = true;
-    for (i, l) in blame.lines.iter().enumerate() {
-        let start = i == 0 || blame.lines[i - 1].commit != l.commit;
-        if start {
-            odd = !odd;
-        }
-        run_start.push(start);
-        odd_run.push(odd);
-    }
-    let times = blame
-        .commits
-        .iter()
-        .filter(|c| c.id != UNCOMMITTED)
-        .map(|c| c.author_time);
-    let (lo, hi) = times.fold((i64::MAX, i64::MIN), |(a, b), t| (a.min(t), b.max(t)));
-    let heat = blame
-        .commits
-        .iter()
-        .map(|c| {
-            if c.id == UNCOMMITTED || hi <= lo {
-                1.0
-            } else {
-                (c.author_time - lo) as f32 / (hi - lo) as f32
-            }
-        })
-        .collect();
-    let max_cols = blame
-        .text
-        .iter()
-        .map(|t| t.chars().count() + 3 * t.matches('\t').count())
-        .max()
-        .unwrap_or(0);
-    Prepared {
-        digits: n.max(1).to_string().len(),
-        run_start,
-        odd_run,
-        heat,
-        max_cols,
-        blame,
-    }
+    (feed, cancel)
 }
 
 /// ASCII-case-insensitive substring search; byte offsets match `hay`.
@@ -157,20 +230,24 @@ fn find_ci(hay: &str, needle: &str, from: usize) -> Option<usize> {
 }
 
 impl BlameState {
+    /// Takes what the worker published since the last frame.
     fn poll(&mut self) {
-        if self.data.is_some() || self.error.is_some() {
+        if self.error.is_some() || self.data.as_ref().is_some_and(|d| d.done) {
             return;
         }
-        let Some(r) = self.slot.lock().take() else {
+        let feed = self.feed.clone();
+        let f = feed.lock();
+        if let Some(e) = &f.error {
+            self.error = Some(e.clone());
             return;
-        };
-        match r {
-            Ok(d) => {
-                self.data = Some(Arc::new(d));
-                self.update_matches();
-            }
-            Err(e) => self.error = Some(e),
         }
+        if self.data.is_none() {
+            let Some(text) = &f.text else { return };
+            self.data = Some(Arc::new(Prepared::new(text.clone())));
+            self.update_matches();
+        }
+        let Some(d) = self.data.as_mut() else { return };
+        self.seen_groups = take_new(Arc::make_mut(d), &f, self.seen_groups);
     }
 
     fn update_matches(&mut self) {
@@ -181,7 +258,6 @@ impl BlameState {
             return;
         }
         self.matches = d
-            .blame
             .text
             .iter()
             .enumerate()
@@ -206,12 +282,26 @@ impl BlameState {
     }
 }
 
+/// Applies the feed's groups from `seen` on; returns the new `seen`.
+fn take_new(d: &mut Prepared, f: &BlameFeed, seen: usize) -> usize {
+    if f.groups.len() > seen || f.commits.len() > d.commits.len() {
+        let commits = &f.commits[d.commits.len()..];
+        d.apply(commits, &f.groups[seen..]);
+    }
+    d.done = f.done;
+    f.groups.len()
+}
+
 pub fn show(ui: &mut Ui, tab: &mut RepoTab, _snap: &Snapshot, shared: &mut Shared) {
     let Some(st) = tab.blame.as_deref_mut() else {
         tab.view = View::History;
         return;
     };
     st.poll();
+    let streaming = st.error.is_none() && !st.data.as_ref().is_some_and(|d| d.done);
+    if streaming {
+        ui.ctx().request_repaint_after(STREAM_REPAINT);
+    }
     let p = shared.palette;
     let relative = shared.settings.history.relative_dates;
     let mut act: Option<Act> = None;
@@ -244,14 +334,17 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, _snap: &Snapshot, shared: &mut Share
                 egui::RichText::new(format!("@ {}", rev.unwrap_or("working copy"))).color(p.muted),
             );
             if let Some(d) = &st.data {
-                ui.label(
-                    egui::RichText::new(format!(
-                        "{} lines · {} commits",
-                        d.blame.lines.len(),
-                        d.blame.commits.len()
-                    ))
-                    .color(p.muted),
-                );
+                let n = d.len();
+                let text = if d.done {
+                    format!("{n} lines · {} commits", d.commits.len())
+                } else {
+                    format!(
+                        "blaming… {} of {n} lines · {} commits",
+                        d.known,
+                        d.commits.len()
+                    )
+                };
+                ui.label(egui::RichText::new(text).color(p.muted));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let total = st.matches.len();
@@ -377,7 +470,6 @@ fn body(
     relative: bool,
     act: &mut Option<Act>,
 ) {
-    let b = &d.blame;
     let font = egui::TextStyle::Monospace.resolve(ui.style());
     let small = egui::TextStyle::Small.resolve(ui.style());
     let (font_h, char_w) = ui
@@ -386,6 +478,7 @@ fn body(
     let row_h = (font_h + 4.0).round().max(16.0);
     let text_color = ui.visuals().text_color();
     let faint = ui.visuals().faint_bg_color;
+    let skeleton = ui.visuals().widgets.inactive.bg_fill;
     let date_w = if relative { 14.0 } else { 10.0 } * char_w;
     let id_w = 8.0 * char_w + 10.0;
     let author_w = 16.0 * char_w;
@@ -409,7 +502,7 @@ fn body(
     let query = st.query.clone();
     let mut clicked_line: Option<usize> = None;
     sa.show_viewport(ui, |ui, vp| {
-        let n = b.lines.len();
+        let n = d.len();
         ui.set_min_width(content_w.max(vp.width()));
         ui.set_min_height(n as f32 * row_h);
         let origin = ui.max_rect().min;
@@ -421,8 +514,8 @@ fn body(
         let gx = origin.x + vp.min.x;
         for i in first..last {
             let y = origin.y + i as f32 * row_h;
-            let line = &b.lines[i];
-            let c = &b.commits[line.commit];
+            let commit = d.line_commit[i];
+            let c = (commit != UNKNOWN).then(|| &d.commits[commit as usize]);
             let row = Rect::from_min_size(Pos2::new(origin.x, y), vec2(full_w, row_h));
             if d.odd_run[i] {
                 painter.rect_filled(row, 0.0, faint);
@@ -432,11 +525,11 @@ fn body(
             }
             // Code.
             let code_pos = Pos2::new(gx + code_x, y + row_h / 2.0);
-            let raw = &b.text[i];
+            let raw = d.text(i);
             let shown: std::borrow::Cow<str> = if raw.contains('\t') {
                 raw.replace('\t', "    ").into()
             } else {
-                raw.as_str().into()
+                raw.into()
             };
             if Some(i) == current_line || is_match(i) {
                 let bg = if Some(i) == current_line {
@@ -469,12 +562,35 @@ fn body(
             if st.selected == Some(i) {
                 painter.rect_filled(gutter, 0.0, p.selection);
             }
+            // Line number.
+            table::text_right_at(
+                &painter,
+                gx + gutter_w + num_w - 8.0,
+                y + row_h / 2.0,
+                (i + 1).to_string(),
+                &font,
+                p.muted,
+            );
+            let gr = Rect::from_min_size(Pos2::new(gx, y), vec2(gutter_w, row_h));
+
+            let Some(c) = c else {
+                // Not attributed yet: a skeleton bar where the commit will be.
+                let bar = Rect::from_min_size(
+                    Pos2::new(gx + 10.0, y + row_h * 0.3),
+                    vec2(id_w + author_w * 0.6, row_h * 0.4),
+                );
+                painter.rect_filled(bar, 3.0, skeleton);
+                ui.interact(gr, ui.id().with(("blame-gutter", i)), Sense::hover())
+                    .on_hover_text("git blame has not reached this line yet");
+                continue;
+            };
+
             painter.rect_filled(
                 Rect::from_min_size(Pos2::new(gx, y), vec2(4.0, row_h)),
                 0.0,
-                heat_color(&p, d.heat[line.commit]),
+                heat_color(&p, d.heat[commit as usize]),
             );
-            let uncommitted = c.id == UNCOMMITTED;
+            let uncommitted = c.id == UNCOMMITTED_ID;
             if d.run_start[i] {
                 let clip = painter.with_clip_rect(gutter.intersect(painter.clip_rect()));
                 let mid = y + row_h / 2.0;
@@ -515,18 +631,8 @@ fn body(
                     );
                 }
             }
-            // Line number.
-            table::text_right_at(
-                &painter,
-                gx + gutter_w + num_w - 8.0,
-                y + row_h / 2.0,
-                (i + 1).to_string(),
-                &font,
-                p.muted,
-            );
 
             // Gutter interaction: tooltip, click, context menu.
-            let gr = Rect::from_min_size(Pos2::new(gx, y), vec2(gutter_w, row_h));
             let resp = ui.interact(gr, ui.id().with(("blame-gutter", i)), Sense::click());
             if resp.hovered() && !uncommitted {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -635,25 +741,87 @@ fn highlight_job(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gk_core::advanced::parse_blame_porcelain;
+    use gk_core::blame::IncrementalParser;
+
+    fn text(n: usize) -> Arc<Vec<String>> {
+        Arc::new((0..n).map(|i| format!("line {i}")).collect())
+    }
+
+    /// Incremental output for: lines 1-2 and 4 from `a`, line 3 from `b`.
+    fn records() -> String {
+        let a = "a".repeat(40);
+        let b = "b".repeat(40);
+        format!(
+            "{a} 1 1 2\nauthor A\nauthor-time 100\nsummary one\nboundary\nfilename f\n\
+             {b} 1 3 1\nauthor B\nauthor-time 200\nsummary two\nprevious {a} old\nfilename f\n\
+             {a} 3 4 1\nfilename f\n"
+        )
+    }
 
     #[test]
     fn runs_and_heat() {
-        let a = "a".repeat(40);
-        let b = "b".repeat(40);
-        let data = format!(
-            "{a} 1 1 2\nauthor A\nauthor-time 100\nsummary one\nfilename f\n\tx\n{a} 2 2\n\ty\n\
-             {b} 1 3 1\nauthor B\nauthor-time 200\nsummary two\nprevious {a} old\nfilename f\n\tz\n\
-             {a} 3 4 1\n\tw\n"
-        );
-        let p = prepare(parse_blame_porcelain(&data));
+        let (commits, groups) = IncrementalParser::parse_all(&records());
+        let mut p = Prepared::new(text(4));
+        p.apply(&commits, &groups);
+        assert_eq!(p.known, 4);
         assert_eq!(p.run_start, [true, false, true, true]);
         assert_eq!(p.odd_run, [false, false, true, false]);
         assert_eq!(p.heat, [0.0, 1.0]);
         assert_eq!(
-            p.blame.commits[1].previous,
-            Some((a.clone(), "old".to_string()))
+            p.commits[1].previous,
+            Some(("a".repeat(40), "old".to_string()))
         );
+    }
+
+    /// Groups arrive in any order and in several batches; unknown lines stay
+    /// unknown until their group lands.
+    #[test]
+    fn partial_feed_fills_in() {
+        let (commits, groups) = IncrementalParser::parse_all(&records());
+        let mut feed = BlameFeed {
+            text: Some(text(4)),
+            ..Default::default()
+        };
+        let mut p = Prepared::new(text(4));
+
+        // First batch: only `b`'s group (line 3).
+        feed.commits = commits.clone();
+        feed.groups = vec![groups[1]];
+        feed.commits.swap(0, 1);
+        feed.groups[0].commit = 0;
+        let mut seen = take_new(&mut p, &feed, 0);
+        assert_eq!(p.known, 1);
+        assert_eq!(p.line_commit, [UNKNOWN, UNKNOWN, 0, UNKNOWN]);
+        assert_eq!(p.run_start, [false, false, true, false]);
+        assert!(!p.done);
+
+        // Second batch: `a`'s groups, then git finishes.
+        let mut g0 = groups[0];
+        g0.commit = 1;
+        let mut g2 = groups[2];
+        g2.commit = 1;
+        feed.groups.extend([g0, g2]);
+        feed.done = true;
+        seen = take_new(&mut p, &feed, seen);
+        assert_eq!(seen, 3);
+        assert_eq!(p.known, 4);
+        assert_eq!(p.line_commit, [1, 1, 0, 1]);
+        assert!(p.done);
+        // Re-polling with nothing new changes nothing.
+        assert_eq!(take_new(&mut p, &feed, seen), 3);
+        assert_eq!(p.known, 4);
+    }
+
+    #[test]
+    fn group_past_end_of_text_grows() {
+        let (commits, mut groups) = IncrementalParser::parse_all(&records());
+        groups[2].final_start = 12;
+        let mut p = Prepared::new(text(4));
+        p.apply(&commits, &groups);
+        assert_eq!(p.len(), 12);
+        assert_eq!(p.digits, 2);
+        assert_eq!(p.text(11), "");
+        assert_eq!(p.line_commit[3], UNKNOWN);
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use crate::{Conflict, Entry, Kind, Status, Untracked};
+use crate::{Conflict, Kind, Status, StatusBuilder, Untracked};
 use anyhow::{Result, bail};
 use bstr::{BString, ByteSlice};
 
@@ -9,8 +9,10 @@ use bstr::{BString, ByteSlice};
 /// this `git status` asks the fsmonitor daemon which paths changed since its
 /// last token and skips stat-ing the rest, so a full scan of a 1M-file tree
 /// costs about as much as the changes. [`crate::fsmonitor_state`] reports
-/// whether that is in effect; the gix engine and the watcher fast path do not
-/// use the daemon.
+/// whether the daemon runs. gitoxide has no fsmonitor client, so
+/// [`crate::compute`] routes full scans of such repositories here even with
+/// the gix engine selected; the watcher fast path does not need the daemon
+/// (it only stats the paths the OS reported).
 pub fn compute(git: &gk_cli::Git, patterns: &[BString], untracked: Untracked) -> Result<Status> {
     let mode = match untracked {
         Untracked::All => "--untracked-files=all",
@@ -47,7 +49,7 @@ fn kind_from(c: u8) -> Option<Kind> {
 }
 
 pub fn parse_porcelain_v2(data: &[u8]) -> Result<Status> {
-    let mut status = Status::default();
+    let mut b = StatusBuilder::new();
     let mut records = data.split(|b| *b == 0).filter(|r| !r.is_empty());
     while let Some(rec) = records.next() {
         match rec[0] {
@@ -57,7 +59,7 @@ pub fn parse_porcelain_v2(data: &[u8]) -> Result<Status> {
                 if fields.len() < 9 {
                     bail!("malformed status record: {}", rec.as_bstr());
                 }
-                push_xy(&mut status, fields[1], fields[8], None, fields[2]);
+                push_xy(&mut b, fields[1], fields[8], None, fields[2]);
             }
             b'2' => {
                 // 2 XY sub mH mI mW hH hI Xscore path\0origPath
@@ -65,8 +67,8 @@ pub fn parse_porcelain_v2(data: &[u8]) -> Result<Status> {
                 if fields.len() < 10 {
                     bail!("malformed rename record: {}", rec.as_bstr());
                 }
-                let orig = records.next().map(BString::from);
-                push_xy(&mut status, fields[1], fields[9], orig, fields[2]);
+                let orig = records.next();
+                push_xy(&mut b, fields[1], fields[9], orig, fields[2]);
             }
             b'u' => {
                 // u XY sub m1 m2 m3 mW h1 h2 h3 path
@@ -83,26 +85,20 @@ pub fn parse_porcelain_v2(data: &[u8]) -> Result<Status> {
                     b"AA" => Conflict::BothAdded,
                     _ => Conflict::BothModified,
                 };
-                status
-                    .unstaged
-                    .push(Entry::new(fields[10], Kind::Conflict(c)));
+                b.unstaged(fields[10], Kind::Conflict(c));
             }
-            b'?' => status.unstaged.push(Entry::new(&rec[2..], Kind::Untracked)),
+            b'?' => b.unstaged(&rec[2..], Kind::Untracked),
             b'!' | b'#' => {}
             _ => bail!("unknown status record: {}", rec.as_bstr()),
         }
     }
-    Ok(status)
+    Ok(b.finish())
 }
 
-fn push_xy(status: &mut Status, xy: &[u8], path: &[u8], orig: Option<BString>, sub: &[u8]) {
+fn push_xy(b: &mut StatusBuilder, xy: &[u8], path: &[u8], orig: Option<&[u8]>, sub: &[u8]) {
     let (x, y) = (xy[0], xy[1]);
     if let Some(kind) = kind_from(x) {
-        status.staged.push(Entry {
-            path: path.into(),
-            kind,
-            orig_path: orig.clone(),
-        });
+        b.staged(path, kind, orig);
     }
     // Submodules report worktree changes in `sub` (e.g. "SC.." / "S.M." / "S..U").
     let sub_dirty =
@@ -113,17 +109,13 @@ fn push_xy(status: &mut Status, xy: &[u8], path: &[u8], orig: Option<BString>, s
         } else {
             kind
         };
-        status.unstaged.push(Entry {
-            path: path.into(),
-            kind,
-            orig_path: None,
-        });
+        b.unstaged(path, kind);
     } else if y == b'.' && x == b'.' && sub_dirty {
-        status.unstaged.push(Entry::new(path, Kind::Modified));
+        b.unstaged(path, Kind::Modified);
     }
     if x == b'.' && y == b'A' {
         // intent-to-add shows as ".A"
-        status.unstaged.push(Entry::new(path, Kind::IntentToAdd));
+        b.unstaged(path, Kind::IntentToAdd);
     }
 }
 

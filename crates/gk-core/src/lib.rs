@@ -2,6 +2,7 @@
 //! git operations and the background session the UI talks to.
 
 pub mod advanced;
+pub mod blame;
 pub mod cache;
 pub mod content;
 pub mod history;

@@ -1,4 +1,4 @@
-use crate::{Conflict, Entry, Kind, Status, Untracked};
+use crate::{Conflict, Kind, Status, StatusBuilder, Untracked};
 use anyhow::{Result, anyhow};
 use bstr::BString;
 use gix::status::Item;
@@ -43,24 +43,27 @@ pub fn compute_in(
         .into_iter(patterns.iter().cloned())
         .map_err(err)?;
 
-    let mut status = Status::default();
+    let mut b = StatusBuilder::new();
     for item in iter {
         let item = item.map_err(err)?;
         match item {
             Item::IndexWorktree(wt) => {
-                if let Some(entry) = worktree_entry(&wt) {
-                    status.unstaged.push(entry);
+                if let Some((kind, dir)) = worktree_kind(&wt) {
+                    let path: &[u8] = wt.rela_path();
+                    // Collapsed untracked directories are reported with a trailing slash.
+                    let slash: &[u8] = if dir && !path.ends_with(b"/") {
+                        b"/"
+                    } else {
+                        b""
+                    };
+                    b.push_parts(false, &[path, slash], kind, None);
                 }
             }
             Item::TreeIndex(change) => {
                 use gix::diff::index::Change;
-                let entry = match change {
-                    Change::Addition { location, .. } => {
-                        Entry::new(location.into_owned(), Kind::Added)
-                    }
-                    Change::Deletion { location, .. } => {
-                        Entry::new(location.into_owned(), Kind::Deleted)
-                    }
+                match change {
+                    Change::Addition { location, .. } => b.staged(&location, Kind::Added, None),
+                    Change::Deletion { location, .. } => b.staged(&location, Kind::Deleted, None),
                     Change::Modification {
                         location,
                         previous_entry_mode,
@@ -74,29 +77,27 @@ pub fn compute_in(
                         } else {
                             Kind::Modified
                         };
-                        Entry::new(location.into_owned(), kind)
+                        b.staged(&location, kind, None)
                     }
                     Change::Rewrite {
                         source_location,
                         location,
                         copy,
                         ..
-                    } => Entry {
-                        path: location.into_owned(),
-                        kind: if copy { Kind::Copied } else { Kind::Renamed },
-                        orig_path: Some(source_location.into_owned()),
-                    },
-                };
-                status.staged.push(entry);
+                    } => {
+                        let kind = if copy { Kind::Copied } else { Kind::Renamed };
+                        b.staged(&location, kind, Some(&source_location))
+                    }
+                }
             }
         }
     }
-    Ok(status)
+    Ok(b.finish())
 }
 
-fn worktree_entry(item: &WtItem) -> Option<Entry> {
+/// Kind of a worktree item, and whether it is a collapsed directory.
+fn worktree_kind(item: &WtItem) -> Option<(Kind, bool)> {
     use gix::status::index_worktree::iter::Summary;
-    let path = item.rela_path().to_owned();
     if let WtItem::Modification {
         status: gix::status::plumbing::index_as_worktree::EntryStatus::Conflict { summary, .. },
         ..
@@ -112,7 +113,7 @@ fn worktree_entry(item: &WtItem) -> Option<Entry> {
             C::BothAdded => Conflict::BothAdded,
             C::BothModified => Conflict::BothModified,
         };
-        return Some(Entry::new(path, Kind::Conflict(c)));
+        return Some((Kind::Conflict(c), false));
     }
     let kind = match item.summary()? {
         Summary::Removed => Kind::Deleted,
@@ -124,13 +125,7 @@ fn worktree_entry(item: &WtItem) -> Option<Entry> {
         Summary::IntentToAdd => Kind::IntentToAdd,
         Summary::Conflict => Kind::Conflict(Conflict::BothModified),
     };
-    let mut entry = Entry::new(path, kind);
-    // Collapsed untracked directories are reported with a trailing slash.
-    if let WtItem::DirectoryContents { entry: dir, .. } = item
-        && dir.disk_kind == Some(gix::dir::entry::Kind::Directory)
-        && !entry.path.ends_with(b"/")
-    {
-        entry.path.push(b'/');
-    }
-    Some(entry)
+    let dir = matches!(item, WtItem::DirectoryContents { entry: dir, .. }
+        if dir.disk_kind == Some(gix::dir::entry::Kind::Directory));
+    Some((kind, dir))
 }

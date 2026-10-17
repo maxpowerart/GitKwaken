@@ -77,7 +77,7 @@ Measurements made for this audit with `target/lead/release/gk-bench.exe` and the
 | Filter: pickaxe `-S` / `-G` | Missing | (none) | |
 | Compare two commits | Done | impl: `crates/gk-app/src/views/details.rs:266`; UI: select two commits in History; E2E: `h-keyboard.script` (Shift+Down, then compare) | |
 | File history | Done | impl: `views/search.rs:113,220` (`git log --follow`); UI: file context menu "File history" (`list.rs:877`); test: `search.rs::file_log_follows_renames`; E2E: `h-file-history.script` | |
-| Blame | Done | impl: `crates/gk-app/src/views/blame.rs:56`, `crates/gk-core/src/advanced.rs:250`; UI: file context menu "Blame" (`list.rs:880`), palette "Blame <path>"; test: `blame.rs::runs_and_heat`, `advanced.rs::blame_porcelain`; E2E: `r-blame.script` | |
+| Blame | Done | impl: `crates/gk-app/src/views/blame.rs:172`, `crates/gk-core/src/blame.rs:324` (streaming, see "Blame streaming" below; the blocking `Repo::blame` is kept); UI: file context menu "Blame" (`list.rs:880`), palette "Blame <path>"; test: `views/blame.rs::runs_and_heat`, `gk-core/src/blame.rs::blame_porcelain`, `it/blame.rs::*`; E2E: `r-blame.script` | |
 | Reflog | Missing | (none) | Only reachable through the git console. |
 
 ### Branches and tags
@@ -143,7 +143,7 @@ Measurements made for this audit with `target/lead/release/gk-bench.exe` and the
 | Patch create / apply | Done | impl: `crates/gk-app/src/dialogs/misc.rs:24,125`; UI: History "Create patch…" (`history.rs:581`), More ▸ "Apply patch…"; test: `it/ops.rs::format_and_apply_patch` | |
 | Archive | Done | impl: `misc.rs:185`, `ops.rs:756`; UI: History "Archive…" (`history.rs:584`); test: `it/ops.rs::archive_formats` | |
 | Notes | Missing | (none) | Only reachable through the git console. |
-| One-click repo optimization (fsmonitor, untrackedCache, commit-graph, multi-pack-index, maintenance) | Done | impl: `dialogs/repo_tools.rs:391`, `crates/gk-core/src/advanced.rs:611-641`; UI: More ▸ "Optimize repository…", palette; test: `repo_tools.rs::optimization_checklist` | `optimize()` has no integration test. |
+| One-click repo optimization (fsmonitor, untrackedCache, commit-graph, multi-pack-index, maintenance) | Done | impl: `dialogs/repo_tools.rs:391`, `crates/gk-core/src/advanced.rs:531`, fsmonitor daemon state with Start / Stop (`dialogs/fsmonitor.rs`); UI: More ▸ "Optimize repository…", palette; test: `repo_tools.rs::optimization_checklist` | `optimize()` has no integration test. |
 
 ### Tools
 
@@ -180,7 +180,7 @@ Measurements made for this audit with `target/lead/release/gk-bench.exe` and the
 | Cancellation tokens and generation numbers | Partial | impl: `crates/gk-cli/src/lib.rs:60` (CancelToken), `session.rs:56,215`, Load tickets; test: `it/history.rs::cancelled_build`, `history/task.rs::newer_key_wins` | History rebuilds cannot be cancelled: `session.rs:625` passes `AtomicBool::new(false)`. |
 | Priorities (visible > prefetch > background) | Missing | `crates/gk-core/src/history.rs:219` and the session loaders use the global rayon pool, first in first out | |
 | Write ops serialized | Partial | impl: gk-ops thread `session.rs:650` (`run_op`, `run_index_op`); test: `it/session.rs::session_end_to_end` | Auto-fetch writes refs from its own thread (`tab.rs:156`). |
-| Interning / arenas | Partial | impl: dense `u32` commit indices (`history.rs:61-82`), `InternedInput` (`crates/gk-diff/src/lib.rs:12`) | No path or string interning. Each status entry owns a `BString`. |
+| Interning / arenas | Done | impl: dense `u32` commit indices (`history.rs:61-82`), `InternedInput` (`crates/gk-diff/src/lib.rs:12`); status paths live in one shared buffer per scan: `PathStr` (16 bytes: `Arc` + offset + length, derefs to `BStr`) and `StatusBuilder` (`crates/gk-status/src/path.rs:19,194`), used by both engines and the snapshot cache; test: `gk-status/src/path.rs::*`; bench: `gk-bench status-mem` | Measured (`docs/BENCHMARKS.md`): a 400k-entry scan retains 27 MB instead of 47 MB (-42 %), 1M entries 71 MB instead of 103 MB (-31 %), gix full scan 300 ms instead of 380-450 ms, clone of a 1M status 80 → 10 ms. The file list view still copies paths into `String`s (`views/file_status.rs:131`). |
 
 ## Status engine
 
@@ -193,7 +193,7 @@ Measurements made for this audit with `target/lead/release/gk-bench.exe` and the
 | .git watch | Done | impl: `watch.rs:163`, `session.rs:469`; test: `watch.rs::git_dir_classification`, `it/session.rs::session_external_ref_change` | |
 | Overflow leads to full rescan | Done | impl: `watch.rs` `Raw::Overflow`, `session.rs:479` | No dedicated test. |
 | Cold start from cached snapshot | Missing | (none) | `Session::open` always starts from scratch (`session.rs:256`). |
-| Optional fsmonitor daemon query | Missing | (none) | Optimize turns on `core.fsmonitor` for the git CLI only. The gix engine and the fast path never query the daemon. |
+| Optional fsmonitor daemon query | Deviation | impl: `crates/gk-status/src/lib.rs:260` (`compute`: when `core.fsmonitor` is set, full scans with the default gix engine go through `git status`, which queries the daemon; `Status::fsmonitor` records it), `fsmonitor_state` / `fsmonitor_daemon`; UI: Optimize dialog "File system monitor daemon" row with Start / Stop (`dialogs/fsmonitor.rs`), status bar "· fsmonitor" (`views/statusbar.rs`); test: `gk-status/src/lib.rs::gix_engine_full_scan_uses_fsmonitor`, `fsmonitor_values`, `fsmonitor_detection` | gitoxide has no fsmonitor client (it reads the index extension but still stats every entry), so there is no in-process daemon IPC: full scans are handed to the git CLI instead. Pathspec-limited scans and the watcher fast path stay in-process; they only stat the reported paths. |
 | CLI engine switch as reference | Done | impl: `crates/gk-status/src/cli_engine.rs`, Settings "Status engine" (`settings.rs:255`), applied live (`app.rs:157`); test: `engines.rs::gix_matches_cli` | |
 
 ## History engine
@@ -208,7 +208,7 @@ Measurements made for this audit with `target/lead/release/gk-bench.exe` and the
 | Search filters in background | Done | impl: `session.rs:394`, `history.rs:261` (rayon chunks); test: `it/history.rs::search_message_author_id`; E2E: `h-search.script` | Measured: 75.6 ms on git.git. |
 | Pickaxe via streaming `git log` | Missing | (none) | |
 | Refs tree for tens of thousands of refs | Done | impl: one `for-each-ref` (`refs.rs:176`), sidebar trees with filter and lazy rows (`sidebar.rs:235,336`) | Not measured at 10k+ refs. |
-| Blame streaming via `--incremental` | Partial | impl: `crates/gk-core/src/advanced.rs:250` (blocking `--porcelain` on a background thread) | Nothing shows until the whole blame is done. |
+| Blame streaming via `--incremental` | Done | impl: `crates/gk-core/src/blame.rs:324` (`git blame --incremental` through `run_streaming` into a shared, growing `BlameFeed`; file text first; repaint at most every 50 ms; cancelled when the view closes or switches file), `views/blame.rs` (takes new groups each frame, placeholder gutter for lines not reached yet, "blaming… n of m lines"); test: `gk-core/src/blame.rs::incremental_records`, `incremental_line_by_line`, `views/blame.rs::partial_feed_fills_in`, `it/blame.rs::streaming_matches_porcelain`, `streaming_many_groups`, `streaming_cancelled_before_start`; E2E: `r-blame.script` | |
 
 ## Diff
 
@@ -354,12 +354,11 @@ One line per Missing or Partial item: what to add, and where.
 
 - History cancellation: pass a session-owned interrupt flag that a newer refresh sets into `history::build` (`session.rs:625`).
 - Priorities: add a small priority scheduler (visible > prefetch > background) in front of rayon for diffs, metas and search (`gk-core/src/session.rs` `load`, `history.rs:219`).
-- Interning: intern status paths (arena or `Arc<str>` table) and share them between status, lists and the tree (`gk-status/src/lib.rs` Entry, `views/file_status/tree.rs`).
+- Interning: status paths are shared buffers now; let the file list and tree keep `PathStr`s instead of copying them into `String`s (`views/file_status.rs:131`, `views/file_status/tree.rs`).
 
 **Status engine**
 
 - Snapshot cache: persist the last status, refs and history ids per repo (redb), and publish them on open before the first refresh (`gk-core/src/session.rs::open`, new cache module).
-- fsmonitor: when `core.fsmonitor` is set, query the daemon (`git fsmonitor--daemon` IPC, or `git status` with fsmonitor) for changed paths before a full scan (`gk-status/src/fast.rs` / `lib.rs::compute`).
 - Watcher pause: keep a handle and call `Watcher::pause()` / `resume()` around `op_loop` jobs (`session.rs:650-700`).
 
 **History engine**
@@ -367,7 +366,6 @@ One line per Missing or Partial item: what to add, and where.
 - Commit-graph offer: when opening a repo with more than ~10k commits and no commit-graph, show a one-click "Write commit-graph" message (`session.rs` refresh_loop, `statusbar.rs`).
 - Chunked layout: publish the first N laid-out rows while the walk continues, extending `History` incrementally (`gk-core/src/history.rs::build`, `session.rs:625`).
 - Layout cache: store `ids` and layout checkpoints keyed by tip set in redb, and validate them on open (`gk-graph/src/layout.rs`, `gk-core/src/history.rs`).
-- Blame streaming: use `git blame --incremental` through `run_streaming` and fill lines as records arrive (`gk-core/src/advanced.rs:250`, `views/blame.rs`).
 
 **Diff**
 

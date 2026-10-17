@@ -374,6 +374,13 @@ impl Session {
         self.inner.meta.get_many(ids, move || (i.repaint)())
     }
 
+    /// A callback that asks the UI to repaint, for work the app runs on its
+    /// own threads (e.g. streaming blame).
+    pub fn repaint_handle(&self) -> impl Fn() + Send + Sync + 'static {
+        let i = self.inner.clone();
+        move || (i.repaint)()
+    }
+
     pub fn dismiss_messages(&self) {
         let mut s = self.inner.snap.write();
         s.messages.clear();
@@ -712,6 +719,7 @@ fn refresh_loop(inner: Arc<Shared>, rx: Receiver<Refresh>) {
                             staged: Vec::new(),
                             unstaged,
                             took: start.elapsed(),
+                            fsmonitor: false,
                         })
                     }
                     _ => None,
