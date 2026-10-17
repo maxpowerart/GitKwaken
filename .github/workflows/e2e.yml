@@ -57,7 +57,9 @@ jobs:
         shell: pwsh
         run: |
           Get-CimInstance Win32_VideoController | Select-Object Name, DriverVersion | Format-Table
+          # `query user` exits 1 when nobody is logged on interactively: informational only.
           query user 2>$null; "Session: $([System.Diagnostics.Process]::GetCurrentProcess().SessionId)"
+          exit 0
 
       - name: Run E2E suites
         shell: bash

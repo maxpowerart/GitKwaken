@@ -212,6 +212,11 @@ impl Git {
         cancel: &CancelToken,
         mut on_line: impl FnMut(Line) + Send,
     ) -> Result<Output> {
+        // Already cancelled: don't start. A fast command (local fetch) could
+        // otherwise finish before the loop below ever looks at the token.
+        if cancel.is_cancelled() {
+            return Err(anyhow!("cancelled"));
+        }
         let started = Instant::now();
         let mut cmd = self.command(args);
         cmd.stdin(if stdin.is_some() {

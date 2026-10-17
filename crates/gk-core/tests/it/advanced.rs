@@ -60,19 +60,26 @@ fn bisect_finds_first_bad_commit() {
     assert!(t.exists(".git/BISECT_LOG"));
 
     let mut found = None;
+    let mut transcript = String::new();
     for _ in 0..12 {
-        let mark = if t.read("state.txt").starts_with("bug") {
+        let state = t.read("state.txt");
+        let mark = if state.starts_with("bug") {
             BisectMark::Bad
         } else {
             BisectMark::Good
         };
         let out = t.repo.bisect_mark(mark, None).unwrap();
+        transcript.push_str(&format!("--- {mark:?} at {:?}:\n{out}\n", state.trim()));
         if out.contains("is the first bad commit") {
             found = out.split_whitespace().next().map(str::to_string);
             break;
         }
     }
-    assert_eq!(found.as_deref(), Some(first_bad.as_str()));
+    assert_eq!(
+        found.as_deref(),
+        Some(first_bad.as_str()),
+        "bisect transcript:\n{transcript}"
+    );
 
     t.repo.bisect_reset().unwrap();
     assert!(!t.exists(".git/BISECT_LOG"));

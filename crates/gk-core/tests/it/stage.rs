@@ -117,7 +117,15 @@ fn compare(autocrlf: bool) {
     // Stat data is valid: nothing shows as modified in the worktree.
     assert_eq!(ours.git(&["diff", "--name-only"]), "");
     // The in-process path ran (it writes a pack; git add writes loose objects).
-    assert!(has_pack(&ours) && !has_pack(&theirs));
+    assert!(
+        has_pack(&ours) && !has_pack(&theirs),
+        "in-process staging was not used (ours pack: {}, theirs pack: {}); a direct run returns: {:?}",
+        has_pack(&ours),
+        has_pack(&theirs),
+        ours.repo
+            .stage_in_process_checked(&paths)
+            .map(|rest| format!("{} of {} paths left to git", rest.len(), paths.len()))
+    );
     ours.git(&["fsck", "--no-dangling"]);
     // The cached trees were invalidated where needed: commits are equal.
     ours.commit("staged");

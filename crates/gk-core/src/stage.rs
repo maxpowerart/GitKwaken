@@ -44,6 +44,13 @@ impl Repo {
     /// Stages `paths` (files, not directories) without git where possible.
     /// Returns the paths git still has to stage. On error nothing was written
     /// to the index (blobs may have been written, which is harmless).
+    /// The in-process staging step alone, errors included (normally they are
+    /// logged and the paths go to git). For tests and diagnostics.
+    #[doc(hidden)]
+    pub fn stage_in_process_checked(&self, paths: &[String]) -> Result<Vec<String>> {
+        self.stage_in_process(paths)
+    }
+
     pub(crate) fn stage_in_process(&self, paths: &[String]) -> Result<Vec<String>> {
         let _span = tracing::info_span!("stage_in_process", n = paths.len()).entered();
         // A fresh handle: the configuration (autocrlf, eol, filemode…) may
