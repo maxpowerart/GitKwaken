@@ -3,7 +3,7 @@
 
 use crate::Repo;
 use anyhow::{Result, bail};
-use crate::ops::literal_paths;
+use crate::ops::{literal_paths, plain};
 use gk_cli::CancelToken;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -252,6 +252,7 @@ impl Repo {
     }
 
     pub fn worktree_add(&self, path: &std::path::Path, branch: &str, new_branch: bool) -> Result<()> {
+        plain(&[&path.to_string_lossy(), branch])?;
         let p = path.to_string_lossy().to_string();
         if new_branch {
             self.git().run(&["worktree", "add", "-b", branch, &p])?;
@@ -293,6 +294,7 @@ impl Repo {
     }
 
     pub fn submodule_add(&self, url: &str, path: &str, cancel: &CancelToken, p: crate::ops::Progress) -> Result<()> {
+        plain(&[url, path])?;
         self.git().run_streaming(&["submodule", "add", "--progress", url, path], None, cancel, p)?.check()?;
         Ok(())
     }
@@ -304,6 +306,7 @@ impl Repo {
 
     // bisect ------------------------------------------------------------------
     pub fn bisect_start(&self, bad: &str, good: &str) -> Result<String> {
+        plain(&[bad, good])?;
         self.git().run(&["bisect", "start", bad, good])?;
         Ok(self.git().run(&["bisect", "log"])?.stdout_str())
     }
@@ -442,6 +445,7 @@ impl Repo {
     }
 
     pub fn flow_start(&self, cfg: &FlowConfig, kind: FlowKind, name: &str, base: Option<&str>) -> Result<()> {
+        plain(&[name, base.unwrap_or_default()])?;
         let branch = format!("{}{name}", cfg.prefix(kind));
         let default_base = match kind {
             FlowKind::Hotfix => &cfg.master,

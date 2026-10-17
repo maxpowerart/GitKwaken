@@ -45,7 +45,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 }
 
 pub fn short_id(id: &str) -> &str {
-    &id[..id.len().min(8)]
+    id.get(..8).unwrap_or(id)
 }
 
 /// Small rounded label, as used for branch/tag decorations.

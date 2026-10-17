@@ -169,17 +169,21 @@ impl Repo {
     // ---------------------------------------------------------------- branches
 
     pub fn checkout(&self, rev: &str) -> Result<()> {
-        self.git().run(&["checkout", rev])?;
+        plain(&[rev])?;
+        // "--" keeps a vanished rev from being read as a path to restore.
+        self.git().run(&["checkout", rev, "--"])?;
         Ok(())
     }
 
     /// Checks out a remote branch as a new local tracking branch.
     pub fn checkout_remote(&self, remote_branch: &str, local: &str) -> Result<()> {
+        plain(&[remote_branch, local])?;
         self.git().run(&["checkout", "-b", local, "--track", remote_branch])?;
         Ok(())
     }
 
     pub fn create_branch(&self, name: &str, start: Option<&str>, checkout: bool) -> Result<()> {
+        plain(&[name, start.unwrap_or_default()])?;
         let mut args = vec![if checkout { "checkout" } else { "branch" }];
         if checkout {
             args.push("-b");
@@ -193,16 +197,19 @@ impl Repo {
     }
 
     pub fn delete_branch(&self, name: &str, force: bool) -> Result<()> {
+        plain(&[name])?;
         self.git().run(&["branch", if force { "-D" } else { "-d" }, name])?;
         Ok(())
     }
 
     pub fn rename_branch(&self, old: &str, new: &str) -> Result<()> {
+        plain(&[old, new])?;
         self.git().run(&["branch", "-m", old, new])?;
         Ok(())
     }
 
     pub fn set_upstream(&self, branch: &str, upstream: Option<&str>) -> Result<()> {
+        plain(&[branch, upstream.unwrap_or_default()])?;
         match upstream {
             Some(u) => self.git().run(&["branch", "--set-upstream-to", u, branch])?,
             None => self.git().run(&["branch", "--unset-upstream", branch])?,
@@ -221,6 +228,7 @@ impl Repo {
     // ---------------------------------------------------------------- tags
 
     pub fn create_tag(&self, name: &str, rev: &str, message: Option<&str>, sign: bool) -> Result<()> {
+        plain(&[name, rev])?;
         match message {
             Some(m) if !m.trim().is_empty() => {
                 let flag = if sign { "-s" } else { "-a" };
@@ -234,6 +242,7 @@ impl Repo {
     }
 
     pub fn delete_tag(&self, name: &str) -> Result<()> {
+        plain(&[name])?;
         self.git().run(&["tag", "-d", name])?;
         Ok(())
     }
@@ -241,6 +250,7 @@ impl Repo {
     // ---------------------------------------------------------------- history rewriting
 
     pub fn merge(&self, rev: &str, opts: &MergeOptions) -> Result<String> {
+        plain(&[rev])?;
         let mut args = vec!["merge"];
         match opts.ff {
             FastForward::Allow => {}
@@ -264,6 +274,7 @@ impl Repo {
     }
 
     pub fn rebase(&self, onto: &str) -> Result<String> {
+        plain(&[onto])?;
         let out = self.git().env("GIT_EDITOR", "true").run_raw(&["rebase", onto], None)?;
         conflict_aware(out)
     }
@@ -376,6 +387,7 @@ impl Repo {
     }
 
     pub fn reset(&self, rev: &str, mode: ResetMode) -> Result<()> {
+        plain(&[rev])?;
         let m = match mode {
             ResetMode::Soft => "--soft",
             ResetMode::Mixed => "--mixed",
@@ -526,21 +538,25 @@ impl Repo {
     }
 
     pub fn add_remote(&self, name: &str, url: &str) -> Result<()> {
+        plain(&[name, url])?;
         self.git().run(&["remote", "add", name, url])?;
         Ok(())
     }
 
     pub fn remove_remote(&self, name: &str) -> Result<()> {
+        plain(&[name])?;
         self.git().run(&["remote", "remove", name])?;
         Ok(())
     }
 
     pub fn rename_remote(&self, old: &str, new: &str) -> Result<()> {
+        plain(&[old, new])?;
         self.git().run(&["remote", "rename", old, new])?;
         Ok(())
     }
 
     pub fn set_remote_url(&self, name: &str, url: &str) -> Result<()> {
+        plain(&[name, url])?;
         self.git().run(&["remote", "set-url", name, url])?;
         Ok(())
     }
@@ -598,6 +614,7 @@ impl Repo {
     }
 
     pub fn archive(&self, rev: &str, out: &std::path::Path) -> Result<()> {
+        plain(&[rev])?;
         let o = out.to_string_lossy().to_string();
         self.git().run(&["archive", "-o", &o, rev])?;
         Ok(())
@@ -765,4 +782,13 @@ pub struct TodoItem {
 /// never match other files.
 pub(crate) fn literal_paths(paths: &[String]) -> Vec<u8> {
     nul_paths(paths.iter().map(|p| format!(":(literal){p}")))
+}
+
+/// Rejects user-supplied names, revisions, URLs and paths that git would
+/// parse as options (e.g. a "branch" called `--force`).
+pub(crate) fn plain(args: &[&str]) -> Result<()> {
+    if let Some(a) = args.iter().find(|a| a.trim_start().starts_with('-')) {
+        bail!("'{a}' is not allowed: names may not start with '-'");
+    }
+    Ok(())
 }

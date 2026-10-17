@@ -249,7 +249,9 @@ impl GkApp {
                 i.consume_key(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, egui::Key::P),
             )
         });
-        if palette {
+        // Never open over a dialog: its unsaved input would be lost.
+        let dialog_open = self.tabs.get(self.active).is_some_and(|t| t.dialog.is_some());
+        if palette && !dialog_open {
             self.command_palette.toggle();
         }
         if open {

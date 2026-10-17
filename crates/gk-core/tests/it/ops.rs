@@ -690,3 +690,12 @@ fn stage_treats_paths_literally() {
     let staged = t.git(&["diff", "--cached", "--name-only"]);
     assert_eq!(staged, "a[b].txt");
 }
+
+#[test]
+fn option_like_names_are_rejected() {
+    let t = TestRepo::new();
+    t.commit_file("a.txt", "a\n", "init");
+    assert!(t.repo.create_branch("--force", None, false).is_err());
+    assert!(t.repo.checkout("-q").is_err());
+    assert!(t.repo.add_remote("origin", "--upload-pack=evil").is_err());
+}
