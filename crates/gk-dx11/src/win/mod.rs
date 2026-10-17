@@ -258,7 +258,9 @@ impl Running {
         self.info.events.clear();
 
         let app = &mut self.app;
+        let ui_start = std::time::Instant::now();
         let output = ctx.run_ui(input, |ui| app.ui(ui));
+        frame_stats(ui_start.elapsed());
         if std::env::var_os("GK_DX11_SCREENSHOT").is_some() {
             // Keep frames coming until the scheduled screenshot is taken.
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -394,5 +396,71 @@ fn hwnd_of(window: &Window) -> Result<HWND> {
     match window.window_handle()?.as_raw() {
         RawWindowHandle::Win32(h) => Ok(HWND(h.hwnd.get() as _)),
         other => Err(anyhow!("unexpected window handle {other:?}")),
+    }
+}
+
+/// `GK_DX11_FRAME_STATS=<file>` appends one line per 300 frames with frame
+/// interval and UI build time (average / worst), for performance checks.
+/// A file is used because release builds have no console.
+fn frame_stats(ui_time: std::time::Duration) {
+    use std::sync::Mutex;
+    struct Stats {
+        last: Option<std::time::Instant>,
+        frames: u32,
+        sum_interval: f64,
+        worst_interval: f64,
+        sum_ui: f64,
+        worst_ui: f64,
+    }
+    static STATS: Mutex<Option<Stats>> = Mutex::new(None);
+    let Some(path) = std::env::var_os("GK_DX11_FRAME_STATS") else {
+        return;
+    };
+    let mut guard = STATS.lock().unwrap_or_else(|e| e.into_inner());
+    let s = guard.get_or_insert(Stats {
+        last: None,
+        frames: 0,
+        sum_interval: 0.0,
+        worst_interval: 0.0,
+        sum_ui: 0.0,
+        worst_ui: 0.0,
+    });
+    let now = std::time::Instant::now();
+    if let Some(last) = s.last {
+        let iv = (now - last).as_secs_f64() * 1000.0;
+        s.sum_interval += iv;
+        s.worst_interval = s.worst_interval.max(iv);
+        let ui = ui_time.as_secs_f64() * 1000.0;
+        s.sum_ui += ui;
+        s.worst_ui = s.worst_ui.max(ui);
+        s.frames += 1;
+    }
+    s.last = Some(now);
+    if s.frames == 300 {
+        let n = s.frames as f64;
+        let line = format!(
+            "frames={} avg_fps={:.0} worst_frame_ms={:.2} avg_ui_ms={:.3} worst_ui_ms={:.2}\n",
+            s.frames,
+            1000.0 / (s.sum_interval / n),
+            s.worst_interval,
+            s.sum_ui / n,
+            s.worst_ui
+        );
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            use std::io::Write;
+            let _ = f.write_all(line.as_bytes());
+        }
+        *s = Stats {
+            last: Some(now),
+            frames: 0,
+            sum_interval: 0.0,
+            worst_interval: 0.0,
+            sum_ui: 0.0,
+            worst_ui: 0.0,
+        };
     }
 }
