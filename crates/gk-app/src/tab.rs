@@ -28,6 +28,8 @@ pub struct RepoTab {
     pub dialog: Option<Dialog>,
     /// Last snapshot generation seen, to detect changes cheaply.
     pub seen_generation: u64,
+    last_fetch: Option<std::time::Instant>,
+    fetching: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl RepoTab {
@@ -69,6 +71,8 @@ impl RepoTab {
             search: Default::default(),
             dialog: None,
             seen_generation: 0,
+            last_fetch: None,
+            fetching: Default::default(),
             state,
         };
         tab.status.commit.message = tab.state.commit_message_draft.clone();
@@ -85,9 +89,64 @@ impl RepoTab {
         let _ = self.state.save(&self.path);
     }
 
+    /// Fetches in the background every `auto_fetch_minutes`; failures stay quiet
+    /// (offline laptops should not get an error every few minutes).
+    fn auto_fetch(&mut self, snap: &gk_core::Snapshot, minutes: u32) {
+        if minutes == 0 || snap.refs.remotes.is_empty() || snap.op.is_some() {
+            return;
+        }
+        let due = self.last_fetch.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(minutes as u64 * 60));
+        if !due || self.fetching.load(std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        self.last_fetch = Some(std::time::Instant::now());
+        self.fetching.store(true, std::sync::atomic::Ordering::SeqCst);
+        let session = self.session.clone();
+        let flag = self.fetching.clone();
+        std::thread::spawn(move || {
+            let opts = gk_core::ops::FetchOptions { prune: true, tags: false };
+            let ok = session
+                .repo()
+                .fetch(None, &opts, &gk_cli::CancelToken::new(), &mut |_| {})
+                .is_ok();
+            flag.store(false, std::sync::atomic::Ordering::SeqCst);
+            if ok {
+                session.refresh_all();
+            }
+        });
+    }
+
+    fn shortcuts(&mut self, ctx: &egui::Context) {
+        use egui::{Key, Modifiers};
+        let (refresh, v1, v2, v3) = ctx.input_mut(|i| {
+            (
+                i.consume_key(Modifiers::NONE, Key::F5),
+                i.consume_key(Modifiers::COMMAND, Key::Num1),
+                i.consume_key(Modifiers::COMMAND, Key::Num2),
+                i.consume_key(Modifiers::COMMAND, Key::Num3),
+            )
+        });
+        if refresh {
+            self.session.refresh_all();
+        }
+        if v1 {
+            self.view = View::FileStatus;
+        }
+        if v2 {
+            self.view = View::History;
+        }
+        if v3 {
+            self.view = View::Search;
+        }
+    }
+
     /// Renders the whole tab body (toolbar, sidebar, main view, dialogs).
     pub fn show(&mut self, ui: &mut egui::Ui, shared: &mut Shared) {
         let snap = self.session.snapshot();
+        if self.dialog.is_none() {
+            self.shortcuts(ui.ctx());
+        }
+        self.auto_fetch(&snap, shared.settings.auto_fetch_minutes);
         views::toolbar::show(ui, self, &snap, shared);
         views::statusbar::show(ui, self, &snap, shared);
         egui::Panel::left(egui::Id::new(("sidebar", &self.path)))

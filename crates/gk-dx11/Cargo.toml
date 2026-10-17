@@ -1,0 +1,26 @@
+[package]
+name = "gk-dx11"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Runs an egui app in a native window rendered with Direct3D 11 (eframe fallback off Windows)."
+
+[dependencies]
+anyhow = { workspace = true }
+egui = "0.35"
+log = "0.4"
+
+[target.'cfg(windows)'.dependencies]
+egui-directx11 = "0.13"
+egui-winit = { version = "0.35", default-features = false, features = ["clipboard", "links"] }
+winit = { version = "0.30.13", default-features = false, features = ["rwh_06"] }
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+] }
+
+[target.'cfg(not(windows))'.dependencies]
+eframe = "0.35"
