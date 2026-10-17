@@ -21,7 +21,10 @@ use std::process::{Child, ChildStdin, ChildStdout, Stdio};
 use std::sync::Arc;
 use std::time::Instant;
 
-const ARGS: [&str; 2] = ["cat-file", "--batch-command"];
+/// `--buffer` + an explicit `flush` after every request: without `--buffer`,
+/// newer git (the 2.5x on CI runners) does not flush each reply by itself and
+/// the reader would wait forever; with it, the flush point is ours on any version.
+const ARGS: [&str; 3] = ["cat-file", "--batch-command", "--buffer"];
 /// Bytes of the process's stderr kept for error messages.
 const STDERR_TAIL: usize = 4096;
 
@@ -131,6 +134,7 @@ impl Proc {
     fn exchange(&mut self, request: &[u8], data: bool, limit: u64) -> std::io::Result<Reply> {
         use std::io::{Error, ErrorKind};
         self.stdin.write_all(request)?;
+        self.stdin.write_all(b"flush\n")?;
         self.stdin.flush()?;
         let mut header = Vec::with_capacity(96);
         self.stdout.read_until(b'\n', &mut header)?;
