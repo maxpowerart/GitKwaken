@@ -61,8 +61,10 @@ try {
         Write-Host "==> repository $Repo; update channel $env:GITKWAKEN_UPDATE_CHANNEL"
     } else {
         $RepoUrl = ''
-        Remove-Item Env:GITKWAKEN_UPDATE_CHANNEL -ErrorAction SilentlyContinue
-        Write-Warning 'No GitHub repository (use -Repo owner/name or add an origin remote): the build has no built-in update channel and update.json uses relative URLs.'
+        # No GitHub repository: the release folder itself is the update channel,
+        # so builds published here are picked up by installed copies.
+        $env:GITKWAKEN_UPDATE_CHANNEL = 'file:///' + ((Join-Path $Dist 'update.json') -replace '\\', '/')
+        Write-Host "==> no GitHub repository; local update channel $env:GITKWAKEN_UPDATE_CHANNEL"
         if (-not $DownloadBaseUrl) { $DownloadBaseUrl = '.' }
         if (-not $Notes) { $Notes = "GitKwaken $Version" }
     }

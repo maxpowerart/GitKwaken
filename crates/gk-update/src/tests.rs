@@ -307,3 +307,32 @@ fn relative_download_urls_resolve_against_manifest() {
         "https://x/y.zip"
     );
 }
+
+#[test]
+fn local_folder_channel_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let exe = b"MZ fake exe from a release folder";
+    let zip = make_zip(&[("GitKwaken-9.9.9-x64/gitkwaken.exe", exe)]);
+    std::fs::write(dir.path().join("GitKwaken-9.9.9-x64.zip"), &zip).unwrap();
+    // relative package URL, resolved against the manifest location
+    std::fs::write(
+        dir.path().join("update.json"),
+        manifest_json("9.9.9", "./GitKwaken-9.9.9-x64.zip", &sha_hex(&zip)),
+    )
+    .unwrap();
+    let url = format!("file:///{}", dir.path().join("update.json").display().to_string().replace(std::path::MAIN_SEPARATOR, "/"));
+    let rel = check("1.0.0", &url).unwrap().expect("newer release");
+    assert!(rel.url.starts_with("file:///"));
+    let stage = tempfile::tempdir().unwrap();
+    let staged = download_and_stage_in(&rel, stage.path(), |_, _| {}).unwrap();
+    assert_eq!(std::fs::read(staged).unwrap(), exe);
+    assert!(check("9.9.9", &url).unwrap().is_none());
+}
+
+#[test]
+fn local_path_forms() {
+    assert!(local_path("https://x/y").is_none());
+    assert!(local_path("file:///C:/r/update.json").is_some());
+    assert_eq!(local_path("file://srv/share/u.json").unwrap(), PathBuf::from("//srv/share/u.json"));
+    assert_eq!(local_path(r"D:\rel\update.json").unwrap(), PathBuf::from(r"D:\rel\update.json"));
+}

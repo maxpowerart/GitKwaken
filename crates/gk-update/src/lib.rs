@@ -69,9 +69,14 @@ pub fn parse_manifest(json: &str) -> Result<Release> {
         "update manifest: sha256 must be 64 hex chars"
     );
     r.sha256.make_ascii_lowercase();
+    // http(s) or relative to the manifest (local channels use relative URLs).
+    // Absolute file:// or other schemes are rejected so a remote manifest can
+    // never point at local files.
     ensure!(
-        r.url.starts_with("https://") || r.url.starts_with("http://"),
-        "update manifest: url must be http(s)"
+        r.url.starts_with("https://")
+            || r.url.starts_with("http://")
+            || !r.url.contains(':'),
+        "update manifest: url must be http(s) or relative to the manifest"
     );
     Ok(r)
 }
@@ -102,16 +107,11 @@ fn agent(timeout: Duration) -> ureq::Agent {
 ///
 /// Blocking (network): call from a background thread.
 pub fn check(current: &str, channel_url: &str) -> Result<Option<Release>> {
-    let mut resp = agent(Duration::from_secs(20))
-        .get(channel_url)
-        .header("Accept", "application/json")
-        .call()
-        .with_context(|| format!("fetch {channel_url}"))?;
-    let body = resp
-        .body_mut()
-        .with_config()
-        .limit(MANIFEST_LIMIT)
-        .read_to_string()
+    let (reader, _) = open_source(channel_url, Duration::from_secs(20))?;
+    let mut body = String::new();
+    reader
+        .take(MANIFEST_LIMIT)
+        .read_to_string(&mut body)
         .context("read update manifest")?;
     let mut release = parse_manifest(&body)?;
     release.url = resolve_url(channel_url, &release.url);
@@ -154,12 +154,7 @@ pub fn download_and_stage_in(
     let zip_path = dir.join(format!("GitKwaken-{version}.zip.part"));
 
     let result = (|| -> Result<PathBuf> {
-        let mut resp = agent(Duration::from_secs(30 * 60))
-            .get(&release.url)
-            .call()
-            .with_context(|| format!("download {}", release.url))?;
-        let total = resp.body().content_length().unwrap_or(0);
-        let mut reader = resp.body_mut().as_reader();
+        let (mut reader, total) = open_source(&release.url, Duration::from_secs(30 * 60))?;
         let mut file = fs::File::create(&zip_path)
             .with_context(|| format!("create {}", zip_path.display()))?;
         let mut hasher = Sha256::new();
@@ -331,3 +326,33 @@ pub fn sha256_file(path: &Path) -> Result<String> {
 
 #[cfg(test)]
 mod tests;
+
+/// Local channels: `file:///D:/releases/update.json`, `file://server/share/...`
+/// or a plain path. Lets a team (or a single machine) publish releases to a
+/// folder or network share without any web server.
+pub fn local_path(url: &str) -> Option<PathBuf> {
+    let rest = if let Some(r) = url.strip_prefix("file:///") {
+        // file:///C:/x on Windows, file:///home/x elsewhere
+        if cfg!(windows) { r.to_string() } else { format!("/{r}") }
+    } else if let Some(r) = url.strip_prefix("file://") {
+        format!("//{r}") // UNC share
+    } else if !url.contains("://") {
+        url.to_string()
+    } else {
+        return None;
+    };
+    Some(PathBuf::from(rest.replace("%20", " ")))
+}
+
+/// Opens a manifest or package from HTTP(S) or a local channel; returns the
+/// reader and the total size when known.
+fn open_source(url: &str, timeout: Duration) -> Result<(Box<dyn Read + Send>, u64)> {
+    if let Some(path) = local_path(url) {
+        let file = fs::File::open(&path).with_context(|| format!("open {}", path.display()))?;
+        let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+        return Ok((Box::new(file), len));
+    }
+    let resp = agent(timeout).get(url).call().with_context(|| format!("fetch {url}"))?;
+    let total = resp.body().content_length().unwrap_or(0);
+    Ok((Box::new(resp.into_body().into_reader()), total))
+}
