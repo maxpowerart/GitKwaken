@@ -57,8 +57,9 @@ History: demo 107 MB, git.git 133 MB, r1m 368 MB.
 
 Each metric is the median of `--runs` (default 5) runs after one warm-up. It
 **fails** when it is more than 10% slower than the baseline median **and** more
-than 2 ms slower in absolute terms (`--threshold`, `--floor-ms`), so
-sub-millisecond metrics cannot flap on timer noise. A run prints a Markdown
+than 2 ms slower in absolute terms (`--threshold`, `--floor-ms`), for both the
+median and the fastest run, so timer noise and one-off stalls on a shared
+runner cannot flap the gate. A run prints a Markdown
 table (also appended to the GitHub job summary) and exits 1 on a regression.
 Two consecutive local runs against a fresh baseline stayed within -30%..+8%.
 

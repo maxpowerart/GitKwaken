@@ -9,8 +9,9 @@
 //!
 //! Each metric is the median of `--runs` (default 5) runs. A metric regresses
 //! when it is more than `--threshold` percent (default 10) slower than the
-//! baseline median *and* more than `--floor-ms` (default 2 ms) slower in
-//! absolute terms, so sub-millisecond metrics do not flap on timer noise.
+//! baseline *and* more than `--floor-ms` (default 2 ms) slower in
+//! absolute terms, for both the median and the fastest run, so timer noise
+//! and one-off stalls on shared runners do not flap the gate.
 //! Without a baseline file (or with `--record`) the results become the new
 //! baseline and the command succeeds.
 
@@ -275,29 +276,35 @@ pub fn compare(
     floor_ms: f64,
 ) -> (String, Vec<String>) {
     let mut t = String::from(
-        "| metric | baseline ms | current ms | change | |\n|---|---:|---:|---:|---|\n",
+        "| metric | baseline ms | current ms | median | min | |\n|---|---:|---:|---:|---:|---|\n",
     );
     let mut failures = Vec::new();
     for (name, m) in &cur.metrics {
         let Some(b) = base.metrics.get(name) else {
-            let _ = writeln!(t, "| {name} | – | {:.2} | new | |", m.median_ms);
+            let _ = writeln!(t, "| {name} | – | {:.2} | new | | |", m.median_ms);
             continue;
         };
-        let delta = m.median_ms - b.median_ms;
-        let pct = if b.median_ms > 0.0 {
-            delta / b.median_ms * 100.0
-        } else {
-            0.0
+        let pct = |cur: f64, base: f64| {
+            if base > 0.0 {
+                (cur - base) / base * 100.0
+            } else {
+                0.0
+            }
         };
-        let regressed = pct > threshold && delta > floor_ms;
+        let slower = |cur: f64, base: f64| pct(cur, base) > threshold && cur - base > floor_ms;
+        // Both the median and the fastest run must be slower: one noisy
+        // neighbour on a shared runner moves the median, rarely the minimum.
+        let regressed = slower(m.median_ms, b.median_ms) && slower(m.min_ms, b.min_ms);
         if regressed {
             failures.push(name.clone());
         }
         let _ = writeln!(
             t,
-            "| {name} | {:.2} | {:.2} | {pct:+.1}% | {} |",
+            "| {name} | {:.2} | {:.2} | {:+.1}% | {:+.1}% | {} |",
             b.median_ms,
             m.median_ms,
+            pct(m.median_ms, b.median_ms),
+            pct(m.min_ms, b.min_ms),
             if regressed { "REGRESSION" } else { "ok" }
         );
     }
@@ -308,7 +315,7 @@ pub fn compare(
     {
         let _ = writeln!(
             t,
-            "| {name} | {:.2} | – | removed | |",
+            "| {name} | {:.2} | – | removed | | |",
             base.metrics[name].median_ms
         );
     }
@@ -514,6 +521,18 @@ mod tests {
         assert_eq!(fails, ["slow"]);
         assert!(table.contains("| new |"), "{table}");
         assert!(table.contains("removed"), "{table}");
+    }
+
+    #[test]
+    fn noisy_median_with_steady_minimum_passes() {
+        let base = report(&[("gix", 45.0)]);
+        let mut cur = report(&[("gix", 50.0)]);
+        // Median +11%, but the fastest run is as fast as before: noise.
+        cur.metrics.get_mut("gix").unwrap().min_ms = 45.5;
+        assert!(compare(&base, &cur, 10.0, 2.0).1.is_empty());
+        // Fastest run slower too: a real regression.
+        cur.metrics.get_mut("gix").unwrap().min_ms = 50.0;
+        assert_eq!(compare(&base, &cur, 10.0, 2.0).1, ["gix"]);
     }
 
     #[test]
