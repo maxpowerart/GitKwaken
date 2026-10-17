@@ -105,6 +105,7 @@
       <Component Id="Docs" Guid="3E23831A-CCD0-4A70-B64F-CECDAB3AB223">
         <File Id="LICENSE_MIT" Source="$(var.SourceDir)\LICENSE-MIT" />
         <File Id="LICENSE_APACHE" Source="$(var.SourceDir)\LICENSE-APACHE" />
+        <File Id="THIRD_PARTY_LICENSES" Source="$(var.SourceDir)\THIRD-PARTY-LICENSES.txt" />
         <File Id="README.md" Source="$(var.SourceDir)\README.md" />
         <RegistryValue Root="HKCU" Key="Software\GitKwaken\Installer" Name="Docs"
                        Type="integer" Value="1" KeyPath="yes" />

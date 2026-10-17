@@ -74,6 +74,7 @@ Name: "contextmenu"; Description: "Add ""Open in GitKwaken"" to the folder conte
 Source: "{#SourceDir}\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\LICENSE-MIT"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\LICENSE-APACHE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\THIRD-PARTY-LICENSES.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\README.md"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 #if FileExists(SourceDir + "\git\cmd\git.exe")
 ; Bundled MinGit (build-release.ps1 -BundleGit); gk-cli prefers {app}\git\cmd\git.exe.

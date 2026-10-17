@@ -799,6 +799,16 @@ mod tests {
             "#!/bin/sh\necho 'pre-commit: checked'\n",
         )
         .unwrap();
+        // git ignores hooks that are not executable (Unix only; Windows has no x bit).
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(
+                dir.join(".git/hooks/pre-commit"),
+                std::fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+        }
         std::fs::write(dir.join("a.txt"), "a\n").unwrap();
         git(&["add", "a.txt"]);
         let repo = Repo::open(&dir, gk_cli::CommandLog::default()).unwrap();

@@ -4,7 +4,7 @@
 
 .DESCRIPTION
   Outputs (in <repo>\dist):
-    GitKwaken-<ver>-x64\              staging folder (gitkwaken.exe, LICENSE-*, README.md)
+    GitKwaken-<ver>-x64\              staging folder (gitkwaken.exe, LICENSE-*, THIRD-PARTY-LICENSES.txt, README.md)
     GitKwaken-<ver>-x64.zip           portable build; also what the self-updater downloads
     GitKwaken-<ver>-x64-setup.exe     installer (only when ISCC.exe is found)
     GitKwaken-<ver>-x64.msi           per-user MSI (only when the WiX CLI `wix` is found;
@@ -180,6 +180,10 @@ try {
         $p = Join-Path $Root $f
         if (Test-Path $p) { Copy-Item $p $Stage } else { Write-Warning "$f not found, skipped" }
     }
+    # Notices of every crate compiled into the exe (and its bundled fonts / syntaxes):
+    # MIT, BSD, Apache-2.0, OFL and the rest require them to travel with the binary.
+    & (Join-Path $Root 'scripts\third-party-licenses.ps1') -Out (Join-Path $Stage 'THIRD-PARTY-LICENSES.txt')
+    if (-not (Test-Path (Join-Path $Stage 'THIRD-PARTY-LICENSES.txt'))) { throw 'THIRD-PARTY-LICENSES.txt was not generated' }
     if ($BundleGit) {
         Install-MinGit -Dest (Join-Path $Stage 'git') -WantVersion $MinGitVersion -CacheDir (Join-Path $Dist 'cache')
     }
