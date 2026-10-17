@@ -1,8 +1,8 @@
 # Context menu on "Add f6 to lib" -> Create branch here... -> name -> Create.
 wait 2500
-rclick 480 185.6
+rclick 480 217.6
 wait 500
-click 520 234.6
+click 520 266.6
 wait 800
 click 710 424
 type e2e-at-f6

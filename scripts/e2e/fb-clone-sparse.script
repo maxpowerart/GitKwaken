@@ -2,7 +2,10 @@
 # The dialog closes at once; the clone runs in the background (jobs panel)
 # and opens as a new tab.
 wait 2500
-click 1276 14
+# File > Clone repository…
+click 17.6 12
+wait 400
+click 67 59.2
 wait 800
 type $WORK/sparse-src.git
 key Tab

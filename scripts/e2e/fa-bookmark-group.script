@@ -1,11 +1,11 @@
 # Welcome: right-click bookmark "alpha" -> Move to group -> New group… ->
 # "Work" -> Enter. The bookmarks then show grouped.
 wait 1500
-rclick 294 252
+rclick 294 272.4
 wait 400
-move 345.6 291.2
+move 345.6 311.6
 wait 600
-click 468 323.2
+click 468 343.6
 wait 600
 type Work
 key Enter

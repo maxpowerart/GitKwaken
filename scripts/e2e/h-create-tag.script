@@ -1,9 +1,9 @@
 # Context menu on "Add f5 to lib" -> Create tag here... -> name + message
 # (annotated) -> Add tag.
 wait 2500
-rclick 480 207.6
+rclick 480 239.6
 wait 500
-click 520 277.6
+click 520 309.6
 wait 800
 click 664 347
 type v-e2e

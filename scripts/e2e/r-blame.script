@@ -1,13 +1,13 @@
 # Right-click README.md -> Blame; then "Blame previous revision" on line 4.
 wait 2500
-rclick 328 217
+rclick 328 255.2
 wait 500
-click 354 461.6
+click 354 499.8
 wait 2000
 shot $OUT/blame.png
-rclick 400 182
+rclick 400 215.6
 wait 500
-click 440 197
+click 440 230.6
 wait 2000
 shot $OUT/blame-previous.png
 exit

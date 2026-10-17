@@ -1,6 +1,6 @@
 # Commit-graph banner -> "Don't ask for this repository" (saved per repository).
 wait 6000
-click 645.6 88
+click 645.6 121.6
 wait 1000
 shot $OUT/fb-commit-graph-never.png
 exit

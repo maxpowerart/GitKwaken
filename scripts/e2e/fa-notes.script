@@ -1,9 +1,9 @@
 # Context menu on "Add f6 to lib" -> Add/Edit note… -> two lines -> Ctrl+Enter;
 # the details then show the note.
 wait 2500
-rclick 480 185.6
+rclick 480 217.6
 wait 400
-click 533.6 570.4
+click 533.6 602.4
 wait 1000
 type Reviewed by E2E
 key Enter
@@ -12,7 +12,7 @@ wait 300
 shot $OUT/fa-notes-dialog.png
 key Enter ctrl
 wait 3000
-click 480 185.6
+click 480 217.6
 wait 1500
 shot $OUT/fa-notes-details.png
 exit

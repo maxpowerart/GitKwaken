@@ -1,7 +1,7 @@
 # History: select "Add f6 to lib"; Ctrl+B -> new branch kb-branch (checked
 # out); select it again, Shift+F10 -> keyboard menu -> Create tag here… -> kb-tag.
 wait 2500
-click 480 185.6
+click 480 217.6
 wait 300
 key B ctrl
 wait 800
@@ -11,12 +11,12 @@ wait 300
 shot $OUT/fa-keys-branch-dialog.png
 click 826 573
 wait 3000
-click 480 185.6
+click 480 217.6
 wait 300
 key F10 shift
 wait 500
 shot $OUT/fa-keys-menu.png
-click 344 268
+click 344 300
 wait 800
 click 664 347
 type kb-tag

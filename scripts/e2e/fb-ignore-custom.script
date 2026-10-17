@@ -1,17 +1,17 @@
 # Unstaged TODO.txt -> Ignore -> Custom pattern... (prefilled "*.txt",
 # preview lists TODO.txt) -> Enter.
 wait 2500
-rclick 320 260
+rclick 320 302.4
 wait 300
-move 322 261
+move 322 303.4
 wait 300
-click 347 353
+click 347 395.4
 wait 300
-move 350 354
+move 350 396.4
 wait 300
-move 542 407
+move 542 449.4
 wait 200
-click 542 407
+click 542 449.4
 wait 1500
 move 600 500
 wait 300

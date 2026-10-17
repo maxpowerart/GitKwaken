@@ -1,8 +1,8 @@
 # Context menu on "Add search" (feature/search) -> Cherry-pick... onto main.
 wait 2500
-rclick 480 295.6
+rclick 480 327.6
 wait 500
-click 520 473.6
+click 520 505.6
 wait 800
 shot $OUT/h-cherry-pick-dialog.png
 click 853 515

@@ -1,8 +1,8 @@
 # Resolve the conflict with "Use theirs" and save.
 wait 3000
-click 481 160
+click 481 192.8
 wait 500
-click 1259 96
+click 1259 128.8
 wait 3000
 shot $OUT/merge.png
 exit

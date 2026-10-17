@@ -1,6 +1,6 @@
 # Toolbar Stash: message + "Include untracked files" -> Stash.
 wait 2500
-click 406 50
+click 431 80
 wait 600
 type E2E stash
 click 457 460

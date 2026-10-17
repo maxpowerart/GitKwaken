@@ -1,8 +1,8 @@
 # Context menu on "Add f6 to lib" -> Remove note… -> Enter.
 wait 2500
-rclick 480 185.6
+rclick 480 217.6
 wait 400
-click 533.6 592
+click 533.6 624
 wait 1500
 shot $OUT/fa-notes-remove-dialog.png
 key Enter

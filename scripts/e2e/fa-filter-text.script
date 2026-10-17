@@ -1,14 +1,14 @@
 # Message filter "search" (toolbar) + Author "demo" (filter row).
 wait 2500
-click 1240 92
+click 974.4 124.8
 type search
-click 1369 92
+click 1104 124.8
 wait 300
-click 360 118.4
+click 360 151.2
 type demo
 wait 2000
 shot $OUT/fa-filter-text.png
-click 480 172
+click 480 204.8
 wait 300
 key End shift
 wait 300

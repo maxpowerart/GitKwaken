@@ -1,6 +1,6 @@
 # History toolbar "Undo…" after a commit -> preview -> Enter (soft reset).
 wait 2500
-click 497.6 92
+click 552 124.8
 wait 2000
 shot $OUT/fa-undo-commit-dialog.png
 key Enter

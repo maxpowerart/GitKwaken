@@ -1,6 +1,6 @@
 # Double-click "login" under BRANCHES/feature in the sidebar.
 wait 2500
-dblclick 80 306.3
+dblclick 80 348.8
 wait 3000
 shot $OUT/h-sidebar-checkout.png
 exit

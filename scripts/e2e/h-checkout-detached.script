@@ -1,7 +1,7 @@
 # Double-click a commit without a branch ("Add f6 to lib") -> detached HEAD
 # warning -> "Checkout (detached HEAD)".
 wait 2500
-dblclick 480 185.6
+dblclick 480 217.6
 wait 1000
 shot $OUT/h-detached-dialog.png
 click 780 532.8

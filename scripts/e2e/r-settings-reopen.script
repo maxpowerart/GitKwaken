@@ -1,6 +1,6 @@
 # Restart with the same config: light theme and 6 context lines persist.
 wait 2500
-click 328 217
+click 328 255.2
 wait 1500
 shot $OUT/settings-reopen.png
 exit

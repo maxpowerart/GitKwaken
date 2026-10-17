@@ -1,6 +1,6 @@
 # Toolbar Push -> Push (current branch preselected).
 wait 2500
-click 155 50
+click 156 80
 wait 800
 key Enter
 wait 3500

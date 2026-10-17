@@ -1,9 +1,9 @@
 # Reflog view: context menu on HEAD@{1} -> Create branch here… -> from-reflog.
 wait 2500
 shot $OUT/fa-reflog-view.png
-rclick 600 141.6
+rclick 600 174.4
 wait 400
-click 668 180
+click 668 212.8
 wait 800
 click 710 424
 type from-reflog

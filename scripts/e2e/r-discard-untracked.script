@@ -1,8 +1,8 @@
 # Right-click new.txt (untracked, now the only file) -> Discard… -> Discard.
 wait 2500
-rclick 328 217
+rclick 328 255.2
 wait 500
-click 362 266
+click 362 304.2
 wait 600
 shot $OUT/discard-untracked-dialog.png
 key Enter

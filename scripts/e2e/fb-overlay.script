@@ -1,8 +1,8 @@
 # Changed image: Overlay mode; a click on the image sets the opacity.
 wait 3000
-click 822 144
+click 822 206
 wait 500
-click 1150 450
+click 1150 512
 wait 500
 move 1100 800
 wait 300

@@ -1,6 +1,6 @@
 # Push with "Force push" + the confirmation tick after an amend.
 wait 2500
-click 155 50
+click 156 80
 wait 800
 click 387 526
 wait 400

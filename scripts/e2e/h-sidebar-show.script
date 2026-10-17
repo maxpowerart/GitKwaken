@@ -1,11 +1,11 @@
 # Sidebar: bugfix/crash -> Show in history: "Fix greeting crash" gets selected
 # and shown in the details; its "Copy" button copies the full SHA.
 wait 2500
-rclick 80 263.7
+rclick 80 306.4
 wait 500
-click 130 530.9
+click 130 573.6
 wait 1500
 shot $OUT/h-sidebar-show.png
-click 608 564.8
+click 608 579.2
 wait 500
 exit
