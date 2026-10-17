@@ -1,0 +1,7 @@
+# Link the C runtime statically on Windows: gitkwaken.exe then runs on machines
+# without the Visual C++ redistributable (no VCRUNTIME140.dll dependency).
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
