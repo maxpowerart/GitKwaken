@@ -1,0 +1,11 @@
+# Right-click README.md (modified) -> Discard… -> Discard.
+wait 2500
+rclick 328 217
+wait 500
+click 362 266
+wait 600
+shot $OUT/discard-file-dialog.png
+key Enter
+wait 2500
+shot $OUT/discard-file.png
+exit

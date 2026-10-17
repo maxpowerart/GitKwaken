@@ -534,6 +534,9 @@ pub struct AddRemote {
     name: String,
     url: String,
     fetch: bool,
+    /// The name was suggested once ("origin" for the first remote); the
+    /// user may clear it afterwards.
+    suggested: bool,
 }
 
 impl Default for AddRemote {
@@ -542,6 +545,21 @@ impl Default for AddRemote {
             name: String::new(),
             url: String::new(),
             fetch: true,
+            suggested: false,
+        }
+    }
+}
+
+impl AddRemote {
+    /// Suggests "origin" for the first remote, once: re-filling it every
+    /// frame made the field impossible to clear.
+    fn suggest_name(&mut self, snap: &Snapshot) {
+        if self.suggested || !refs_loaded(snap) {
+            return;
+        }
+        self.suggested = true;
+        if self.name.is_empty() && snap.refs.remotes.is_empty() {
+            self.name = "origin".into();
         }
     }
 }
@@ -554,9 +572,7 @@ impl TabDialog for AddRemote {
         snap: &Snapshot,
         _shared: &mut Shared,
     ) -> bool {
-        if self.name.is_empty() && snap.refs.remotes.is_empty() {
-            self.name = "origin".into();
-        }
+        self.suggest_name(snap);
         let (out, ()) = modal(ctx, "add-remote", "Add remote", 480.0, "Add", |ui, ctl| {
             egui::Grid::new("add-remote-grid")
                 .num_columns(2)
@@ -969,6 +985,29 @@ mod tests {
         assert_eq!(p.remote, "origin");
         assert!(p.rows[1].push);
         assert_eq!(p.rows[1].remote_name, "topic-2");
+    }
+
+    #[test]
+    fn add_remote_suggests_origin_once() {
+        let mut a = AddRemote::default();
+        a.suggest_name(&Snapshot::default());
+        assert_eq!(a.name, "", "refs not loaded yet");
+        let refs = gk_core::Refs {
+            head: gk_core::Head::Branch("main".into()),
+            ..Default::default()
+        };
+        let s = Snapshot {
+            refs: Arc::new(refs),
+            ..Default::default()
+        };
+        a.suggest_name(&s);
+        assert_eq!(a.name, "origin");
+        a.name.clear();
+        a.suggest_name(&s);
+        assert_eq!(a.name, "", "a cleared name stays empty");
+        let mut b = AddRemote::default();
+        b.suggest_name(&loaded());
+        assert_eq!(b.name, "", "only the first remote gets a suggestion");
     }
 
     #[test]

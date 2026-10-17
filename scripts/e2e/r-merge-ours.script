@@ -1,0 +1,9 @@
+# Merge editor: "Use ours" on the conflict, Save & mark resolved.
+wait 3000
+click 418 160
+wait 500
+shot $OUT/merge-ours-picked.png
+click 1259 96
+wait 3000
+shot $OUT/merge-ours.png
+exit

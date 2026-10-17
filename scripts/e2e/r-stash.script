@@ -1,0 +1,12 @@
+# Toolbar Stash: message + "Include untracked files" -> Stash.
+wait 2500
+click 406 50
+wait 600
+type E2E stash
+click 457 460
+wait 300
+shot $OUT/stash-dialog.png
+key Enter
+wait 2500
+shot $OUT/stash.png
+exit

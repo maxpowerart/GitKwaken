@@ -124,7 +124,9 @@ pub fn resolve_url(manifest_url: &str, url: &str) -> String {
     if url.contains("://") {
         return url.to_string();
     }
-    let base = manifest_url.rsplit_once('/').map_or(manifest_url, |(b, _)| b);
+    let base = manifest_url
+        .rsplit_once('/')
+        .map_or(manifest_url, |(b, _)| b);
     format!("{base}/{}", url.trim_start_matches("./"))
 }
 

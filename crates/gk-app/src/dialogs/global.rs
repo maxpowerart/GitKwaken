@@ -14,8 +14,11 @@ fn default_parent(shared: &Shared) -> String {
         .settings
         .recent_repos
         .first()
-        .and_then(|p| p.parent())
-        .map(Path::to_path_buf)
+        // A repository opened from a relative command-line path is stored
+        // relative: its parent may be "" (seen with `gitkwaken repo`).
+        .and_then(|p| std::path::absolute(p).ok())
+        .and_then(|p| p.parent().map(Path::to_path_buf))
+        .filter(|p| !p.as_os_str().is_empty())
         .or_else(|| {
             std::env::var_os("USERPROFILE")
                 .or_else(|| std::env::var_os("HOME"))

@@ -24,6 +24,10 @@ impl Repo {
 
     /// Like [`open`](Self::open), with an explicit git executable.
     pub fn open_with_git(path: &Path, log: CommandLog, git_exe: Option<PathBuf>) -> Result<Self> {
+        // A relative path (`gitkwaken repo`) would give a relative workdir:
+        // tab paths, recent repositories and worktree matching need it absolute.
+        let abs = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+        let path = abs.as_path();
         let ts = gix::ThreadSafeRepository::discover(path)
             .map_err(gix_err)
             .with_context(|| format!("not a git repository: {}", path.display()))?;

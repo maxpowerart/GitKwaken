@@ -35,7 +35,8 @@ impl Updater {
             .or_else(|| (!settings.update_url.is_empty()).then(|| settings.update_url.clone()))
             .or_else(|| gk_update::DEFAULT_CHANNEL_URL.map(String::from));
         // Local builds have no built-in channel; release builds get it at build time.
-        let enabled = settings.check_updates && std::env::var_os("GITKWAKEN_NO_UPDATE_CHECK").is_none();
+        let enabled =
+            settings.check_updates && std::env::var_os("GITKWAKEN_NO_UPDATE_CHECK").is_none();
         if let (true, Some(url)) = (enabled, url) {
             let s = state.clone();
             let c = ctx.clone();

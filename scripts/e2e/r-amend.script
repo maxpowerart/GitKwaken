@@ -1,0 +1,13 @@
+# Tick Amend (message prefilled), replace the message, Ctrl+Enter.
+wait 2500
+click 263 852
+wait 600
+shot $OUT/amend-prefilled.png
+click 800 800
+key A ctrl
+type Amended by E2E
+wait 300
+key Enter ctrl
+wait 3000
+shot $OUT/amend.png
+exit

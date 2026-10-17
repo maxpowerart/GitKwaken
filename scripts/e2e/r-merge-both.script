@@ -1,0 +1,9 @@
+# Merge editor: "Use both (ours first)", Save & mark resolved.
+wait 3000
+click 571 160
+wait 500
+shot $OUT/merge-both-picked.png
+click 1259 96
+wait 3000
+shot $OUT/merge-both.png
+exit

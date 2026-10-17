@@ -1,0 +1,13 @@
+# Sidebar REMOTES "+" -> name, URL, Add (fetches immediately).
+wait 2500
+click 219 242
+wait 600
+type upstream
+key Tab
+type $WORK/remotes/other.git
+wait 300
+shot $OUT/remote-add-dialog.png
+key Enter
+wait 3000
+shot $OUT/remote-add.png
+exit

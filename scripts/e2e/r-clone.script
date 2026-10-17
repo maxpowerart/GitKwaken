@@ -1,0 +1,20 @@
+# Palette "Clone repository…": URL = local bare repo, parent folder, Clone.
+wait 2500
+key P ctrl shift
+wait 500
+type Clone repository
+wait 300
+key Enter
+wait 800
+type $WORK/clone/bare.git
+key Tab
+key A ctrl
+type $WORK/clones
+wait 300
+shot $OUT/clone-dialog.png
+key Enter
+wait 100
+shot $OUT/clone-progress.png
+wait 4000
+shot $OUT/clone.png
+exit

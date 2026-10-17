@@ -1,0 +1,9 @@
+# Toolbar Discard -> Discard (staged, unstaged and untracked changes).
+wait 2500
+click 466 50
+wait 800
+shot $OUT/discard-all-dialog.png
+key Enter
+wait 2500
+shot $OUT/discard-all.png
+exit

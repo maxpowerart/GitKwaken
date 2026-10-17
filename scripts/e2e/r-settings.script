@@ -1,0 +1,21 @@
+# Settings: theme Light, Diff > Context lines 6, Save; then show a diff.
+wait 2500
+click 1379 13
+wait 600
+click 706 236
+wait 300
+click 357 294
+wait 300
+click 681 239
+wait 200
+key A ctrl
+type 6
+key Tab
+wait 300
+shot $OUT/settings-dialog.png
+click 934 699
+wait 1000
+click 328 217
+wait 1500
+shot $OUT/settings.png
+exit

@@ -1,0 +1,8 @@
+# Toolbar Fetch -> Fetch (all remotes); the status bar shows "↓ 1".
+wait 2500
+click 215 50
+wait 800
+key Enter
+wait 3000
+shot $OUT/fetch.png
+exit

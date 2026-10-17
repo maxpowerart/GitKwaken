@@ -1,0 +1,16 @@
+# Toolbar Tag -> v9.9 -> Add tag; right-click the tag -> Push to remote… -> Push.
+wait 2500
+click 527 50
+wait 600
+type v9.9
+key Enter
+wait 2000
+rclick 85 327
+wait 500
+click 142 366
+wait 600
+shot $OUT/tag-push-dialog.png
+key Enter
+wait 3000
+shot $OUT/tag-push.png
+exit

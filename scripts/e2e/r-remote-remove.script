@@ -1,0 +1,11 @@
+# Right-click the "upstream" remote -> Remove… -> Remove.
+wait 2500
+rclick 80 306
+wait 500
+click 104 378
+wait 600
+shot $OUT/remote-remove-dialog.png
+key Enter
+wait 2500
+shot $OUT/remote-remove.png
+exit
