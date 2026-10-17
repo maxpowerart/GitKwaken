@@ -45,7 +45,7 @@ SourceTree parity, roughly grouped the way SourceTree does it:
 - **Layout**: SourceTree's window: menu bar (File, Edit, View, Repository, Actions, Tools, Help),
   repository tabs, large-icon toolbar, sidebar with WORKSPACE (File Status, History, Search)
   above branches, tags, remotes, stashes and submodules.
-- **App**: dark / light themes, persistent window and per-repository layout, self-updater with
+- **App**: dark / light themes, persistent window and per-repository layout, self-updater (Windows, Linux) with
   SHA-256-verified downloads, per-user installer or portable zip.
 
 ## Performance
@@ -108,6 +108,14 @@ Requirements: Windows 10 1809+ x64 and [Git for Windows](https://git-scm.com/dow
   the `PKGBUILD` and installs the dependencies (a tarball already next to the `PKGBUILD` is used
   instead of downloading). Uninstall with `sudo pacman -R gitkwaken-bin`. The template in the
   repository (`packaging/arch/PKGBUILD`) has no pinned checksum.
+- `gitkwaken-bin-<ver>-1-x86_64.pkg.tar.zst`: the same package already built from that
+  `PKGBUILD`; `sudo pacman -U gitkwaken-bin-*.pkg.tar.zst` installs it without makepkg.
+
+Self-update on Linux: GitKwaken checks the latest release at startup and every 6 hours and
+offers the new version in the tab bar and in Help. A pacman install (`/usr/bin/gitkwaken`)
+downloads the release's package, verifies its SHA-256 and installs it with
+`pkexec pacman -U` (the system asks for the administrator password); an install from the
+tarball replaces its `gitkwaken` file when GitKwaken closes (the folder must be writable).
 
 Without the PKGBUILD, a per-user desktop entry from the unpacked tarball:
 
@@ -119,8 +127,6 @@ cp -r icons ~/.local/share/
 
 Limits on Linux:
 
-- No self-update: Help › Check for updates points to the releases page. Update by installing
-  the new tarball / PKGBUILD.
 - Windows-only features are absent: Explorer integration (folder context menu, App Paths,
   `--register-shell-integration`), the antivirus (Defender) exclusion hints in Diagnostics,
   the bundled-MinGit build, and the Direct3D renderer's test hooks used by the E2E suites.
@@ -202,7 +208,7 @@ A Cargo workspace; the GUI crate is thin and everything git-related is testable 
 | `gk-settings` | Persistent app settings and per-repository UI state (TOML in `%APPDATA%\GitKwaken`). |
 | `gk-askpass` | Credential / passphrase / host-key prompts from git and ssh routed to the GUI over loopback. |
 | `gk-dx11` | Runs an egui app in a native window rendered with Direct3D 11 (eframe fallback elsewhere). |
-| `gk-update` | Self-update: channel manifest check, SHA-256-verified download, Windows exe self-replace. |
+| `gk-update` | Self-update: channel manifest check, SHA-256-verified download, exe self-replace (Windows zip, Linux tarball) or `pkexec pacman -U`. |
 | `gk-app` | The `gitkwaken` executable: views, dialogs, tabs. |
 | `gk-bench` | Benchmarks for status, history and graph on real repositories. |
 

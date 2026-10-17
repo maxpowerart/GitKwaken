@@ -15,6 +15,9 @@ sha2 = "0.10"
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 # Deflate only, pure-Rust zlib-rs backend (no bzip2/lzma/zstd/aes).
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# The Linux tarball (.tar.gz), same zlib-rs backend.
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+tar = { version = "0.4", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"

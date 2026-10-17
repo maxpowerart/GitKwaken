@@ -38,6 +38,16 @@ STAGE="$DIST/$NAME"
 BIN="$ROOT/target/$TARGET/release/gitkwaken"
 
 if [ "$BUILD" = 1 ]; then
+  # Update channel baked into the binary (gk-update DEFAULT_CHANNEL_URL), like
+  # build-release.ps1 does on Windows: the latest GitHub release of origin.
+  if [ -z "${GITKWAKEN_UPDATE_CHANNEL:-}" ]; then
+    origin="$(git remote get-url origin 2>/dev/null || true)"
+    if [[ "$origin" =~ github\.com[:/]([^/]+/[^/]+)$ ]]; then
+      repo="${BASH_REMATCH[1]%.git}"
+      export GITKWAKEN_UPDATE_CHANNEL="https://github.com/$repo/releases/latest/download/update.json"
+    fi
+  fi
+  echo "==> update channel: ${GITKWAKEN_UPDATE_CHANNEL:-none}"
   echo "==> cargo build --release ($TARGET)"
   cargo build --release --locked -p gk-app --target "$TARGET"
 fi

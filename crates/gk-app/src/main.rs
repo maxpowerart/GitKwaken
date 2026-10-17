@@ -30,6 +30,9 @@ fn main() {
     gk_core::profiling::init();
     // Removes the previous executable left behind by a self-update.
     gk_update::cleanup_old();
+    // For the relaunch after an update, read before anything replaces the file: on Linux
+    // current_exe() follows the running image (to `<exe>.old`, or "<exe> (deleted)").
+    let self_exe = std::env::current_exe();
     // MSI installs: re-create Explorer keys the installer could not write (background).
     #[cfg(windows)]
     shell_integration::heal_in_background();
@@ -67,11 +70,15 @@ fn main() {
             .set_level(rfd::MessageLevel::Error)
             .show();
     }
-    if let Some(p) = staged.lock().take()
-        && gk_update::apply_on_exit(&p).is_ok()
+    // Nothing staged: a package manager already installed the update (pacman).
+    let applied = match staged.lock().take() {
+        Some(p) => gk_update::apply_on_exit(&p).is_ok(),
+        None => true,
+    };
+    if applied
         && update::RESTART.load(std::sync::atomic::Ordering::SeqCst)
         && std::env::var_os("GITKWAKEN_NO_RELAUNCH").is_none()
-        && let Ok(exe) = std::env::current_exe()
+        && let Ok(exe) = self_exe
     {
         // Start the new version with the same arguments; test-only hooks are not inherited.
         let mut cmd = std::process::Command::new(exe);

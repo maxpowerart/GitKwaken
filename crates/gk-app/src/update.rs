@@ -1,13 +1,16 @@
 //! Background update check and the tab-bar button that drives it.
 //!
-//! Only Windows builds update themselves: the release channel carries the Windows zip and the
-//! swap replaces `gitkwaken.exe`. Elsewhere GitKwaken comes from a package manager or the Linux
-//! tarball, so the updater stays off and Help › Check for updates says where to get new versions.
+//! Every release build knows its channel (`update.json` of the latest GitHub release) and checks
+//! it at startup and every [`CHECK_EVERY`] while running. A newer release is offered when this
+//! installation can take it ([`gk_update::method`]): Windows and Linux tarball installs download
+//! the new executable and swap it in on exit; a pacman install (Arch / Manjaro) downloads the
+//! release's package and installs it with `pkexec pacman -U` right away.
 
 use gk_update::Release;
 use parking_lot::Mutex;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 #[derive(Clone)]
 enum State {
@@ -16,24 +19,26 @@ enum State {
     Checking,
     /// Manual check found nothing newer.
     UpToDate,
-    /// Manual check on a platform without self-update.
-    Unsupported,
     Available(Release),
     Downloading(u64, u64),
+    /// `pkexec pacman -U` running (polkit asks for the password).
+    Installing,
     Ready(String),
     Failed(String),
+}
+
+impl State {
+    /// Nothing in progress or waiting for the user: a background check may report a release.
+    fn quiet(&self) -> bool {
+        matches!(self, State::Idle | State::UpToDate | State::Failed(_))
+    }
 }
 
 /// Shared with `main`, which swaps the executable after the window closes.
 pub type Staged = Arc<Mutex<Option<PathBuf>>>;
 
-/// Whether this platform updates itself (see the module docs).
-pub const SELF_UPDATE: bool = cfg!(windows);
-
-/// Help › Check for updates where [`SELF_UPDATE`] is off.
-const UNSUPPORTED: &str = "GitKwaken does not update itself on this platform. Update it with \
-    your package manager, or download the new release from \
-    https://github.com/maxpowerart/GitKwaken/releases";
+/// Interval of the background re-check while GitKwaken stays open.
+const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 
 /// Set by "Restart now": `main` starts the updated executable after swapping it.
 pub static RESTART: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -54,13 +59,12 @@ pub struct Updater {
 
 impl Updater {
     /// Channel URL: `GITKWAKEN_UPDATE_URL`, else Settings → Update channel,
-    /// else the built-in release channel. None where [`SELF_UPDATE`] is off.
+    /// else the built-in release channel.
     pub fn new(ctx: &egui::Context, staged: Staged, settings: &gk_settings::Settings) -> Self {
         let url = std::env::var("GITKWAKEN_UPDATE_URL")
             .ok()
             .or_else(|| (!settings.update_url.is_empty()).then(|| settings.update_url.clone()))
-            .or_else(|| gk_update::DEFAULT_CHANNEL_URL.map(String::from))
-            .filter(|_| SELF_UPDATE);
+            .or_else(|| gk_update::DEFAULT_CHANNEL_URL.map(String::from));
         let u = Self {
             state: Arc::new(Mutex::new(State::Idle)),
             staged,
@@ -69,8 +73,15 @@ impl Updater {
         // Local builds have no built-in channel; release builds get it at build time.
         let enabled =
             settings.check_updates && std::env::var_os("GITKWAKEN_NO_UPDATE_CHECK").is_none();
-        if enabled {
-            u.spawn_check(ctx, false);
+        if enabled && let Some(url) = u.url.clone() {
+            let s = u.state.clone();
+            let c = ctx.clone();
+            std::thread::spawn(move || {
+                loop {
+                    check(&url, &s, &c, false);
+                    std::thread::sleep(CHECK_EVERY);
+                }
+            });
         }
         u
     }
@@ -79,44 +90,30 @@ impl Updater {
     pub fn check_now(&self, ctx: &egui::Context) {
         let busy = matches!(
             *self.state.lock(),
-            State::Checking | State::Downloading(..) | State::Ready(_)
+            State::Checking | State::Downloading(..) | State::Installing | State::Ready(_)
         );
         if busy {
             return;
         }
-        if !SELF_UPDATE {
-            *self.state.lock() = State::Unsupported;
-            return;
-        }
-        if self.url.is_none() {
+        let Some(url) = self.url.clone() else {
             *self.state.lock() = State::Failed("This build has no update channel".into());
             return;
-        }
+        };
         *self.state.lock() = State::Checking;
-        self.spawn_check(ctx, true);
-    }
-
-    fn spawn_check(&self, ctx: &egui::Context, report: bool) {
-        let Some(url) = self.url.clone() else { return };
         let s = self.state.clone();
         let c = ctx.clone();
-        std::thread::spawn(move || {
-            let r = gk_update::check(env!("CARGO_PKG_VERSION"), &url);
-            let next = match r {
-                Ok(Some(rel)) => Some(State::Available(rel)),
-                Ok(None) if report => Some(State::UpToDate),
-                Err(e) if report => Some(State::Failed(format!("{e:#}"))),
-                _ if report => Some(State::Idle),
-                _ => None,
-            };
-            if let Some(n) = next {
-                *s.lock() = n;
-                c.request_repaint();
-            }
-        });
+        std::thread::spawn(move || check(&url, &s, &c, true));
     }
 
-    fn download(&self, rel: Release, ctx: &egui::Context) {
+    /// Downloads `rel`, then stages the new executable or installs the package.
+    fn install(&self, rel: Release, ctx: &egui::Context) {
+        let method = match gk_update::method(&rel) {
+            Ok(m) => m,
+            Err(e) => {
+                *self.state.lock() = State::Failed(format!("{e:#}"));
+                return;
+            }
+        };
         *self.state.lock() = State::Downloading(0, 0);
         let s = self.state.clone();
         let staged = self.staged.clone();
@@ -124,15 +121,23 @@ impl Updater {
         std::thread::spawn(move || {
             let s2 = s.clone();
             let c2 = c.clone();
-            let result = gk_update::download_and_stage(&rel, move |done, total| {
+            let result = gk_update::stage(&rel, &method, move |done, total| {
                 *s2.lock() = State::Downloading(done, total);
                 c2.request_repaint();
+            })
+            .and_then(|st| match st {
+                gk_update::Staged::Exe(path) => {
+                    *staged.lock() = Some(path);
+                    Ok(())
+                }
+                gk_update::Staged::Package(pkg) => {
+                    *s.lock() = State::Installing;
+                    c.request_repaint();
+                    gk_update::install_package(&pkg)
+                }
             });
             *s.lock() = match result {
-                Ok(path) => {
-                    *staged.lock() = Some(path);
-                    State::Ready(rel.version.clone())
-                }
+                Ok(()) => State::Ready(rel.version.clone()),
                 Err(e) => State::Failed(format!("{e:#}")),
             };
             c.request_repaint();
@@ -163,7 +168,8 @@ impl Updater {
                 false,
                 UpdateAction::Check,
             ),
-            State::Idle | State::UpToDate | State::Unsupported | State::Failed(_) => {
+            State::Installing => ("Installing update…".into(), false, UpdateAction::Check),
+            State::Idle | State::UpToDate | State::Failed(_) => {
                 ("Check for updates".into(), true, UpdateAction::Check)
             }
         }
@@ -178,7 +184,7 @@ impl Updater {
                     State::Available(rel) => rel.clone(),
                     _ => return,
                 };
-                self.download(rel, ctx);
+                self.install(rel, ctx);
             }
             UpdateAction::Restart => {
                 if matches!(*self.state.lock(), State::Ready(_)) {
@@ -207,13 +213,6 @@ impl Updater {
                     env!("CARGO_PKG_VERSION")
                 ));
             }
-            State::Unsupported => {
-                if ui.small_button("✖").on_hover_text("Dismiss").clicked() {
-                    *self.state.lock() = State::Idle;
-                }
-                ui.label("Update via your package manager or re-download")
-                    .on_hover_text(UNSUPPORTED);
-            }
             State::Available(rel) => {
                 let b = ui
                     .button(format!("⬆ Update to {}", rel.version))
@@ -223,8 +222,12 @@ impl Updater {
                         rel.notes.clone()
                     });
                 if b.clicked() {
-                    self.download(rel, ui.ctx());
+                    self.install(rel, ui.ctx());
                 }
+            }
+            State::Installing => {
+                ui.spinner();
+                ui.label("Installing update…");
             }
             State::Downloading(done, total) => {
                 ui.spinner();
@@ -235,7 +238,11 @@ impl Updater {
                 }
             }
             State::Ready(v) => {
-                ui.label(format!("Update {v} installs when GitKwaken closes"));
+                if self.staged.lock().is_some() {
+                    ui.label(format!("Update {v} installs when GitKwaken closes"));
+                } else {
+                    ui.label(format!("Update {v} installed"));
+                }
                 if ui.button("Restart now").clicked() {
                     RESTART.store(true, std::sync::atomic::Ordering::SeqCst);
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
@@ -246,4 +253,24 @@ impl Updater {
             }
         }
     }
+}
+
+/// Checks the channel at `url`. A manual check (`report`) always shows its outcome; a
+/// background one only announces a newer release, and only while nothing else is going on.
+fn check(url: &str, state: &Mutex<State>, ctx: &egui::Context, report: bool) {
+    // A release this installation cannot take (e.g. no Linux build in it) is not offered.
+    let r = gk_update::check(env!("CARGO_PKG_VERSION"), url).and_then(|rel| match rel {
+        Some(rel) => gk_update::method(&rel).map(|_| Some(rel)),
+        None => Ok(None),
+    });
+    let mut s = state.lock();
+    let next = match r {
+        Ok(Some(rel)) if report || s.quiet() => State::Available(rel),
+        Ok(None) if report => State::UpToDate,
+        Err(e) if report => State::Failed(format!("{e:#}")),
+        _ => return,
+    };
+    *s = next;
+    drop(s);
+    ctx.request_repaint();
 }
