@@ -90,6 +90,11 @@ impl FastStatus {
             pipeline: None,
             excludes: None,
             timestamp_secs: index.timestamp().unix_seconds(),
+            ignore_case: repo
+                .config_snapshot()
+                .boolean("core.ignorecase")
+                .unwrap_or(false),
+            icase: None,
             out: Vec::new(),
         };
         for p in paths {
@@ -109,10 +114,28 @@ struct Ctx<'a> {
     excludes: Option<gix::AttributeStack<'a>>,
     /// When the index was written: files modified at or after it may be racily clean.
     timestamp_secs: i64,
+    /// core.ignorecase: a path missing from the index may still be tracked
+    /// under another case (case-only rename), which only git can tell.
+    ignore_case: bool,
+    icase: Option<gix::index::AccelerateLookup<'a>>,
     out: Vec<Entry>,
 }
 
 impl<'a> Ctx<'a> {
+    /// With core.ignorecase, a path absent from the index may be tracked under
+    /// another case (e.g. after a case-only rename). The lookup table is built
+    /// only when such a path shows up.
+    fn tracked_icase(&mut self, path: &BStr) -> bool {
+        if !self.ignore_case {
+            return false;
+        }
+        let index: &'a gix::index::File = self.index;
+        let lookup = self
+            .icase
+            .get_or_insert_with(|| index.prepare_icase_backing());
+        index.entry_by_path_icase(path, true, lookup).is_some()
+    }
+
     fn abs(&self, rel: &BStr) -> PathBuf {
         let mut p = self.workdir.to_path_buf();
         for part in rel.split(|b| *b == b'/') {
@@ -167,7 +190,7 @@ impl<'a> Ctx<'a> {
             if !self.walk(path.to_owned(), &abs, &mut found)? {
                 return Ok(false);
             }
-        } else if tracked.is_empty() && !self.ignored(path, false)? {
+        } else if tracked.is_empty() && !self.ignored(path, false)? && !self.tracked_icase(path) {
             self.out.push(Entry::new(path, Kind::Untracked));
         }
         Ok(true)
@@ -290,6 +313,7 @@ impl<'a> Ctx<'a> {
                 }
             } else if self.index.entry_by_path(child.as_ref()).is_none()
                 && !self.ignored(child.as_ref(), false)?
+                && !self.tracked_icase(child.as_ref())
             {
                 *found += 1;
                 if *found > MAX_WALK {

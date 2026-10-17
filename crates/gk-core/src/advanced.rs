@@ -2,7 +2,7 @@
 //! submodules, worktrees, cleaning and repository optimization.
 
 use crate::Repo;
-use crate::ops::{literal_paths, plain};
+use crate::ops::plain;
 use anyhow::{Result, bail};
 use gk_cli::CancelToken;
 use std::collections::HashMap;
@@ -465,17 +465,15 @@ impl Repo {
         if paths.is_empty() {
             return Ok(());
         }
-        self.git().run_stdin(
-            &[
-                "clean",
-                "-f",
-                "-d",
-                "-x",
-                "--pathspec-from-file=-",
-                "--pathspec-file-nul",
-            ],
-            &literal_paths(paths),
-        )?;
+        // `git clean` has no --pathspec-from-file: pass literal pathspecs as
+        // arguments, in chunks that stay under the Windows command-line limit.
+        for chunk in crate::ops::arg_chunks(paths) {
+            let mut args: Vec<String> =
+                ["clean", "-f", "-d", "-x", "--"].map(String::from).to_vec();
+            args.extend(chunk.iter().map(|p| format!(":(literal){p}")));
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            self.git().run(&args)?;
+        }
         Ok(())
     }
 
@@ -594,14 +592,19 @@ impl Repo {
                 .git()
                 .run(&["config", "--global", "--get-all", "maintenance.repo"])
                 .map(|o| {
-                    let me = self
-                        .workdir()
-                        .to_string_lossy()
-                        .replace('\\', "/")
-                        .to_lowercase();
+                    // Canonical paths: 8.3 short names (C:\Users\RUNNER~1) and
+                    // separators differ between how git and we spell a path.
+                    let canon = |p: &std::path::Path| {
+                        p.canonicalize()
+                            .unwrap_or_else(|_| p.to_path_buf())
+                            .to_string_lossy()
+                            .replace('\\', "/")
+                            .to_lowercase()
+                    };
+                    let me = canon(self.workdir());
                     o.stdout_str()
                         .lines()
-                        .any(|l| l.replace('\\', "/").to_lowercase() == me)
+                        .any(|l| canon(std::path::Path::new(l.trim())) == me)
                 })
                 .unwrap_or(false),
         }

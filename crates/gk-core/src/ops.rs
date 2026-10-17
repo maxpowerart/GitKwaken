@@ -17,10 +17,60 @@ impl Repo {
         if paths.is_empty() {
             return Ok(());
         }
+        let (dirs, files): (Vec<String>, Vec<String>) =
+            paths.iter().cloned().partition(|p| p.ends_with('/'));
+        if files.len() > BULK_PATHS {
+            // Linear in the number of paths; applies the same clean filters
+            // (autocrlf, LFS) as `git add`.
+            self.git().run_stdin(
+                &["update-index", "--add", "--remove", "-z", "--stdin"],
+                &nul_paths(&files),
+            )?;
+            if !dirs.is_empty() {
+                self.git().run_stdin(
+                    &["add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"],
+                    &literal_paths(&dirs),
+                )?;
+            }
+            return Ok(());
+        }
         self.git().run_stdin(
             &["add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"],
             &literal_paths(paths),
         )?;
+        Ok(())
+    }
+
+    /// Restores the HEAD version of many index entries at once (or removes
+    /// entries HEAD does not have) with one `update-index --index-info`.
+    fn unstage_bulk(&self, paths: &[String]) -> Result<()> {
+        let tree = self
+            .git()
+            .run(&["ls-tree", "-r", "-z", "--full-tree", "HEAD"])?
+            .stdout;
+        let mut head: std::collections::HashMap<&[u8], &[u8]> = std::collections::HashMap::new();
+        for rec in tree.split(|b| *b == 0).filter(|r| !r.is_empty()) {
+            // "<mode> <type> <oid>\t<path>"
+            if let Some(tab) = rec.iter().position(|b| *b == b'\t') {
+                head.insert(&rec[tab + 1..], &rec[..tab]);
+            }
+        }
+        let zero = "0".repeat(self.gix().object_hash().len_in_hex());
+        let mut input = Vec::new();
+        for p in paths {
+            match head.get(p.as_bytes()) {
+                Some(meta) => {
+                    // index-info accepts "<mode> <type> <oid>\t<path>"
+                    input.extend_from_slice(meta);
+                }
+                None => input.extend_from_slice(format!("0 {zero}").as_bytes()),
+            }
+            input.push(b'\t');
+            input.extend_from_slice(p.as_bytes());
+            input.push(0);
+        }
+        self.git()
+            .run_stdin(&["update-index", "-z", "--index-info"], &input)?;
         Ok(())
     }
 
@@ -46,6 +96,8 @@ impl Repo {
                 ],
                 &literal_paths(paths),
             )?;
+        } else if paths.len() > BULK_PATHS && !paths.iter().any(|p| p.ends_with('/')) {
+            self.unstage_bulk(paths)?;
         } else {
             self.git().run_stdin(
                 &[
@@ -939,3 +991,27 @@ pub(crate) fn plain(args: &[&str]) -> Result<()> {
     }
     Ok(())
 }
+
+/// Splits paths into groups whose `:(literal)` pathspecs fit on one command line.
+pub(crate) fn arg_chunks(paths: &[String]) -> Vec<&[String]> {
+    const MAX: usize = 24_000;
+    let mut out = Vec::new();
+    let (mut start, mut len) = (0, 0);
+    for (i, p) in paths.iter().enumerate() {
+        let n = p.len() + 12;
+        if len + n > MAX && i > start {
+            out.push(&paths[start..i]);
+            start = i;
+            len = 0;
+        }
+        len += n;
+    }
+    if start < paths.len() {
+        out.push(&paths[start..]);
+    }
+    out
+}
+
+/// Above this many paths, pathspec matching (every file against every
+/// pathspec) dominates; plain path lists through update-index are linear.
+const BULK_PATHS: usize = 1000;

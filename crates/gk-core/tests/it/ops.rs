@@ -914,3 +914,37 @@ fn stage_single_added_line_after_blank_line() {
         "blank line must stay unstaged:\n{cached}"
     );
 }
+
+#[test]
+fn bulk_stage_and_unstage_match_small_path() {
+    let t = TestRepo::new();
+    for i in 0..1500 {
+        t.write(&format!("d/f{i}.txt"), "a\n");
+    }
+    t.write("keep.txt", "k\n");
+    t.git(&["add", "-A"]);
+    t.commit("init");
+    let mut paths = Vec::new();
+    for i in 0..1500 {
+        t.write(&format!("d/f{i}.txt"), "b\n");
+        paths.push(format!("d/f{i}.txt"));
+    }
+    t.write("new [x].txt", "n\n"); // untracked, added in bulk too
+    paths.push("new [x].txt".into());
+    std::fs::remove_file(t.repo.abs("keep.txt")).unwrap(); // deletion
+    paths.push("keep.txt".into());
+    t.repo.stage(&paths).unwrap();
+    assert_eq!(
+        t.git(&["diff", "--cached", "--name-only"]).lines().count(),
+        1502
+    );
+    assert_eq!(t.git(&["diff", "--name-only"]), "");
+    t.repo.unstage(&paths).unwrap();
+    assert_eq!(t.git(&["diff", "--cached", "--name-only"]), "");
+    let unstaged = t.git(&["status", "--porcelain"]);
+    assert!(
+        unstaged.contains("?? \"new [x].txt\"") || unstaged.contains("?? new [x].txt"),
+        "{unstaged}"
+    );
+    assert!(unstaged.contains(" D keep.txt"), "{unstaged}");
+}

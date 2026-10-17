@@ -101,8 +101,13 @@ fn session_end_to_end() {
             ..Default::default()
         })
     });
+    // The commit runs on the op thread: read HEAD only once it is done, and
+    // wait until refs and history (loaded in parallel) both reflect it.
     let snap = wait_snap(&ss, "history after commit", |sn| {
-        loaded(sn, 3) && sn.status.is_clean() && sn.op.is_none()
+        loaded(sn, 3)
+            && sn.status.is_clean()
+            && sn.op.is_none()
+            && sn.refs.head_id.as_deref() == Some(t.head().as_str())
     });
     let head = t.oid("HEAD");
     assert_eq!(snap.history.ids[0], head);

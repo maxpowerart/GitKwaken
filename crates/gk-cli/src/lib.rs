@@ -383,12 +383,22 @@ pub fn parse_version(s: &str) -> Option<(u32, u32, u32)> {
     Some((major, minor, patch))
 }
 
-/// Locates the git executable: `GITKWAKEN_GIT`, then PATH, then common install dirs.
+/// Locates the git executable: `GITKWAKEN_GIT`, then a bundled MinGit next to the
+/// executable (`<exe_dir>/git/cmd/git.exe`), then PATH, then common install dirs.
 pub fn find_git() -> PathBuf {
     if let Some(p) = std::env::var_os("GITKWAKEN_GIT") {
         return PathBuf::from(p);
     }
     let exe = if cfg!(windows) { "git.exe" } else { "git" };
+    if let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(Path::to_path_buf))
+    {
+        let bundled = dir.join("git").join("cmd").join(exe);
+        if bundled.is_file() {
+            return bundled;
+        }
+    }
     if let Some(path) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&path) {
             let cand = dir.join(exe);

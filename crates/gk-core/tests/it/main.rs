@@ -1,9 +1,11 @@
 //! Integration tests against real temporary repositories.
 
+mod advanced;
 mod common;
 mod content;
 mod history;
 mod ops;
+mod paths;
 mod rebase;
 mod refs;
 mod remote;

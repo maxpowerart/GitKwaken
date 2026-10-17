@@ -73,9 +73,7 @@ pub fn parse_manifest(json: &str) -> Result<Release> {
     // Absolute file:// or other schemes are rejected so a remote manifest can
     // never point at local files.
     ensure!(
-        r.url.starts_with("https://")
-            || r.url.starts_with("http://")
-            || !r.url.contains(':'),
+        r.url.starts_with("https://") || r.url.starts_with("http://") || !r.url.contains(':'),
         "update manifest: url must be http(s) or relative to the manifest"
     );
     Ok(r)
@@ -333,7 +331,11 @@ mod tests;
 pub fn local_path(url: &str) -> Option<PathBuf> {
     let rest = if let Some(r) = url.strip_prefix("file:///") {
         // file:///C:/x on Windows, file:///home/x elsewhere
-        if cfg!(windows) { r.to_string() } else { format!("/{r}") }
+        if cfg!(windows) {
+            r.to_string()
+        } else {
+            format!("/{r}")
+        }
     } else if let Some(r) = url.strip_prefix("file://") {
         format!("//{r}") // UNC share
     } else if !url.contains("://") {
@@ -352,7 +354,10 @@ fn open_source(url: &str, timeout: Duration) -> Result<(Box<dyn Read + Send>, u6
         let len = file.metadata().map(|m| m.len()).unwrap_or(0);
         return Ok((Box::new(file), len));
     }
-    let resp = agent(timeout).get(url).call().with_context(|| format!("fetch {url}"))?;
+    let resp = agent(timeout)
+        .get(url)
+        .call()
+        .with_context(|| format!("fetch {url}"))?;
     let total = resp.body().content_length().unwrap_or(0);
     Ok((Box::new(resp.into_body().into_reader()), total))
 }

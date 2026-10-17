@@ -34,6 +34,10 @@ pub struct Settings {
     pub ui_scale: f32,
     pub font_size: f32,
     pub mono_font_size: f32,
+    /// Monospace font family (a system font name, e.g. "Consolas").
+    pub mono_font_family: String,
+    /// Compact density: tighter row heights and spacing.
+    pub compact: bool,
     pub diff: DiffSettings,
     pub status_engine: StatusEngine,
     pub show_untracked: bool,
@@ -68,6 +72,8 @@ impl Default for Settings {
             ui_scale: 1.0,
             font_size: 13.0,
             mono_font_size: 12.5,
+            mono_font_family: "Consolas".into(),
+            compact: true,
             diff: DiffSettings::default(),
             status_engine: StatusEngine::default(),
             show_untracked: true,
@@ -152,6 +158,8 @@ pub struct DiffSettings {
     pub syntax_highlight: bool,
     /// Files larger than this are not diffed inline.
     pub max_file_kb: u64,
+    /// Rename detection in tree diffs (commit file lists).
+    pub renames: bool,
 }
 
 impl Default for DiffSettings {
@@ -164,6 +172,7 @@ impl Default for DiffSettings {
             tab_width: 4,
             syntax_highlight: true,
             max_file_kb: 20480,
+            renames: true,
         }
     }
 }
@@ -332,6 +341,12 @@ impl Settings {
         );
         if self.diff.tab_width == 0 {
             self.diff.tab_width = d.diff.tab_width;
+        }
+        if self.diff.max_file_kb == 0 {
+            self.diff.max_file_kb = d.diff.max_file_kb;
+        }
+        if self.mono_font_family.trim().is_empty() {
+            self.mono_font_family = d.mono_font_family;
         }
     }
 

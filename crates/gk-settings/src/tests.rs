@@ -100,6 +100,31 @@ some_future_field = "x"
     assert_eq!(s.ui_scale, 1.0);
     assert!(s.confirmations.force_push);
     assert_eq!(s.auto_fetch_minutes, 10);
+    assert_eq!(s.mono_font_family, "Consolas");
+    assert!(s.compact);
+    assert!(s.diff.renames);
+}
+
+#[test]
+fn appearance_and_keymap_fields_roundtrip() {
+    let env = TestEnv::new();
+    fs::write(
+        env.path().join("settings.toml"),
+        "mono_font_family = \"  \"\ncompact = false\n[diff]\nmax_file_kb = 0\nrenames = false\n[keymap]\nfetch = \"Ctrl+Shift+F\"\n",
+    )
+    .unwrap();
+    let mut s = Settings::load();
+    assert_eq!(s.mono_font_family, "Consolas", "blank family falls back");
+    assert!(!s.compact);
+    assert!(!s.diff.renames);
+    assert_eq!(s.diff.max_file_kb, 20480, "0 KB falls back");
+    assert_eq!(
+        s.keymap.get("fetch").map(String::as_str),
+        Some("Ctrl+Shift+F")
+    );
+    s.mono_font_family = "Cascadia Mono".into();
+    s.save().unwrap();
+    assert_eq!(Settings::load().mono_font_family, "Cascadia Mono");
 }
 
 #[test]
