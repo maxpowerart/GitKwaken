@@ -33,12 +33,12 @@ bash "$ROOT/scripts/make-demo-repo.sh" "$W/repo" >/dev/null
 M="$(cygpath -m "$W")"
 cat > "$W/u.script" <<EOF
 wait 4000
-click 1336 14
+click 1334 36
 wait 8000
 shot $M/offer.png
-click 1094 14
+click 1092 36
 wait 3000
-click 1094 14
+click 1092 36
 wait 3000
 EOF
 GK_DX11_INPUT_SCRIPT="$M/u.script" GITKWAKEN_NO_RELAUNCH=1 GITKWAKEN_CONFIG_DIR="$PW\\cfg" \
