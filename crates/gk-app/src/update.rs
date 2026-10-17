@@ -27,6 +27,7 @@ pub static RESTART: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBoo
 /// What a Help-menu update entry does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateAction {
+    Check,
     Install,
     Restart,
 }
@@ -119,25 +120,40 @@ impl Updater {
         });
     }
 
-    /// The Help-menu entry for the current state: install an available
+    /// The Help-menu update entry: check, install an available
     /// update, or restart to finish a downloaded one.
-    pub fn menu_entry(&self) -> Option<(String, UpdateAction)> {
+    pub fn menu_entry(&self) -> (String, bool, UpdateAction) {
+        // One slot whatever the state, so the menu layout never shifts.
         match &*self.state.lock() {
-            State::Available(rel) => Some((
+            State::Available(rel) => (
                 format!("Install update {}", rel.version),
+                true,
                 UpdateAction::Install,
-            )),
-            State::Ready(v) => Some((
+            ),
+            State::Ready(v) => (
                 format!("Restart to finish update {v}"),
+                true,
                 UpdateAction::Restart,
-            )),
-            _ => None,
+            ),
+            State::Checking => ("Checking for updates…".into(), false, UpdateAction::Check),
+            State::Downloading(done, total) => (
+                match (done * 100).checked_div(*total) {
+                    Some(pct) => format!("Downloading update {pct}%"),
+                    None => "Downloading update…".into(),
+                },
+                false,
+                UpdateAction::Check,
+            ),
+            State::Idle | State::UpToDate | State::Failed(_) => {
+                ("Check for updates".into(), true, UpdateAction::Check)
+            }
         }
     }
 
     /// Runs a Help-menu entry (same as the tab-bar buttons).
     pub fn act(&self, action: UpdateAction, ctx: &egui::Context) {
         match action {
+            UpdateAction::Check => self.check_now(ctx),
             UpdateAction::Install => {
                 let rel = match &*self.state.lock() {
                     State::Available(rel) => rel.clone(),

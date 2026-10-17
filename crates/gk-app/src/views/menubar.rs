@@ -15,7 +15,6 @@ use egui::Ui;
 #[derive(Default)]
 pub struct MenuOut {
     pub toggle_palette: bool,
-    pub check_updates: bool,
     pub update: Option<crate::update::UpdateAction>,
 }
 
@@ -42,8 +41,8 @@ pub struct MenuCtx<'a> {
     pub tab: Option<&'a mut RepoTab>,
     pub active: usize,
     pub tabs: usize,
-    /// Help-menu entry for an available or downloaded update.
-    pub update: Option<(String, crate::update::UpdateAction)>,
+    /// Help-menu update entry (label, enabled, action): one fixed slot.
+    pub update: (String, bool, crate::update::UpdateAction),
 }
 
 pub fn show(ui: &mut Ui, mc: MenuCtx, shared: &mut Shared) -> MenuOut {
@@ -327,12 +326,8 @@ pub fn show(ui: &mut Ui, mc: MenuCtx, shared: &mut Shared) -> MenuOut {
             if item(ui, "Command palette…", k(Act::Palette), true) {
                 out.toggle_palette = true;
             }
-            if item(ui, "Check for updates", none(), true) {
-                out.check_updates = true;
-            }
-            if let Some((label, action)) = &update
-                && item(ui, label, none(), true)
-            {
+            let (label, enabled, action) = &update;
+            if item(ui, label, none(), *enabled) {
                 out.update = Some(*action);
             }
             ui.separator();

@@ -280,9 +280,6 @@ impl GkApp {
         if out.toggle_palette && !self.tabs.get(i).is_some_and(|t| t.dialog.is_some()) {
             self.command_palette.toggle();
         }
-        if out.check_updates {
-            self.updater.check_now(ui.ctx());
-        }
         if let Some(a) = out.update {
             self.updater.act(a, ui.ctx());
         }
