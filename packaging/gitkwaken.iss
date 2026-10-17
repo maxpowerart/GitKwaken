@@ -10,6 +10,9 @@
 #ifndef AppVersion
   #define AppVersion "0.0.0"
 #endif
+#ifndef NumericVersion
+  #define NumericVersion AppVersion
+#endif
 #ifndef SourceDir
   #define SourceDir "..\dist\GitKwaken-" + AppVersion + "-x64"
 #endif
@@ -34,7 +37,8 @@ AppPublisher=GitKwaken contributors
 AppPublisherURL={#AppUrl}
 AppSupportURL={#AppUrl}/issues
 AppUpdatesURL={#AppUrl}/releases
-VersionInfoVersion={#AppVersion}
+; Numeric only (1.0.1-beta.1 -> 1.0.1); build-release.ps1 passes /DNumericVersion.
+VersionInfoVersion={#NumericVersion}
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes

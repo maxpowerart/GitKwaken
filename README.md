@@ -58,7 +58,18 @@ Grab a release from the Releases page:
 
 - `GitKwaken-<ver>-x64-setup.exe`: per-user installer (no admin rights), Start-menu entry,
   optional desktop icon and "Open in GitKwaken" folder context menu; upgrades in place.
+- `GitKwaken-<ver>-x64.msi`: the same per-user install as an MSI (for Intune/GPO-style
+  deployment or `msiexec /i GitKwaken-<ver>-x64.msi /qn`); installs to
+  `%LOCALAPPDATA%\Programs\GitKwaken`, newer MSIs upgrade it (one Add/Remove Programs entry).
+  Features: `ContextMenu` (on by default) and `DesktopShortcut` (off), e.g.
+  `msiexec /i ... ADDLOCAL=Main,DesktopShortcut`. Use either the MSI or the setup.exe, not
+  both (they share the folder).
 - `GitKwaken-<ver>-x64.zip`: portable build; unzip anywhere and run `gitkwaken.exe`.
+
+The built-in updater replaces `gitkwaken.exe` in place, which works for the zip and the
+per-user installs (MSI, default setup.exe); an all-users setup.exe install under Program Files
+is not writable for it. Add/Remove Programs keeps showing the installed version until the next
+installer run.
 
 Requirements: Windows 10 1809+ x64 and [Git for Windows](https://git-scm.com/download/win)
 (GitKwaken drives the system `git`; a custom path can be set in Settings).
@@ -79,11 +90,18 @@ sudo apt-get install libxkbcommon-dev libgtk-3-dev libxcb-render0-dev libxcb-sha
                      libxcb-xfixes0-dev libssl-dev
 ```
 
-Release packaging (zip, `update.json`, and an installer if Inno Setup 6 is installed):
+Release packaging (zip, `update.json`, the Inno Setup installer if Inno Setup 6 is installed,
+and the MSI if the WiX CLI is installed):
 
 ```powershell
+dotnet tool install --global wix --version 6.0.2   # once, for the MSI (packaging/wix/gitkwaken.wxs)
 powershell -ExecutionPolicy Bypass -File packaging\build-release.ps1
 ```
+
+[cargo-dist](https://github.com/axodotdev/cargo-dist) 0.33.0 is configured in
+`dist-workspace.toml` as an alternative build of the zip: `dist plan`,
+`dist build --artifacts=local` (output in `target/distrib`). The release workflow does not use
+it; see `docs/ARCHITECTURE.md` (Packaging).
 
 The app icon is generated from `assets/icon.svg` with
 `cargo run --release --manifest-path packaging/icongen/Cargo.toml`.

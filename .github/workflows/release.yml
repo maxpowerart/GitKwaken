@@ -48,7 +48,15 @@ jobs:
             choco install innosetup -y --no-progress
           }
 
-      - name: Build zip, installer and update.json
+      - name: Install WiX (MSI)
+        shell: pwsh
+        run: |
+          # Pinned; build-release.ps1 adds the UI/Util extensions of the same version.
+          dotnet tool install --global wix --version 6.0.2
+          "$env:USERPROFILE\.dotnet\tools" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          & "$env:USERPROFILE\.dotnet\tools\wix.exe" --version
+
+      - name: Build zip, installers (Inno + MSI) and update.json
         shell: pwsh
         run: |
           ./packaging/build-release.ps1 `
@@ -56,6 +64,10 @@ jobs:
             -Repo "${{ github.repository }}" `
             -DownloadBaseUrl "https://github.com/${{ github.repository }}/releases/download/$env:TAG" `
             -Notes "GitKwaken $env:VERSION. Release notes: https://github.com/${{ github.repository }}/releases/tag/$env:TAG"
+          # The script only warns when ISCC / wix are missing; a release must have both.
+          foreach ($f in "dist/GitKwaken-$env:VERSION-x64-setup.exe", "dist/GitKwaken-$env:VERSION-x64.msi") {
+            if (-not (Test-Path $f)) { throw "$f was not built" }
+          }
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
@@ -64,6 +76,7 @@ jobs:
           path: |
             dist/*.zip
             dist/*-setup.exe
+            dist/*.msi
             dist/update.json
             dist/SHA256SUMS.txt
 
@@ -79,5 +92,6 @@ jobs:
           files: |
             dist/GitKwaken-${{ env.VERSION }}-x64.zip
             dist/GitKwaken-${{ env.VERSION }}-x64-setup.exe
+            dist/GitKwaken-${{ env.VERSION }}-x64.msi
             dist/update.json
             dist/SHA256SUMS.txt
