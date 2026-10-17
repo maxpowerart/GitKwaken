@@ -1,0 +1,10 @@
+# Ctrl+Shift+P, "View: History", Enter.
+wait 2500
+key P ctrl shift
+wait 500
+type View: History
+wait 300
+key Enter
+wait 1500
+shot $OUT/palette.png
+exit

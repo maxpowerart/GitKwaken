@@ -1,0 +1,11 @@
+# Stage README.md via its checkbox, type a message, Ctrl+Enter.
+wait 2500
+click 266 237
+wait 1500
+click 800 800
+type E2E commit from input script
+wait 300
+key Enter ctrl
+wait 3000
+shot $OUT/commit.png
+exit

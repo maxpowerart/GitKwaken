@@ -888,3 +888,17 @@ fn option_like_names_are_rejected() {
     assert!(t.repo.checkout("-q").is_err());
     assert!(t.repo.add_remote("origin", "--upload-pack=evil").is_err());
 }
+
+#[test]
+fn stage_single_added_line_after_blank_line() {
+    let t = TestRepo::new();
+    t.commit_file("README.md", "# Demo\n\nA demo repository.\nUsage: run it.\n", "init");
+    t.write("README.md", "# Demo\n\nA demo repository.\nUsage: run it.\n\nMore docs.\n");
+    // select only new line 6 ("More docs.")
+    t.repo
+        .stage_lines("README.md", false, &|l: &gk_diff::Line| l.kind == gk_diff::LineKind::Added && l.new_no == 6)
+        .unwrap();
+    let cached = t.git(&["diff", "--cached", "--", "README.md"]);
+    assert!(cached.contains("+More docs."), "{cached}");
+    assert!(!cached.contains("\n+\n"), "blank line must stay unstaged:\n{cached}");
+}
