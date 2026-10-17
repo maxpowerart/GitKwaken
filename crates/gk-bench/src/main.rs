@@ -140,6 +140,15 @@ fn bench_status(dir: &Path, runs: usize) -> Result<()> {
         compute(dir, &git, &scope, &Options { engine: Engine::Cli, untracked: Untracked::All }, &stop)
     })?;
 
+    let mut fast = gk_status::fast::FastStatus::new(dir)?;
+    // First call loads the index (once per index change), later ones are what
+    // a file-watcher event costs.
+    time("gk fast path, index load + 10 paths", 1, || fast.refresh(&scope, Untracked::All))?;
+    let out = time("gk fast path (10 paths, index cached)", runs, || fast.refresh(&scope, Untracked::All))?;
+    if let gk_status::fast::Outcome::Updated(v) = out {
+        println!("fast path changes: {}", v.len());
+    }
+
     // Restore the touched files.
     let mut args = vec!["checkout", "--"];
     args.extend(sample.iter().map(String::as_str));

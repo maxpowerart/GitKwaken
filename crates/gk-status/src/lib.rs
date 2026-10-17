@@ -3,6 +3,7 @@
 //! file-system watcher that turns OS events into refresh requests.
 
 mod cli_engine;
+pub mod fast;
 mod gix_engine;
 pub mod watch;
 

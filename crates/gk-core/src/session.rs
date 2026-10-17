@@ -416,6 +416,7 @@ fn event_loop(inner: Arc<Shared>, rx: Receiver<watch::Event>) {
 fn refresh_loop(inner: Arc<Shared>, rx: Receiver<Refresh>) {
     let mut last_tips: Vec<String> = Vec::new();
     let mut last_scope: Option<Scope> = None;
+    let mut fast: Option<gk_status::fast::FastStatus> = None;
     while let Ok(first) = rx.recv() {
         let mut req = first;
         // Coalesce whatever else is queued.
@@ -454,7 +455,27 @@ fn refresh_loop(inner: Arc<Shared>, rx: Receiver<Refresh>) {
             }
             (inner.repaint)();
             let patterns: Vec<BString> = if req.status_full { Vec::new() } else { req.paths.clone() };
-            match gk_status::compute(repo.workdir(), repo.git(), &patterns, &opts.status, &interrupt) {
+            // Watcher-reported paths: the in-memory fast path avoids re-reading
+            // the whole index; it declines anything unusual.
+            let quick = if req.status_full {
+                None
+            } else {
+                let start = Instant::now();
+                if fast.is_none() {
+                    fast = gk_status::fast::FastStatus::new(repo.workdir()).ok();
+                }
+                match fast.as_mut().map(|f| f.refresh(&patterns, opts.status.untracked)) {
+                    Some(Ok(gk_status::fast::Outcome::Updated(unstaged))) => {
+                        Some(gk_status::Status { staged: Vec::new(), unstaged, took: start.elapsed() })
+                    }
+                    _ => None,
+                }
+            };
+            let computed = match quick {
+                Some(s) => Ok(s),
+                None => gk_status::compute(repo.workdir(), repo.git(), &patterns, &opts.status, &interrupt),
+            };
+            match computed {
                 Ok(new) => {
                     let mut s = inner.snap.write();
                     let merged = if req.status_full {

@@ -78,3 +78,67 @@ fn gix_matches_cli() {
         assert_eq!(u, ["M:src/f1.txt", "M:src/f2.txt"], "{engine:?}");
     }
 }
+
+fn fast_vs_cli(dir: &std::path::Path, git: &Git, paths: &[&str]) {
+    let scope: Vec<bstr::BString> = paths.iter().map(|p| bstr::BString::from(*p)).collect();
+    let mut fast = gk_status::fast::FastStatus::new(dir).unwrap();
+    let got = match fast.refresh(&scope, Untracked::All).unwrap() {
+        gk_status::fast::Outcome::Updated(v) => v,
+        gk_status::fast::Outcome::Fallback => panic!("unexpected fallback for {paths:?}"),
+    };
+    let stop = Arc::new(AtomicBool::new(false));
+    let reference =
+        compute(dir, git, &scope, &Options { engine: Engine::Cli, untracked: Untracked::All }, &stop).unwrap();
+    let mut a: Vec<String> = got.iter().map(|e| format!("{}:{}", e.kind.code(), e.path)).collect();
+    a.sort();
+    let mut b: Vec<String> = reference
+        .unstaged
+        .iter()
+        .filter(|e| scope.iter().any(|s| gk_status::path_within(e.path.as_ref(), s.as_ref())))
+        .map(|e| format!("{}:{}", e.kind.code(), e.path))
+        .collect();
+    b.sort();
+    assert_eq!(a, b, "paths {paths:?}");
+}
+
+#[test]
+fn fast_path_matches_cli() {
+    for autocrlf in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let git = Git::new(dir, CommandLog::default());
+        git.run(&["init", "-q", "-b", "main"]).unwrap();
+        git.run(&["config", "user.email", "t@t"]).unwrap();
+        git.run(&["config", "user.name", "t"]).unwrap();
+        git.run(&["config", "core.autocrlf", if autocrlf { "true" } else { "false" }]).unwrap();
+        fs::create_dir_all(dir.join("src/sub")).unwrap();
+        fs::write(dir.join("src/a.txt"), "a\nb\n").unwrap();
+        fs::write(dir.join("src/b.txt"), "b\n").unwrap();
+        fs::write(dir.join("src/sub/c.txt"), "c\n").unwrap();
+        fs::write(dir.join(".gitignore"), "*.log\nbuild/\n").unwrap();
+        git.run(&["add", "-A"]).unwrap();
+        git.run(&["commit", "-q", "-m", "init"]).unwrap();
+        // Make stat data differ from the index so content hashing is exercised.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+
+        fs::write(dir.join("src/a.txt"), "a\nchanged\n").unwrap();
+        // same content rewritten: stat changes, content does not
+        fs::write(dir.join("src/b.txt"), if autocrlf { "b\r\n" } else { "b\n" }).unwrap();
+        fs::remove_file(dir.join("src/sub/c.txt")).unwrap();
+        fs::write(dir.join("src/new.txt"), "n\n").unwrap();
+        fs::write(dir.join("src/debug.log"), "x").unwrap();
+        fs::create_dir_all(dir.join("newdir/deep")).unwrap();
+        fs::write(dir.join("newdir/deep/x.txt"), "x").unwrap();
+        fs::create_dir_all(dir.join("build")).unwrap();
+        fs::write(dir.join("build/out.o"), "o").unwrap();
+
+        fast_vs_cli(dir, &git, &["src/a.txt"]);
+        fast_vs_cli(dir, &git, &["src/b.txt"]);
+        fast_vs_cli(dir, &git, &["src/sub/c.txt"]);
+        fast_vs_cli(dir, &git, &["src/sub"]);
+        fast_vs_cli(dir, &git, &["src/new.txt", "src/debug.log"]);
+        fast_vs_cli(dir, &git, &["newdir"]);
+        fast_vs_cli(dir, &git, &["build/out.o", "build"]);
+        fast_vs_cli(dir, &git, &["src"]);
+    }
+}
