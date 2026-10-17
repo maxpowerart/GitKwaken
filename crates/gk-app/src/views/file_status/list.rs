@@ -513,15 +513,14 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
                         dim(p.head),
                     );
                     x += 18.0;
-                    crate::views::history::table::text_at(
+                    status_badge(
                         &painter,
-                        x,
-                        cy,
-                        e.kind.code().to_string(),
+                        pos2(x, cy),
+                        e.kind.code(),
                         &mono,
                         dim(crate::util::status_color(&p, e.kind)),
                     );
-                    x += 14.0;
+                    x += 20.0;
                     let (dir, name) = crate::views::diff::split_path(path);
                     let clip = painter.with_clip_rect(rect.intersect(vis));
                     let g = clip.layout_no_wrap(name.to_string(), body_font.clone(), dim(strong));
@@ -841,6 +840,26 @@ fn ignore_suggestion(targets: &[String]) -> String {
         (None, [one]) => format!("/{one}"),
         _ => String::new(),
     }
+}
+
+/// SourceTree-style status icon: the status code on a colored square.
+fn status_badge(
+    painter: &egui::Painter,
+    left_center: Pos2,
+    code: impl ToString,
+    font: &egui::FontId,
+    color: Color32,
+) {
+    let r = Rect::from_center_size(left_center + vec2(7.0, 0.0), vec2(14.0, 14.0));
+    painter.rect_filled(r, 3.0, color);
+    let font = egui::FontId::new((font.size - 1.0).max(9.0), font.family.clone());
+    painter.text(
+        r.center() + vec2(0.0, 0.5),
+        Align2::CENTER_CENTER,
+        code.to_string(),
+        font,
+        Color32::from_gray(20),
+    );
 }
 
 /// Small stage toggle; `checked` in the staged list.

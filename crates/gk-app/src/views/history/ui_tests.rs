@@ -306,6 +306,25 @@ fn history_view_selection_keyboard_and_worktree_row() {
     });
     assert_eq!(h.tab.search.path_at(&ids[3]).as_deref(), Some("f.txt"));
 
+    // "Jump to:" accepts HEAD, branch names and id prefixes.
+    let snap = h.tab.session.snapshot();
+    let jump = |t: &str| super::resolve_jump(&snap, t);
+    assert_eq!(jump(""), Some(ids[0]));
+    assert_eq!(jump("head"), Some(ids[0]));
+    assert_eq!(jump("main"), Some(ids[0]));
+    assert_eq!(jump(&ids[2].to_hex().to_string()[..7]), Some(ids[2]));
+    assert_eq!(jump("zzzz"), None);
+    assert_eq!(jump("abc"), None, "prefixes need 4+ digits");
+    // "Show remote branches" off is its own persisted scope.
+    let local = gk_core::history::Scope::Local;
+    assert_eq!(
+        super::scope_from_state(&super::scope_to_state(&local)),
+        local
+    );
+    assert_eq!(super::scope_label(&local), "All branches");
+    let revs = super::scope_revs(&local, &snap);
+    assert!(!revs.iter().any(|r| r == "--remotes"));
+
     drop(h);
     let _ = std::fs::remove_dir_all(&dir);
 }

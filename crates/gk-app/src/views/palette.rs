@@ -51,15 +51,16 @@ impl PaletteState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum StashCmd {
+pub(crate) enum StashCmd {
     Apply,
     Pop,
     Drop,
     Branch,
 }
 
+/// What a palette entry (or a menu bar item, see `views::menubar`) does.
 #[derive(Clone)]
-enum Cmd {
+pub(crate) enum Cmd {
     View(View),
     Dialog(fn(&Snapshot) -> Dialog),
     Global(fn() -> GlobalDialog),
@@ -83,6 +84,12 @@ enum Cmd {
     OpenRepo(PathBuf),
     AddWorktree,
     RemoveWorktree(PathBuf),
+    /// Focus the commit message box (File Status).
+    Commit,
+    /// Stage (true) or unstage (false) everything.
+    StageAll(bool),
+    /// Copy the selected commits' ids (short ones when true).
+    CopyShas(bool),
 }
 
 /// Selected commits of the active list, newest first.
@@ -399,7 +406,7 @@ fn items(tab: Option<&RepoTab>, snap: Option<&Snapshot>, km: &keymap::Keymap) ->
 }
 
 /// A branch tip merges / rebases by name (nicer merge message).
-fn commit_rev(s: &Snapshot, id: &str) -> String {
+pub(crate) fn commit_rev(s: &Snapshot, id: &str) -> String {
     gk_core::ObjectId::from_hex(id.as_bytes())
         .map(|oid| crate::views::history::checkout_rev(s, &oid))
         .unwrap_or_else(|_| id.to_string())
@@ -619,6 +626,17 @@ pub fn show(
         st.open = false;
     }
     let Some(cmd) = run else { return };
+    execute(ctx, cmd, tab, snap, shared);
+}
+
+/// Runs `cmd` on the active tab (`None` without a repository).
+pub(crate) fn execute(
+    ctx: &egui::Context,
+    cmd: Cmd,
+    tab: Option<&mut RepoTab>,
+    snap: Option<Snapshot>,
+    shared: &mut Shared,
+) {
     match (cmd, tab, snap) {
         (Cmd::App(f), _, _) => shared.actions.push(f()),
         (Cmd::Global(f), _, _) => shared.actions.push(Action::Global(f())),
@@ -661,6 +679,32 @@ pub fn show(
                 );
             } else {
                 t.dialog = Some(f(&s, ids));
+            }
+        }
+        (Cmd::Commit, Some(t), _) => {
+            t.view = View::FileStatus;
+            t.status.commit.request_focus();
+        }
+        (Cmd::StageAll(stage), Some(t), _) => {
+            t.view = View::FileStatus;
+            t.status.request_all(stage);
+        }
+        (Cmd::CopyShas(short), Some(t), Some(s)) => {
+            let ids = selected_commits(t, &s);
+            if ids.is_empty() {
+                t.session.push_message(
+                    gk_core::MessageKind::Info,
+                    "Select commits in History, Search or Reflog first.",
+                );
+            } else {
+                let ids: Vec<String> = if short {
+                    ids.iter()
+                        .map(|i| crate::util::short_id(i).to_string())
+                        .collect()
+                } else {
+                    ids
+                };
+                ctx.copy_text(ids.join("\n"));
             }
         }
         (Cmd::BlameSelected, Some(t), Some(s)) => {

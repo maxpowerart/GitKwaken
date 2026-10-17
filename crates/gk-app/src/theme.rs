@@ -59,6 +59,12 @@ pub struct Palette {
     pub modified: Color32,
     pub untracked: Color32,
     pub conflict: Color32,
+    /// Menu bar and repository tab strip (SourceTree's blue title area).
+    pub chrome: Color32,
+    /// Strong accent: selected sidebar entry, active view.
+    pub accent: Color32,
+    /// Text on [`Palette::accent`].
+    pub on_accent: Color32,
 }
 
 impl Palette {
@@ -82,6 +88,9 @@ impl Palette {
             modified: Color32::from_rgb(0xE8, 0xA7, 0x3D),
             untracked: Color32::from_rgb(0x8A, 0x8A, 0x8A),
             conflict: Color32::from_rgb(0xF8, 0x51, 0x49),
+            chrome: Color32::from_rgb(0x16, 0x33, 0x5E),
+            accent: Color32::from_rgb(0x2A, 0x7F, 0xE0),
+            on_accent: Color32::WHITE,
         }
     }
 
@@ -105,6 +114,9 @@ impl Palette {
             modified: Color32::from_rgb(0xB0, 0x6F, 0x00),
             untracked: Color32::from_rgb(0x70, 0x70, 0x70),
             conflict: Color32::from_rgb(0xCF, 0x22, 0x2E),
+            chrome: Color32::from_rgb(0xD9, 0xE4, 0xF4),
+            accent: Color32::from_rgb(0x2A, 0x7F, 0xE0),
+            on_accent: Color32::WHITE,
         }
     }
 }
@@ -267,6 +279,9 @@ pub fn apply_with(
         visuals.window_fill = Color32::from_rgb(0x2B, 0x2D, 0x31);
         visuals.extreme_bg_color = Color32::from_rgb(0x1E, 0x1F, 0x22);
         visuals.faint_bg_color = Color32::from_rgb(0x2A, 0x2C, 0x30);
+        // SourceTree-like blue accent for selected toggles and text selection.
+        visuals.selection.bg_fill = Color32::from_rgb(0x22, 0x6A, 0xC4);
+        visuals.selection.stroke.color = Color32::WHITE;
     }
     visuals.striped = true;
     if !dark {

@@ -360,15 +360,14 @@ pub fn current_bookmark(s: &gk_settings::Settings, current: Option<&Path>) -> Cu
     }
 }
 
-/// "Repositories ▾": bookmark / unbookmark the open repository, bookmarks by
-/// group, recents, open and scan; for the tab bar while repositories are open.
-// Called from the tab bar in app.rs
-// (`views::welcome::repositories_menu(ui, &mut shared, current)`).
-pub fn repositories_menu(ui: &mut Ui, shared: &mut Shared, current: Option<&Path>) {
+/// Repositories menu titled `title`: bookmark / unbookmark the open
+/// repository, bookmarks by group, recents, open and scan. Used by the tab
+/// row ("Repositories ▾") and File › Repositories in the menu bar.
+pub fn repositories_menu(ui: &mut Ui, shared: &mut Shared, current: Option<&Path>, title: &str) {
     let mut open: Option<PathBuf> = None;
     let mut action: Option<Action> = None;
     let mut unbookmark: Option<PathBuf> = None;
-    ui.menu_button("Repositories ▾", |ui| {
+    ui.menu_button(title, |ui| {
         let s = &*shared.settings;
         if let Some(cur) = current {
             match current_bookmark(s, current) {

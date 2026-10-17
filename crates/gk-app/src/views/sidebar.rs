@@ -40,11 +40,12 @@ enum Section {
 }
 
 impl Section {
+    /// SourceTree's order, then our extras.
     const ALL: [Section; 7] = [
         Section::Workspace,
         Section::Branches,
-        Section::Remotes,
         Section::Tags,
+        Section::Remotes,
         Section::Stashes,
         Section::Submodules,
         Section::Worktrees,
@@ -756,10 +757,15 @@ struct Look<'a> {
     selected: bool,
 }
 
-fn paint_row(ui: &Ui, cx: &Cx, rect: Rect, depth: u8, hovered: bool, look: Look) {
+fn paint_row(ui: &Ui, cx: &Cx, rect: Rect, depth: u8, hovered: bool, mut look: Look) {
     let p = ui.painter_at(rect);
     if look.selected {
-        p.rect_filled(rect, 2.0, cx.pal.selection);
+        // SourceTree: full-width accent bar, white text.
+        p.rect_filled(rect, 0.0, cx.pal.accent);
+        look.color = cx.pal.on_accent;
+        if let Some((_, c)) = &mut look.icon {
+            *c = cx.pal.on_accent;
+        }
     } else if hovered {
         p.rect_filled(
             rect,
@@ -913,7 +919,7 @@ fn row_ui(ui: &mut Ui, cx: &Cx, row: &Row, h: f32, cmds: &mut Vec<Cmd>) {
         }
         RowKind::Workspace(v) => {
             let (icon, text) = match v {
-                View::FileStatus => ("📝", "File status"),
+                View::FileStatus => ("📝", "File Status"),
                 View::History => ("🕘", "History"),
                 View::Search => ("🔍", "Search"),
                 View::Merge => ("⇄", "Merge"),
@@ -925,7 +931,12 @@ fn row_ui(ui: &mut Ui, cx: &Cx, row: &Row, h: f32, cmds: &mut Vec<Cmd>) {
             if *v == View::FileStatus {
                 let n = snap.status.staged.len() + snap.status.unstaged.len();
                 if n > 0 {
-                    badges.push((n.to_string(), pal.modified));
+                    let c = if cx.view == *v {
+                        pal.on_accent
+                    } else {
+                        pal.modified
+                    };
+                    badges.push((n.to_string(), c));
                 }
             }
             paint_row(
@@ -1791,6 +1802,57 @@ enum DropAct {
     CheckoutRebase(String, String),
 }
 
+/// Paints `rows[range]`, in a scroll area when `scroll` (the ref sections;
+/// the WORKSPACE head stays put).
+#[allow(clippy::too_many_arguments)]
+fn rows_ui(
+    ui: &mut egui::Ui,
+    tab: &RepoTab,
+    snap: &Snapshot,
+    shared: &Shared,
+    kb_menu: bool,
+    range: std::ops::Range<usize>,
+    scroll: bool,
+    h: f32,
+    cmds: &mut Vec<Cmd>,
+) {
+    let st = &tab.sidebar;
+    let Some(d) = &st.derived else { return };
+    let style = ui.style().clone();
+    let cx = Cx {
+        snap,
+        d,
+        st,
+        pal: shared.palette,
+        view: tab.view,
+        workdir: &tab.path,
+        font: egui::TextStyle::Body.resolve(&style),
+        small: egui::TextStyle::Small.resolve(&style),
+        text: ui.visuals().text_color(),
+        strong: ui.visuals().strong_text_color(),
+        kb_menu,
+    };
+    let rows = &st.rows[range];
+
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        if scroll {
+            egui::ScrollArea::vertical()
+                .id_salt("sidebar-refs")
+                .auto_shrink([false, false])
+                .show_rows(ui, h, rows.len(), |ui, r| {
+                    for row in &rows[r] {
+                        row_ui(ui, &cx, row, h, cmds);
+                    }
+                });
+        } else {
+            for row in rows {
+                row_ui(ui, &cx, row, h, cmds);
+            }
+        }
+    });
+}
+
 pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared) {
     // Background loads that finished.
     {
@@ -1799,23 +1861,6 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
             st.rows_valid = false;
         }
     }
-
-    // Filter box.
-    ui.add_space(2.0);
-    ui.horizontal(|ui| {
-        let st = &mut tab.sidebar;
-        let clear = !st.filter.is_empty();
-        let w = ui.available_width() - if clear { 24.0 } else { 0.0 };
-        ui.add(
-            egui::TextEdit::singleline(&mut st.filter)
-                .hint_text("🔍 Filter")
-                .desired_width(w),
-        );
-        if clear && ui.small_button("✖").on_hover_text("Clear filter").clicked() {
-            st.filter.clear();
-        }
-    });
-    ui.add_space(2.0);
 
     // Derived trees: rebuilt when refs or the filter change.
     let refs = &snap.refs;
@@ -1908,37 +1953,48 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
         painter.galley(r.min + vec2(4.0, 4.0), g, shared.palette.head);
     }
 
-    // Rows.
-    {
-        let st = &tab.sidebar;
-        let Some(d) = &st.derived else { return };
-        let style = ui.style().clone();
-        let cx = Cx {
-            snap,
-            d,
-            st,
-            pal: shared.palette,
-            view: tab.view,
-            workdir: &tab.path,
-            font: egui::TextStyle::Body.resolve(&style),
-            small: egui::TextStyle::Small.resolve(&style),
-            text: ui.visuals().text_color(),
-            strong: ui.visuals().strong_text_color(),
-            kb_menu: k.menu,
-        };
-        let h = crate::theme::Density::of(shared.settings.compact)
-            .sidebar_row(ui.text_style_height(&egui::TextStyle::Body));
-        ui.scope(|ui| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .show_rows(ui, h, st.rows.len(), |ui, range| {
-                    for row in &st.rows[range] {
-                        row_ui(ui, &cx, row, h, &mut cmds);
-                    }
-                });
-        });
+    // Rows, SourceTree style: WORKSPACE on top, then the filter box, then
+    // the ref sections in a scroll area.
+    if tab.sidebar.derived.is_none() {
+        return;
     }
+    let h = crate::theme::Density::of(shared.settings.compact)
+        .sidebar_row(ui.text_style_height(&egui::TextStyle::Body));
+    let ws = tab
+        .sidebar
+        .rows
+        .iter()
+        .take_while(|r| {
+            matches!(
+                r.kind,
+                RowKind::Header(Section::Workspace) | RowKind::Workspace(_)
+            )
+        })
+        .count();
+    let n = tab.sidebar.rows.len();
+    ui.add_space(2.0);
+    rows_ui(ui, tab, snap, shared, k.menu, 0..ws, false, h, &mut cmds);
+    ui.add_space(4.0);
+    let before = tab.sidebar.filter.clone();
+    ui.horizontal(|ui| {
+        let st = &mut tab.sidebar;
+        let clear = !st.filter.is_empty();
+        let w = ui.available_width() - if clear { 24.0 } else { 0.0 };
+        ui.add(
+            egui::TextEdit::singleline(&mut st.filter)
+                .hint_text("🔍 Search")
+                .desired_width(w),
+        );
+        if clear && ui.small_button("✖").on_hover_text("Clear filter").clicked() {
+            st.filter.clear();
+        }
+    });
+    if tab.sidebar.filter != before {
+        // Rows rebuild with the new filter on the next frame.
+        ui.ctx().request_repaint();
+    }
+    ui.add_space(4.0);
+    rows_ui(ui, tab, snap, shared, k.menu, ws..n, true, h, &mut cmds);
     for c in cmds {
         if matches!(c, Cmd::Select(_)) {
             tab.sidebar.focused = true;

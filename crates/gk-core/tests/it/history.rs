@@ -91,6 +91,27 @@ fn merges_and_multiple_tips() {
     );
     assert_eq!(both.len(), 5);
     check(&t, &both);
+
+    // A commit only on a remote branch is in All but not in Local.
+    t.git(&["checkout", "-q", "-b", "remote-only"]);
+    t.commit_file("r.txt", "r\n", "remote 1");
+    t.git(&[
+        "update-ref",
+        "refs/remotes/origin/remote-only",
+        "remote-only",
+    ]);
+    t.git(&["checkout", "-q", "main"]);
+    t.git(&["branch", "-q", "-D", "remote-only"]);
+    let remote = t.oid("origin/remote-only");
+    let all = build(&t, &Scope::All);
+    assert_eq!(all.len(), 7);
+    assert!(all.row(&remote).is_some());
+    let local = build(&t, &Scope::Local);
+    assert_eq!(local.len(), 6);
+    check(&t, &local);
+    assert!(local.row(&remote).is_none());
+    let tips = history::tip_ids(&t.repo, &Scope::Local);
+    assert!(!tips.contains(&remote));
 }
 
 #[test]
