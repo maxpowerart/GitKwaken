@@ -16,7 +16,7 @@ use crate::history::{History, Scope};
 use crate::refs::{Branch, Head, Refs, Remote, RemoteBranch, RepoState, Stash, Tag};
 use anyhow::{Context, Result};
 use gix::ObjectId;
-use gk_status::{Conflict, Entry, Kind, Status};
+use gk_status::{Conflict, Kind, Status, StatusBuilder};
 use parking_lot::Mutex;
 use redb::{Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition};
 use std::path::{Path, PathBuf};
@@ -600,34 +600,25 @@ fn encode_status(s: &Status) -> Vec<u8> {
 
 fn decode_status(b: &[u8]) -> Option<Status> {
     let mut r = R::new(b)?;
-    let mut sides: [Vec<Entry>; 2] = Default::default();
-    for side in &mut sides {
+    // All paths into one shared buffer (see `gk_status::StatusBuilder`).
+    let mut out = StatusBuilder::new();
+    for staged in [true, false] {
         let n = r.len()?;
-        side.reserve(n);
         for _ in 0..n {
-            let path = r.bytes()?.into();
+            let path = r.bytes()?;
             let kind = kind_of(r.u8()?)?;
-            let orig_path = match r.u8()? {
+            let orig = match r.u8()? {
                 0 => None,
-                1 => Some(r.bytes()?.into()),
+                1 => Some(r.bytes()?),
                 _ => return None,
             };
-            side.push(Entry {
-                path,
-                kind,
-                orig_path,
-            });
+            out.push_parts(staged, &[path], kind, orig);
         }
     }
     if !r.done() {
         return None;
     }
-    let [staged, unstaged] = sides;
-    Some(Status {
-        staged,
-        unstaged,
-        took: Duration::ZERO,
-    })
+    Some(out.finish())
 }
 
 fn encode_history(scope: &Scope, tips: &[ObjectId], h: &History) -> Vec<u8> {
@@ -743,6 +734,7 @@ fn decode_history(b: &[u8]) -> Option<CachedHistory> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gk_status::Entry;
 
     fn oid(i: u32) -> ObjectId {
         let mut b = [0u8; 20];
@@ -825,6 +817,7 @@ mod tests {
                 Entry::new("u", Kind::Untracked),
             ],
             took: Duration::ZERO,
+            fsmonitor: false,
         };
         let back = decode_status(&encode_status(&s)).unwrap();
         assert_eq!(back.staged, s.staged);

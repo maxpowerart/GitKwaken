@@ -52,7 +52,7 @@ fn defaults_roundtrip() {
     // Fully populated settings roundtrip too.
     let mut s = Settings::default();
     s.theme = Theme::System;
-    s.status_engine = StatusEngine::Cli;
+    s.status_engine = StatusEngine::Gix;
     s.window.position = Some([10.0, 20.5]);
     s.git_path = Some(PathBuf::from(r"C:\Program Files\Git\bin\git.exe"));
     s.external_diff_tool = Some(ExternalTool {

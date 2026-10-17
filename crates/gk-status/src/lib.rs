@@ -5,6 +5,7 @@
 mod cli_engine;
 pub mod fast;
 mod gix_engine;
+mod path;
 pub mod watch;
 
 use bstr::{BStr, BString};
@@ -12,6 +13,7 @@ use std::time::Duration;
 
 pub use cli_engine::compute as compute_cli;
 pub use gix_engine::compute as compute_gix;
+pub use path::{PathStr, StatusBuilder};
 
 /// Which side of a conflict did what, mirroring `git status` short codes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -73,14 +75,14 @@ impl Kind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
     /// Repository-relative path with `/` separators.
-    pub path: BString,
+    pub path: PathStr,
     pub kind: Kind,
     /// Source path for renames and copies.
-    pub orig_path: Option<BString>,
+    pub orig_path: Option<PathStr>,
 }
 
 impl Entry {
-    pub fn new(path: impl Into<BString>, kind: Kind) -> Self {
+    pub fn new(path: impl Into<PathStr>, kind: Kind) -> Self {
         Self {
             path: path.into(),
             kind,
@@ -98,6 +100,9 @@ pub struct Status {
     pub unstaged: Vec<Entry>,
     /// Time the computation took.
     pub took: Duration,
+    /// The last full scan was answered by `git status` with `core.fsmonitor`
+    /// in effect (see [`compute`]). Kept across partial merges.
+    pub fsmonitor: bool,
 }
 
 impl Status {
@@ -212,7 +217,46 @@ pub fn fsmonitor_state(git: &gk_cli::Git) -> FsMonitor {
     }
 }
 
+/// Starts (`true`) or stops git's builtin fsmonitor daemon for the worktree
+/// of `git` (`git fsmonitor--daemon start|stop`). Starting returns once the
+/// daemon listens; it keeps running after GitKwaken exits, like one started
+/// by `git status`.
+pub fn fsmonitor_daemon(git: &gk_cli::Git, start: bool) -> anyhow::Result<()> {
+    let verb = if start { "start" } else { "stop" };
+    git.run(&["fsmonitor--daemon", verb])?;
+    Ok(())
+}
+
+/// What a `core.fsmonitor` value asks for, as git reads it
+/// (`--type=bool-or-str`): `true` is the builtin daemon, any other non-false
+/// value is the path of a hook (e.g. Watchman's).
+fn fsmonitor_value_active(value: &str) -> bool {
+    let v = value.trim();
+    match v.to_ascii_lowercase().as_str() {
+        "" | "false" | "no" | "off" | "0" => false,
+        // The builtin daemon exists on Windows and macOS only; elsewhere git
+        // warns and scans normally, and the gix engine is the faster scan.
+        "true" | "yes" | "on" | "1" => cfg!(any(windows, target_os = "macos")),
+        _ => true,
+    }
+}
+
+/// `core.fsmonitor` is set to something `git status` would use here.
+fn fsmonitor_configured(repo: &gix::Repository) -> bool {
+    repo.config_snapshot()
+        .string("core.fsmonitor")
+        .is_some_and(|v| fsmonitor_value_active(&v.to_string()))
+}
+
 /// Computes status, limited to `patterns` when non-empty.
+///
+/// fsmonitor: gitoxide has no client for git's fsmonitor daemon (nor for
+/// fsmonitor hooks): it reads the index extension but stats every entry. So
+/// when the repository has `core.fsmonitor` set (the Optimize dialog does
+/// that), full scans with [`Engine::Gix`] are handed to the CLI engine, whose
+/// `git status` asks the daemon which paths changed and skips the rest.
+/// Pathspec-limited scans stay in-process: they only stat their scope.
+/// [`Status::fsmonitor`] tells which scans went through the daemon.
 pub fn compute(
     workdir: &std::path::Path,
     git: &gk_cli::Git,
@@ -227,9 +271,26 @@ pub fn compute(
     )
     .entered();
     let start = std::time::Instant::now();
+    let full = patterns.is_empty();
     let mut status = match opts.engine {
-        Engine::Gix => gix_engine::compute(workdir, patterns, opts.untracked, interrupt)?,
-        Engine::Cli => cli_engine::compute(git, patterns, opts.untracked)?,
+        Engine::Gix => {
+            let repo = gix::open(workdir).map_err(|e| anyhow::anyhow!("{e}"))?;
+            if full && fsmonitor_configured(&repo) {
+                let mut s = cli_engine::compute(git, patterns, opts.untracked)?;
+                s.fsmonitor = true;
+                s
+            } else {
+                gix_engine::compute_in(&repo, patterns, opts.untracked, interrupt)?
+            }
+        }
+        Engine::Cli => {
+            let mut s = cli_engine::compute(git, patterns, opts.untracked)?;
+            s.fsmonitor = full
+                && gix::open(workdir)
+                    .ok()
+                    .is_some_and(|r| fsmonitor_configured(&r));
+            s
+        }
     };
     status.sort();
     status.took = start.elapsed();
@@ -260,6 +321,60 @@ mod tests {
         git.run(&["config", "core.fsmonitor", "true"]).unwrap();
         // Not started by anything yet (no status ran since).
         assert_ne!(fsmonitor_state(&git), FsMonitor::Off);
+    }
+
+    #[test]
+    fn fsmonitor_values() {
+        for off in ["", "false", "No", "off", "0"] {
+            assert!(!fsmonitor_value_active(off), "{off}");
+        }
+        assert_eq!(
+            fsmonitor_value_active("true"),
+            cfg!(any(windows, target_os = "macos"))
+        );
+        assert!(fsmonitor_value_active(".git/hooks/query-watchman"));
+    }
+
+    /// With `core.fsmonitor` on, a full scan with the default (gix) engine
+    /// goes through `git status` and the daemon, with the same result.
+    #[cfg(any(windows, target_os = "macos"))]
+    #[test]
+    fn gix_engine_full_scan_uses_fsmonitor() {
+        use std::sync::Arc;
+        use std::sync::atomic::AtomicBool;
+        let dir = tempfile::tempdir().unwrap();
+        let git = gk_cli::Git::new(dir.path(), gk_cli::CommandLog::default());
+        git.run(&["init", "-q"]).unwrap();
+        git.run(&["config", "core.autocrlf", "false"]).unwrap();
+        std::fs::write(dir.path().join("a.txt"), "a\n").unwrap();
+        std::fs::write(dir.path().join("b.txt"), "b\n").unwrap();
+        git.run(&["add", "a.txt"]).unwrap();
+        let opts = Options {
+            engine: Engine::Gix,
+            untracked: Untracked::All,
+        };
+        let stop = Arc::new(AtomicBool::new(false));
+        let plain = compute(dir.path(), &git, &[], &opts, &stop).unwrap();
+        assert!(!plain.fsmonitor);
+
+        git.run(&["config", "core.fsmonitor", "true"]).unwrap();
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let via = compute(dir.path(), &git, &[], &opts, &stop).unwrap();
+            assert!(via.fsmonitor);
+            assert_eq!(via.staged, plain.staged);
+            assert_eq!(via.unstaged, plain.unstaged);
+            // The scan started the daemon; stop/start round-trips.
+            fsmonitor_daemon(&git, false).unwrap();
+            assert_eq!(fsmonitor_state(&git), FsMonitor::Configured);
+            fsmonitor_daemon(&git, true).unwrap();
+            assert_eq!(fsmonitor_state(&git), FsMonitor::Running);
+            // Scoped scans stay in-process.
+            let scoped = compute(dir.path(), &git, &["b.txt".into()], &opts, &stop).unwrap();
+            assert!(!scoped.fsmonitor);
+        }));
+        // Do not leave a daemon holding the temp dir open.
+        let _ = git.run_raw(&["fsmonitor--daemon", "stop"], None);
+        r.unwrap();
     }
 
     #[test]

@@ -142,8 +142,12 @@ pub enum Theme {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StatusEngine {
-    #[default]
+    /// gitoxide in process; no fsmonitor client, so full scans with
+    /// `core.fsmonitor` on are handed to `git status`.
     Gix,
+    /// `git status --porcelain=v2`: faster on Windows (core.fscache), and it
+    /// asks the fsmonitor daemon itself (see docs/BENCHMARKS.md).
+    #[default]
     Cli,
 }
 

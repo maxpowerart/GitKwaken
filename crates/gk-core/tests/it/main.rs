@@ -1,6 +1,7 @@
 //! Integration tests against real temporary repositories.
 
 mod advanced;
+mod blame;
 mod common;
 mod content;
 mod history;

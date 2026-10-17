@@ -95,6 +95,13 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
                     if snap.status_loading || snap.history_loading {
                         ui.spinner();
                     }
+                    if snap.status.fsmonitor {
+                        ui.label(egui::RichText::new("· fsmonitor").color(shared.palette.muted))
+                            .on_hover_text(
+                                "The last full status scan was answered by git's file system \
+                                 monitor daemon (core.fsmonitor). See More ▸ Optimize repository.",
+                            );
+                    }
                     ui.label(
                         egui::RichText::new(format!(
                             "{} commits · status {} ms",
