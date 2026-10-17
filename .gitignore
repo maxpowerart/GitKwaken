@@ -3,3 +3,4 @@
 /bench-data
 /dist
 *.profraw
+.claude/

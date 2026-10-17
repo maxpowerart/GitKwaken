@@ -7,6 +7,7 @@
 mod app;
 mod dialogs;
 mod keymap;
+mod startup;
 mod tab;
 mod theme;
 mod update;
@@ -14,6 +15,7 @@ mod util;
 mod views;
 
 fn main() {
+    startup::init();
     if let Some(code) = gk_askpass::client_main() {
         std::process::exit(code);
     }

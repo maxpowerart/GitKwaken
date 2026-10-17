@@ -577,6 +577,19 @@ impl gk_dx11::App for GkApp {
         } else {
             let i = self.active.min(self.tabs.len() - 1);
             self.tabs[i].show(ui, &mut shared);
+            if crate::startup::active() {
+                crate::startup::mark("first_frame", false);
+                let tab = &self.tabs[i];
+                let snap = tab.session.snapshot();
+                if tab.view == crate::tab::View::History && !snap.history.is_empty() {
+                    let label = if snap.from_cache {
+                        "history_rows_from_cache"
+                    } else {
+                        "history_rows"
+                    };
+                    crate::startup::mark(label, true);
+                }
+            }
         }
         if let Some(mut g) = self.global.take() {
             let mut shared = Shared {
