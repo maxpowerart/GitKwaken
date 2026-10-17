@@ -60,6 +60,13 @@ gk-bench ──► gk-core / gk-status / gk-graph   (measurements on real repos)
   isn't yet supported"), which would be a second, conflicting installer definition. dist's
   GitHub CI is not generated either: it always writes `.github/workflows/release.yml` (tag
   push), which would replace or race ours.
+  The MSI's Explorer integration (folder verbs, App Paths) is written by `gitkwaken.exe
+  --register-shell-integration [--context-menu]` from deferred, impersonated custom actions
+  (`crates/gk-app/src/shell_integration.rs`), and removed by `--unregister-shell-integration`
+  before RemoveFiles. On Windows 11 Insider build 26300 every registry and file write made
+  from inside the msiexec session to these exact keys was dropped (other key names and the
+  Inno installer were fine), so the app also re-creates them on start when
+  `HKCU\Software\GitKwaken\Installer` says it was installed by the MSI with the context menu.
 
 ## Threads
 

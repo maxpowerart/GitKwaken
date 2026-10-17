@@ -77,6 +77,7 @@
       <ComponentGroupRef Id="AppFiles" />
       <ComponentRef Id="StartMenuShortcut" />
       <ComponentRef Id="InstallerKeyCleanup" />
+      <ComponentRef Id="AppPathsCleanup" />
       <Feature Id="ContextMenu" Title="Folder context menu"
                Description="Add &quot;Open in GitKwaken&quot; to the folder context menu in Explorer."
                Level="1">
@@ -108,13 +109,6 @@
         <RegistryValue Root="HKCU" Key="Software\GitKwaken\Installer" Name="Docs"
                        Type="integer" Value="1" KeyPath="yes" />
       </Component>
-      <!-- "App Paths" so `Win+R gitkwaken` works. -->
-      <Component Id="AppPaths">
-        <RegistryKey Root="HKCU" ForceDeleteOnUninstall="yes"
-                     Key="Software\Microsoft\Windows\CurrentVersion\App Paths\gitkwaken.exe">
-          <RegistryValue Type="string" Value="[INSTALLFOLDER]gitkwaken.exe" KeyPath="yes" />
-        </RegistryKey>
-      </Component>
       <?ifdef BundleGit?>
       <!-- Bundled MinGit (build-release.ps1 -BundleGit); gk-cli prefers <exe dir>\git\cmd\git.exe. -->
       <Component Id="GitDirCleanup" Directory="GitDir">
@@ -140,25 +134,46 @@
                      Type="integer" Value="1" KeyPath="yes" />
     </Component>
 
-    <!-- Same keys and commands as packaging/gitkwaken.iss [Registry] (HKA = HKCU per-user). -->
+    <!-- Explorer integration: "Open in GitKwaken" on folders and folder backgrounds (same keys
+         and commands as packaging/gitkwaken.iss [Registry]) and App Paths (`Win+R gitkwaken`).
+         gitkwaken.exe writes them itself (crates/gk-app/src/shell_integration.rs), run by the
+         deferred, impersonated custom actions below: per-user RegistryValues under these exact
+         key names, written by the msiexec service, were observed never to reach the user's
+         hive on Windows 11 build 26300 (other names did; writes made as the user always do).
+         This component only records the feature choice. -->
     <Component Id="ContextMenuKeys" Directory="INSTALLFOLDER">
-      <!-- Right-click on a folder. -->
-      <RegistryKey Root="HKCU" Key="Software\Classes\Directory\shell\GitKwaken"
-                   ForceDeleteOnUninstall="yes">
-        <RegistryValue Type="string" Value="Open in GitKwaken" KeyPath="yes" />
-        <RegistryValue Name="Icon" Type="string" Value="&quot;[INSTALLFOLDER]gitkwaken.exe&quot;,0" />
-        <RegistryValue Key="command" Type="string"
-                       Value="&quot;[INSTALLFOLDER]gitkwaken.exe&quot; &quot;%V&quot;" />
-      </RegistryKey>
-      <!-- Right-click on the background of an open folder. -->
-      <RegistryKey Root="HKCU" Key="Software\Classes\Directory\Background\shell\GitKwaken"
-                   ForceDeleteOnUninstall="yes">
-        <RegistryValue Type="string" Value="Open in GitKwaken" />
-        <RegistryValue Name="Icon" Type="string" Value="&quot;[INSTALLFOLDER]gitkwaken.exe&quot;,0" />
-        <RegistryValue Key="command" Type="string"
-                       Value="&quot;[INSTALLFOLDER]gitkwaken.exe&quot; &quot;%V&quot;" />
-      </RegistryKey>
+      <RegistryValue Root="HKCU" Key="Software\GitKwaken\Installer" Name="ContextMenu"
+                     Type="integer" Value="1" KeyPath="yes" />
+      <!-- Belt and braces on uninstall: also remove the keys through the installer itself. -->
+      <RemoveRegistryKey Root="HKCU" Key="Software\Classes\Directory\shell\GitKwaken"
+                         Action="removeOnUninstall" />
+      <RemoveRegistryKey Root="HKCU" Key="Software\Classes\Directory\Background\shell\GitKwaken"
+                         Action="removeOnUninstall" />
     </Component>
+    <Component Id="AppPathsCleanup" Directory="INSTALLFOLDER">
+      <RegistryValue Root="HKCU" Key="Software\GitKwaken\Installer" Name="AppPaths"
+                     Type="integer" Value="1" KeyPath="yes" />
+      <RemoveRegistryKey Root="HKCU"
+                         Key="Software\Microsoft\Windows\CurrentVersion\App Paths\gitkwaken.exe"
+                         Action="removeOnUninstall" />
+    </Component>
+    <CustomAction Id="RegisterShellMenu" FileRef="gitkwaken.exe"
+                  ExeCommand="--register-shell-integration --context-menu"
+                  Execute="deferred" Impersonate="yes" Return="check" />
+    <CustomAction Id="RegisterShellAppPaths" FileRef="gitkwaken.exe"
+                  ExeCommand="--register-shell-integration"
+                  Execute="deferred" Impersonate="yes" Return="check" />
+    <CustomAction Id="UnregisterShell" FileRef="gitkwaken.exe"
+                  ExeCommand="--unregister-shell-integration"
+                  Execute="deferred" Impersonate="yes" Return="ignore" />
+    <InstallExecuteSequence>
+      <!-- Before RemoveFiles: the exe must still exist to clean up after itself. -->
+      <Custom Action="UnregisterShell" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot;" />
+      <Custom Action="RegisterShellMenu" After="InstallFiles"
+              Condition="NOT REMOVE=&quot;ALL&quot; AND (&amp;ContextMenu=3 OR (!ContextMenu=3 AND &amp;ContextMenu&lt;&gt;2))" />
+      <Custom Action="RegisterShellAppPaths" After="RegisterShellMenu"
+              Condition="NOT REMOVE=&quot;ALL&quot; AND NOT (&amp;ContextMenu=3 OR (!ContextMenu=3 AND &amp;ContextMenu&lt;&gt;2))" />
+    </InstallExecuteSequence>
 
     <!-- On uninstall remove HKCU\Software\GitKwaken (only the KeyPath values above live there;
          the app keeps its settings in files, see gk-settings). -->

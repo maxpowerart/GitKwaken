@@ -7,6 +7,8 @@
 mod app;
 mod dialogs;
 mod keymap;
+#[cfg(windows)]
+mod shell_integration;
 mod startup;
 mod tab;
 mod theme;
@@ -19,10 +21,18 @@ fn main() {
     if let Some(code) = gk_askpass::client_main() {
         std::process::exit(code);
     }
+    // Installer hooks (MSI custom actions): Explorer verbs and App Paths.
+    #[cfg(windows)]
+    if let Some(code) = shell_integration::run_from_args() {
+        std::process::exit(code);
+    }
     // No-op unless built with `--features profile` (Tracy).
     gk_core::profiling::init();
     // Removes the previous executable left behind by a self-update.
     gk_update::cleanup_old();
+    // MSI installs: re-create Explorer keys the installer could not write (background).
+    #[cfg(windows)]
+    shell_integration::heal_in_background();
     let settings = gk_settings::Settings::load();
     if let Some(git) = &settings.git_path {
         // gk-cli honors this override for every git invocation.

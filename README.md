@@ -66,7 +66,12 @@ Grab a release from the Releases page:
   `%LOCALAPPDATA%\Programs\GitKwaken`, newer MSIs upgrade it (one Add/Remove Programs entry).
   Features: `ContextMenu` (on by default) and `DesktopShortcut` (off), e.g.
   `msiexec /i ... ADDLOCAL=Main,DesktopShortcut`. Use either the MSI or the setup.exe, not
-  both (they share the folder).
+  both (they share the folder). The Explorer entries (context menu, `Win+R gitkwaken`) are
+  written by `gitkwaken.exe` itself during the install; if the installer environment drops
+  those writes (seen on a Windows 11 Insider build, 26300), the app re-creates them on its
+  first start, and an uninstall may then leave them behind — remove them with
+  `gitkwaken.exe --unregister-shell-integration` before uninstalling, or with the
+  setup.exe installer, which is not affected.
 - `GitKwaken-<ver>-x64.zip`: portable build; unzip anywhere and run `gitkwaken.exe`.
 
 The built-in updater replaces `gitkwaken.exe` in place, which works for the zip and the
