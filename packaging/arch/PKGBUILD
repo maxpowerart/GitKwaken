@@ -4,9 +4,9 @@
 # (GitKwaken-<version>-x86_64-linux.tar.gz from the GitHub release).
 #
 # Every release carries a copy of this file with _ver and the checksum filled in
-# (packaging/build-linux.sh). Put that PKGBUILD and the tarball in one folder and
-# run `makepkg -si`; makepkg uses the tarball found next to the PKGBUILD instead
-# of downloading it.
+# (packaging/build-linux.sh). Download that PKGBUILD and run `makepkg -si`;
+# makepkg fetches the tarball from the release (or uses one already next to
+# the PKGBUILD) and checks it against the pinned checksum.
 # This template keeps 'SKIP' as the checksum; the release copy pins it.
 
 pkgname=gitkwaken-bin

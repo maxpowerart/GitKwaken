@@ -97,16 +97,17 @@ Requirements: Windows 10 1809+ x64 and [Git for Windows](https://git-scm.com/dow
   Fedora, Debian 12, Ubuntu 22.04+). Unpack and run `./gitkwaken [repo...]`; it needs `git` on
   `PATH`, X11 or Wayland, and a Vulkan or OpenGL driver (Mesa is enough).
 - `PKGBUILD` (Arch Linux, Manjaro): installs that tarball as the `gitkwaken-bin` package,
-  with the menu entry and icons. Download the `PKGBUILD` and the tarball of the same release
-  into one folder, then:
+  with the menu entry and icons. Download the release's `PKGBUILD` into an empty folder, then:
 
   ```sh
+  sudo pacman -S --needed base-devel   # once
   makepkg -si
   ```
 
-  makepkg checks the tarball against the checksum pinned in the release's `PKGBUILD` and uses
-  the local file instead of downloading it. Uninstall with `sudo pacman -R gitkwaken-bin`.
-  The template in the repository (`packaging/arch/PKGBUILD`) has no pinned checksum.
+  makepkg downloads the tarball of the same release, checks it against the checksum pinned in
+  the `PKGBUILD` and installs the dependencies (a tarball already next to the `PKGBUILD` is used
+  instead of downloading). Uninstall with `sudo pacman -R gitkwaken-bin`. The template in the
+  repository (`packaging/arch/PKGBUILD`) has no pinned checksum.
 
 Without the PKGBUILD, a per-user desktop entry from the unpacked tarball:
 
