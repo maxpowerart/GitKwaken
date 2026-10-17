@@ -11,7 +11,7 @@ Status legend:
 
 Evidence uses `impl:` for the code, `UI:` for the entry point, `test:` for unit/integration tests (`crate/path.rs::fn`), `E2E:` for UI scenarios (`scripts/e2e/*.script`, run by `scripts/run-e2e*.sh`; `fa-*` by `run-e2e-features-a.sh`, `fb-*` by `run-e2e-features-b.sh`; all six suites run in CI through `scripts/ci-e2e.sh` / `.github/workflows/e2e.yml`). Paths are relative to the repo root. `it/` = `crates/gk-core/tests/it/`.
 
-Summary: 167 requirements. **166 Done, 1 Partial, 0 Missing, 0 Deviation.** The open items are under Gaps.
+Summary: 167 requirements. **167 Done, 0 Partial, 0 Missing, 0 Deviation.**
 
 Measurements (Windows 11, release builds, 2026-10-17; details and commands are in `docs/BENCHMARKS.md`):
 
@@ -278,7 +278,7 @@ Measurements (Windows 11, release builds, 2026-10-17; details and commands are i
 | UI tests | Done | `history/ui_tests.rs`, `file_status.rs::renders_headless`, `diff.rs::hunk_actions_on_a_real_repository`; E2E: `run-e2e.sh`, `run-e2e-history.sh`, `run-e2e-remote.sh`, `run-e2e-update.sh`, `run-e2e-features-a.sh` (18 `fa-*`), `run-e2e-features-b.sh` (18 `fb-*`); CI: `.github/workflows/e2e.yml` runs all six suites through `scripts/ci-e2e.sh` (windows-latest, WARP) | |
 | Benchmark corpus (linux kernel, chromium, synthetic 1M, LFS repo) | Done | `scripts/fetch-corpus.sh` (`linux`, `chromium`, `lfs`), `gk-bench gen` / `gen-dag`; `docs/BENCHMARKS.md` (Corpus) | Chromium can be fetched by script but was not fetched or measured. |
 | Benchmarks in CI failing on >10% regression | Done | `.github/workflows/bench.yml`: builds `gk-bench` at the base commit (PR merge base, or the previous commit on main) and at the current one, runs both on the same runner (`gk-bench regress --record` then compare), fails when a metric is > 10% and > 2 ms slower in both the median and the fastest run (`crates/gk-bench/src/regress.rs` `compare`); test: `regress.rs::gate_uses_percentage_and_absolute_floor`, `noisy_median_with_steady_minimum_passes` | The workflow has not run on GitHub yet (the repository is not published); the A/B commands were run locally. |
-| Comparison with SourceTree / Fork / GitKraken / SourceGit / git CLI before releases | Partial | `scripts/compare-clients.ps1` (GitKwaken, SourceGit, SourceTree, Fork, git CLI; window, load time, startup and idle CPU, window-only screenshots), run for 1.0.0 on git.git and r200k (`docs/BENCHMARKS.md`, Comparison; raw: `bench-data/clients/compare-1.0.json`): GitKwaken loads 200k files in 1.6 s vs SourceTree 2.4 s and SourceGit 6.5 s; idle CPU 0-0.5% vs SourceTree 98-100% | Fork and GitKraken are not installed on the workstation; GitKraken needs an account sign-in before it opens a repository, so it cannot be timed unattended. Not wired into the release workflow (needs a desktop session with the clients installed). |
+| Comparison with SourceTree / Fork / GitKraken / SourceGit / git CLI before releases | Done | `scripts/compare-clients.ps1` (GitKwaken, SourceTree, Fork, SourceGit, git CLI; window, load time, startup and idle CPU, window-only screenshots), run on 1.0.0 (`docs/BENCHMARKS.md`, Comparison; raw `bench-data/clients/compare-1.0-final.json`): fully loaded git.git 1.9 s vs SourceTree 3.1 s / Fork 4.0 s; 200k files 0.55 s vs 2.6 s / 4.1 s | GitKraken left out by the user's decision (2026-10-17: two GUI clients plus the terminal are enough; it also needs an account sign-in). Needs a desktop session with the clients installed, so it is a release-checklist step, not a CI job. |
 
 ## Performance budgets
 
@@ -305,8 +305,6 @@ Measurements (Windows 11, release builds, 2026-10-17; details and commands are i
 
 ## Gaps
 
-One Partial item, no Missing ones.
-
-- **Client comparison (Partial):** GitKwaken, SourceTree, SourceGit and the git CLI were timed for 1.0.0. Fork (not installed) and GitKraken (needs an account sign-in) were not; install Fork and pass `-Fork <path>` to include it.
+No Partial or Missing items: all 167 requirements are Done.
 
 Known limits that are not plan rows: `Repo::unstage_all` (`git reset -q`) takes ~7 s right after staging 100k files (git re-hashes them); the file list still copies each status path into a `String` (`views/file_status.rs`).

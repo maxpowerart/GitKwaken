@@ -100,40 +100,44 @@ tree (including git.exe children) every ~100 ms for 20 s:
 - **idle CPU**: the steady background rate after loading (100% = one core).
 
 A window-only screenshot (PrintWindow) per run in `bench-data/clients/shots/`
-confirms the repository was actually shown. Median of 3 runs, 2026-10-17:
-GitKwaken 1.0.0 from `dist/` (opens in the History view), SourceGit 2026.21
-portable (SHA-256 checked), SourceTree 3.4.24 (the workstation's own install;
-its open-tab list was emptied for the runs and restored afterwards, so only the
-measured repository was loaded). git.git = 85,618 commits / 4,857 files;
-r200k = synthetic, 1 commit / 200,000 files (`gk-bench gen`).
+confirms the repository was actually shown. Median of 3 runs on an otherwise
+idle machine, 2026-10-17 (raw: `bench-data/clients/compare-1.0-final.json`):
+GitKwaken 1.0.0 from `dist/` (opens in the History view), SourceTree 3.4.24
+(the workstation's own install; its open-tab list was emptied for the runs and
+restored byte for byte afterwards), Fork 2.21.0 (winget `Fork.Fork`, per-user),
+SourceGit 2026.21 portable. GitKraken was left out by the user's decision (it
+also needs an account sign-in before it opens a repository). git.git = 85,618
+commits / 4,857 files; r200k = synthetic, 1 commit / 200,000 files, clean
+working tree (`gk-bench gen`).
 
 | Repository | Client | Window | Loaded | Startup CPU | Idle CPU |
 |---|---|---:|---:|---:|---:|
-| git.git | GitKwaken | 339 ms | 2,275 ms | 2,846 ms | 0.5% |
-| git.git | SourceGit | 499 ms | 947 ms | 2,830 ms | 2.1% |
-| git.git | SourceTree | 124 ms | 3,426 ms | 2,857 ms | 98.1% |
-| git.git | `git status` | | 43 ms | | |
-| git.git | `git log --graph --all --format='%h %s'` | | 964 ms (first 200: 81 ms) | | |
-| r200k | GitKwaken | 222 ms | 1,634 ms | 1,062 ms | 0% |
-| r200k | SourceGit | 361 ms | 6,472 ms | 1,341 ms | 2.1% |
-| r200k | SourceTree | 116 ms | 2,436 ms | 2,429 ms | 100.2% |
-| r200k | `git status` | | 61 ms | | |
+| git.git | GitKwaken | 232 ms | 1,886 ms | 2,922 ms | 0% |
+| git.git | SourceTree | 122 ms | 3,118 ms | 4,425 ms | 0.5% |
+| git.git | Fork | 1,135 ms | 4,022 ms | 1,719 ms | 0% |
+| git.git | SourceGit | 364 ms | 920 ms | 2,212 ms | 1.6% |
+| git.git | `git status` | | 35 ms | | |
+| git.git | `git log --graph --all --format='%h %s'` | | 847 ms (first 200: 76 ms) | | |
+| r200k | GitKwaken | 238 ms | 553 ms | 1,219 ms | 0% |
+| r200k | SourceTree | 116 ms | 2,551 ms | 4,696 ms | 2.1% |
+| r200k | Fork | 1,163 ms | 4,072 ms | 2,828 ms | 0% |
+| r200k | SourceGit | 341 ms | 451 ms | 1,062 ms | 3.2% |
+| r200k | `git status` | | 63 ms | | |
 
 Reading the numbers:
 
-- SourceTree puts up its window first (a .NET splash/shell window), but it is
-  the slowest to finish loading git.git and keeps one core fully busy while
-  idle (98-100%) on this machine. GitKwaken goes idle at 0-0.5%.
-- On 200k files GitKwaken is fully loaded in 1.6 s against SourceTree 2.4 s and
-  SourceGit 6.5 s, with the least CPU of the three.
-- On git.git SourceGit finishes first (947 ms) because it loads one page of
-  commits; GitKwaken lays out the whole 85k-commit graph (first rows appear at
-  ~20 ms, see the budgets table) and loads the sidebar, status and details.
-- **Fork** and **GitKraken** are not installed on the workstation. Fork is a
-  per-user Squirrel install (`Fork.Fork` on winget); GitKraken requires signing
-  in to an account before it opens a repository. The script measures Fork when
-  `-Fork <path to Fork.exe>` is given (or `%LOCALAPPDATA%\Fork\Fork.exe` exists)
-  and SourceTree automatically; GitKraken cannot be timed unattended.
+- Against the two GUI clients the design targets, GitKwaken is fully loaded
+  first on both repositories: git.git 1.9 s vs SourceTree 3.1 s and Fork 4.0 s;
+  200k files 0.55 s vs 2.6 s and 4.1 s. SourceTree shows its (empty) shell
+  window first, Fork after ~1.1 s.
+- SourceGit finishes git.git sooner (0.9 s) because it loads one page of
+  commits; GitKwaken lays out the whole 85k-commit graph (first rows at ~20 ms,
+  see the budgets table). On r200k the two are close (451 vs 553 ms).
+- GitKwaken and Fork go fully idle; SourceTree and SourceGit keep 0.5-3% of a
+  core busy.
+- An earlier run the same day (while a build ran in parallel) showed SourceTree
+  at ~100% idle CPU and SourceGit at 6.5 s on r200k; those numbers were noise
+  from the busy machine and are superseded by this table.
 
 Re-run: `powershell -ExecutionPolicy Bypass -File scripts\compare-clients.ps1 -FetchSourceGit -Repos bench-data\gitgit,bench-data\r200k -Runs 3 -OutFile compare.json`.
 It starts real windows on the desktop; do not use the machine meanwhile.
