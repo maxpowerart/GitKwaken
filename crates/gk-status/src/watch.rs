@@ -491,6 +491,8 @@ mod tests {
     }
 
     #[test]
+    // FSEvents delivers some notifications of the paused period seconds late, after any grace.
+    #[cfg_attr(target_os = "macos", ignore = "FSEvents delivery latency is unbounded")]
     fn resume_discarding_drops_own_changes() {
         let dir = tempfile::tempdir().unwrap();
         let git_dir = dir.path().join(".git");
