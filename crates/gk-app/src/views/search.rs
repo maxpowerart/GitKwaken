@@ -15,6 +15,8 @@ use std::time::{Duration, Instant};
 
 const DEBOUNCE: Duration = Duration::from_millis(250);
 const PREFETCH: usize = 40;
+/// File history rows fetched ahead of the full `--follow` walk.
+const FIRST_PAGE: &str = "50";
 
 /// Commits touching one file, newest first, with the file's path in each.
 #[derive(Default)]
@@ -38,7 +40,9 @@ struct FileMode {
     path: String,
     /// Bumped by "Refresh" to re-run git.
     run: u64,
-    task: Task<(String, u64), FileHist>,
+    /// First `FIRST_PAGE` commits, shown until the full list is ready.
+    first: Task<(String, u64, bool), FileHist>,
+    task: Task<(String, u64, bool), FileHist>,
 }
 
 #[derive(Default)]
@@ -81,6 +85,7 @@ impl SearchState {
         self.file = Some(FileMode {
             path,
             run: 0,
+            first: Task::default(),
             task: Task::default(),
         });
         self.file_result = None;
@@ -212,19 +217,37 @@ fn top_bar(ui: &mut Ui, tab: &mut RepoTab) -> Option<Source> {
             if ui.small_button("⟳").on_hover_text("Refresh").clicked() {
                 fm.run += 1;
             }
-            let key = (fm.path.clone(), fm.run);
-            let git = tab.session.repo().git().clone();
             let all = tab.state.history_scope != "current";
-            let path = fm.path.clone();
-            let state = fm.task.get(&key, &ctx, move || {
-                let mut args = vec!["log", "--follow", "--format=%x01%H", "--name-status", "-z"];
-                if all {
-                    args.push("--all");
+            let key = (fm.path.clone(), fm.run, all);
+            // The first page comes from a short `-n` run so it shows quickly;
+            // the full `--follow` walk can take seconds on big repositories.
+            let log = |limit: Option<&'static str>| {
+                let git = tab.session.repo().git().clone();
+                let path = fm.path.clone();
+                move || {
+                    let mut args =
+                        vec!["log", "--follow", "--format=%x01%H", "--name-status", "-z"];
+                    if let Some(n) = limit {
+                        args.extend(["-n", n]);
+                    }
+                    if all {
+                        args.push("--all");
+                    }
+                    args.extend(["--", path.as_str()]);
+                    let o = git.run(&args)?;
+                    Ok(FileHist::new(parse_file_log(&o.stdout_str(), &path)))
                 }
-                args.extend(["--", path.as_str()]);
-                let o = git.run(&args)?;
-                Ok(FileHist::new(parse_file_log(&o.stdout_str(), &path)))
-            });
+            };
+            let first = fm.first.get(&key, &ctx, log(Some(FIRST_PAGE)));
+            let state = fm.task.get(&key, &ctx, log(None));
+            let state = match (state, first) {
+                (TaskState::Running, TaskState::Done(f)) => {
+                    out = Some(Source::File(f));
+                    ui.spinner().on_hover_text("Loading older commits…");
+                    TaskState::Running
+                }
+                (s, _) => s,
+            };
             match state {
                 TaskState::Done(f) => {
                     let n = f.entries.len();
@@ -232,6 +255,7 @@ fn top_bar(ui: &mut Ui, tab: &mut RepoTab) -> Option<Source> {
                     ui.label(egui::RichText::new(format!("{n} commit{s}")).weak());
                     out = Some(Source::File(f));
                 }
+                TaskState::Running if out.is_some() => {}
                 TaskState::Failed(e) => {
                     ui.colored_label(ui.visuals().error_fg_color, e);
                 }
