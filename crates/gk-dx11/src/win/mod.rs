@@ -84,6 +84,9 @@ struct Running {
     vsync: bool,
     gfx_failures: u32,
     warned_viewports: bool,
+    /// Menu (Apps) key presses, delivered to egui as Shift+F10 (egui has no
+    /// context-menu key); the app opens keyboard context menus on both.
+    menu_keys: u32,
     close_requested: bool,
     closed: bool,
 }
@@ -150,6 +153,7 @@ impl Host<'_> {
             vsync: o.vsync,
             gfx_failures: 0,
             warned_viewports: false,
+            menu_keys: 0,
             close_requested: false,
             closed: false,
         };
@@ -202,6 +206,14 @@ impl ApplicationHandler<UserEvent> for Host<'_> {
                 return;
             }
             WindowEvent::Resized(_) | WindowEvent::Moved(_) => r.track_geometry(),
+            WindowEvent::KeyboardInput { event: k, .. }
+                if k.state.is_pressed()
+                    && k.logical_key
+                        == winit::keyboard::Key::Named(winit::keyboard::NamedKey::ContextMenu) =>
+            {
+                r.menu_keys += 1;
+                r.window.request_redraw();
+            }
             _ => {}
         }
         if r.state.on_window_event(&r.window, &event).repaint {
@@ -257,6 +269,18 @@ impl Running {
         let mut input = self.state.take_egui_input(&self.window);
         input.viewports.insert(ViewportId::ROOT, self.info.clone());
         self.info.events.clear();
+        for _ in 0..std::mem::take(&mut self.menu_keys) {
+            let shift = egui::Modifiers::SHIFT;
+            for pressed in [true, false] {
+                input.events.push(egui::Event::Key {
+                    key: egui::Key::F10,
+                    physical_key: None,
+                    pressed,
+                    repeat: false,
+                    modifiers: shift,
+                });
+            }
+        }
         let scripted = script::inject(&mut input);
 
         let app = &mut self.app;

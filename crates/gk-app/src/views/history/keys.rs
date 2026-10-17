@@ -2,8 +2,8 @@
 //! opens the context menu of the selected row, Enter checks it out, Ctrl+B
 //! creates a branch and Ctrl+T a tag there, Delete deletes (sidebar).
 //!
-//! The Menu (Apps) key is not delivered by egui-winit (no `egui::Key` for
-//! it), so Shift+F10 is the keyboard binding that works everywhere.
+//! The Menu (Apps) key has no `egui::Key`; the DX11 host delivers it as
+//! Shift+F10, so both open the same menus.
 
 use egui::{Id, Key, Modifiers, Pos2, Response, Ui};
 use egui::{Popup, PopupAnchor, SetOpenCommand};
