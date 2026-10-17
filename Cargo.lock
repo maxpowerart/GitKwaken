@@ -2486,7 +2486,7 @@ dependencies = [
 
 [[package]]
 name = "gk-app"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "egui",
@@ -2512,7 +2512,7 @@ dependencies = [
 
 [[package]]
 name = "gk-askpass"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "getrandom 0.3.4",
@@ -2521,7 +2521,7 @@ dependencies = [
 
 [[package]]
 name = "gk-bench"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "bstr",
@@ -2539,7 +2539,7 @@ dependencies = [
 
 [[package]]
 name = "gk-cli"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "bstr",
@@ -2550,7 +2550,7 @@ dependencies = [
 
 [[package]]
 name = "gk-core"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "bstr",
@@ -2575,7 +2575,7 @@ dependencies = [
 
 [[package]]
 name = "gk-diff"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "bstr",
  "imara-diff",
@@ -2583,7 +2583,7 @@ dependencies = [
 
 [[package]]
 name = "gk-dx11"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "eframe",
@@ -2598,11 +2598,11 @@ dependencies = [
 
 [[package]]
 name = "gk-graph"
-version = "1.0.1"
+version = "1.0.2"
 
 [[package]]
 name = "gk-settings"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "directories",
@@ -2613,7 +2613,7 @@ dependencies = [
 
 [[package]]
 name = "gk-status"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "bstr",
@@ -2628,7 +2628,7 @@ dependencies = [
 
 [[package]]
 name = "gk-update"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "flate2",
