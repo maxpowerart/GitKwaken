@@ -436,6 +436,32 @@ fn clean_preview_and_clean() {
 // ------------------------------------------------------------------ optimize
 
 #[test]
+fn write_commit_graph_and_offer() {
+    let t = TestRepo::new();
+    for i in 0..3 {
+        t.commit_file("f.txt", &format!("{i}\n"), &format!("c{i}"));
+    }
+    assert!(!t.repo.has_commit_graph());
+    assert!(offer_commit_graph(
+        COMMIT_GRAPH_OFFER_MIN_COMMITS + 1,
+        false
+    ));
+    assert!(!offer_commit_graph(COMMIT_GRAPH_OFFER_MIN_COMMITS, false));
+    assert!(!offer_commit_graph(1_000_000, true));
+    let (cancel, mut p) = net();
+    t.repo.write_commit_graph(&cancel, &mut p).unwrap();
+    assert!(t.repo.has_commit_graph());
+    assert!(t.repo.optimization_status().commit_graph);
+    assert!(
+        t.repo
+            .git()
+            .run(&["commit-graph", "verify"])
+            .unwrap()
+            .success()
+    );
+}
+
+#[test]
 fn optimize_sets_config_and_writes_commit_graph() {
     let t = TestRepo::new();
     for i in 0..5 {

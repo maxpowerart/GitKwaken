@@ -23,7 +23,7 @@ Measurements made for this audit with `target/lead/release/gk-bench.exe` and the
 
 | Requirement | Status | Evidence | Note |
 |---|---|---|---|
-| Bookmarks with groups | Partial | impl: `crates/gk-app/src/dialogs/global.rs:413` (Bookmark dialog with group combo), `crates/gk-settings/src/lib.rs:29,96`; UI: Welcome page, right-click a Recent repo, "Bookmark" (`crates/gk-app/src/views/welcome.rs:91`); test: `crates/gk-settings/src/tests.rs::bookmark_helpers` | Groups are saved but the Welcome list is flat (`welcome.rs:55`), with no group headings. Bookmarks are visible only when no tab is open. There is no bookmarks sidebar or menu. |
+| Bookmarks with groups | Done | impl: `crates/gk-app/src/dialogs/global.rs` (Bookmark dialog with group combo), `crates/gk-settings/src/lib.rs`, `crates/gk-app/src/views/welcome.rs` (grouped Welcome list; `repositories_menu`: bookmarks by group, "Bookmark this repository…" / "Remove bookmark" for the open tab); UI: Welcome page (right-click a Recent repo, "Bookmark"), tab bar "Repositories ▾"; test: `crates/gk-settings/src/tests.rs::bookmark_helpers`, `welcome.rs::current_repository_bookmark_entry`; E2E: `fa-bookmark-group.script`, `fb-bookmark-current.script`, `fb-bookmark-remove.script` | No bookmarks section in the sidebar. |
 | Tabs | Done | impl: `crates/gk-app/src/app.rs:180` (tab bar), `app.rs:278` (Ctrl+W, Ctrl+Tab), `app.rs:174` (open tabs persisted); UI: tab strip, "+", middle-click | No automated test. |
 | Init | Done | impl: `crates/gk-app/src/dialogs/global.rs:335`, `crates/gk-core/src/repo.rs:98`; UI: Welcome "Create new…", palette "Create repository…"; test: `it/repo.rs::init_new_repo` | |
 | Clone (shallow, partial `--filter=blob:none`, sparse) | Partial | impl: `crates/gk-app/src/dialogs/global.rs:74,113,116`; UI: tab bar "Clone…", Welcome, palette; E2E: `r-clone.script` (plain clone only) | Shallow and partial are present. There is no sparse clone (`--sparse` plus cone setup). Shallow and partial clones are not tested. |
@@ -127,8 +127,8 @@ Measurements made for this audit with `target/lead/release/gk-bench.exe` and the
 
 | Requirement | Status | Evidence | Note |
 |---|---|---|---|
-| Git Credential Manager | Partial | Implicit: git runs its configured `credential.helper`; `GIT_TERMINAL_PROMPT=0` (`crates/gk-cli/src/lib.rs:141`) | No GCM detection or setup and no test. It works only if GCM is configured. |
-| SSH agent | Partial | Implicit: OpenSSH from Git for Windows | No agent detection, key list or diagnostics. Passphrases go through `SSH_ASKPASS`. |
+| Git Credential Manager | Done | impl: `crates/gk-app/src/dialogs/diagnostics.rs` (`detect_auth`, `parse_helpers`, `is_gcm_helper`, `find_gcm`: Git for Windows `mingw64/bin` / `libexec/git-core`, exec path, PATH; version via `git credential-manager --version`); UI: More ▸ "Authentication…" (also Optimize ▸ Diagnostics ▸ "Authentication…"): effective `credential.helper` list with scopes, GCM found / version, "Use Git Credential Manager for all repositories…" (confirm, `git config --global --add credential.helper manager`); test: `diagnostics.rs::helper_parsing_and_gcm_names`, `gcm_found_but_not_configured`, `gcm_on_path` (fake probe); E2E: `fb-auth.script` | |
+| SSH agent | Done | impl: `diagnostics.rs` (`resolve_ssh`: `GIT_SSH_COMMAND` > `core.sshCommand` > `GIT_SSH` > Git's own ssh; Git for Windows / Windows OpenSSH / plink; `ssh-add -l` of the matching OpenSSH: 0 keys, 1 none, 2 no agent; `sc query` / `sc qc ssh-agent`; `test_connection`: `ssh -T -o BatchMode=yes` for ssh remotes, `git ls-remote --heads` with a 20 s timeout and no prompts otherwise); `dialogs/settings.rs` "SSH" section (`core.sshCommand` global and for the open repository); UI: More ▸ "Authentication…", Settings ▸ SSH; test: `diagnostics.rs::ssh_resolution_order_and_flavor`, `ssh_add_and_service_parsing`, `detect_agent_for_each_ssh`, `remote_urls_and_connection_checks`, `ls_remote_test_against_local_bare_repo_and_timeout_runner`, `settings.rs::config_changes_only_for_edited_values`; E2E: `fb-auth.script` | Passphrases still go through `SSH_ASKPASS`. Pageant (plink) is not queried. |
 | Password dialog via GIT_ASKPASS | Done | impl: `crates/gk-askpass/src/server.rs:92-98`, `crates/gk-app/src/app.rs:232`; test: `crates/gk-askpass/tests/askpass.rs::git_http_basic_auth_via_askpass`, `ssh_keygen_passphrase_via_ssh_askpass`, `server.rs::answer_and_cancel` | |
 
 ### Advanced
@@ -201,7 +201,7 @@ Measurements made for this audit with `target/lead/release/gk-bench.exe` and the
 | Requirement | Status | Evidence | Note |
 |---|---|---|---|
 | Rev-walk with commit-graph | Done | impl: `crates/gk-core/src/history.rs:57`; test: `it/history.rs::*` | Measured: git.git 97 ms. |
-| Offer to write commit-graph | Partial | impl: the Optimize dialog shows commit-graph status and writes it (`repo_tools.rs:379`, `advanced.rs:591,615`) | Nothing prompts the user when a large repo has no commit-graph. |
+| Offer to write commit-graph | Done | impl: `crates/gk-app/src/views/commit_graph_offer.rs` (non-modal banner under the toolbar when the loaded history has more than `COMMIT_GRAPH_OFFER_MIN_COMMITS` = 20k commits and `Repo::has_commit_graph` is false, checked once on a background thread; "Write" queues `Repo::write_commit_graph` on the session's op queue; "Don't ask for this repository" sets `RepoState::commit_graph_offer_dismissed`), `crates/gk-core/src/advanced.rs` (`offer_commit_graph`, `has_commit_graph`, `write_commit_graph`); the Optimize dialog also writes it; test: `it/advanced.rs::write_commit_graph_and_offer`, `gk-settings/src/tests.rs::repo_state_roundtrip_and_path`; E2E: `fb-commit-graph-offer.script`, `fb-commit-graph-never.script` | |
 | Lane layout in chunks | Partial | impl: `crates/gk-graph/src/layout.rs:46-49` (512-row checkpoint blocks, edges computed lazily); test: `layout.rs::lazy_edges_match_eager_computation`, `million_rows_is_fast_and_small` | The full walk and lane pass finish before the first paint. Results are not published in chunks. |
 | On-disk layout cache | Missing | (none) | |
 | Lazy metadata + LRU | Done | impl: `history.rs:180-244` (LRU of 20k); test: `it/history.rs::commit_meta_and_cache` | |
@@ -302,7 +302,7 @@ One line per Missing or Partial item: what to add, and where.
 
 **Repositories and working copy**
 
-- Bookmark groups: render grouped sections and add a bookmarks list to the sidebar or a menu while tabs are open (`views/welcome.rs`, `views/sidebar.rs`).
+- Bookmarks: optionally add a bookmarks section to the sidebar (`views/sidebar.rs`); the tab bar menu already lists them.
 - Sparse clone: add a "Sparse (cone) checkout of…" field that runs `git clone --sparse` then `sparse-checkout set` (`dialogs/global.rs` CloneRepo).
 - Scan disk for repositories: add a "Scan folder…" global dialog that walks directories for `.git` in the background and offers to bookmark (new `dialogs/global.rs::ScanRepos`, reached from Welcome and the palette).
 - Ignore by mask: add a free-text pattern field to the Ignore submenu, with a preview of matched files (`file_status/list.rs:836`).
@@ -332,8 +332,6 @@ One line per Missing or Partial item: what to add, and where.
 **Remotes and authentication**
 
 - Auto-fetch: route it through `session.run_op` or a low-priority op queue instead of `std::thread::spawn` (`tab.rs:156`).
-- Git Credential Manager: detect `credential.helper` and the GCM install, and show status in Settings or About (`dialogs/settings.rs`, `dialogs/global.rs` About).
-- SSH agent: detect the agent (Windows `ssh-agent` service or `SSH_AUTH_SOCK`), list keys and offer `core.sshCommand` in Settings (`dialogs/settings.rs`).
 
 **Advanced and tools**
 
@@ -364,7 +362,6 @@ One line per Missing or Partial item: what to add, and where.
 
 **History engine**
 
-- Commit-graph offer: when opening a repo with more than ~10k commits and no commit-graph, show a one-click "Write commit-graph" message (`session.rs` refresh_loop, `statusbar.rs`).
 - Chunked layout: publish the first N laid-out rows while the walk continues, extending `History` incrementally (`gk-core/src/history.rs::build`, `session.rs:625`).
 - Layout cache: store `ids` and layout checkpoints keyed by tip set in redb, and validate them on open (`gk-graph/src/layout.rs`, `gk-core/src/history.rs`).
 - Blame streaming: use `git blame --incremental` through `run_streaming` and fill lines as records arrive (`gk-core/src/advanced.rs:250`, `views/blame.rs`).

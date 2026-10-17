@@ -40,6 +40,8 @@ pub struct RepoTab {
     pub reflog: views::reflog::ReflogState,
     pub stash_view: views::stash_view::StashViewState,
     pub dialog: Option<Dialog>,
+    /// "Write a commit-graph?" banner for large histories.
+    pub commit_graph_offer: views::commit_graph_offer::Offer,
     /// Last snapshot generation seen, to detect changes cheaply.
     pub seen_generation: u64,
     last_fetch: Option<std::time::Instant>,
@@ -91,6 +93,7 @@ impl RepoTab {
             reflog: Default::default(),
             stash_view: Default::default(),
             dialog: None,
+            commit_graph_offer: Default::default(),
             seen_generation: 0,
             last_fetch: None,
             fetching: Default::default(),
@@ -230,6 +233,7 @@ impl RepoTab {
         }
         self.auto_fetch(&snap, shared.settings.auto_fetch_minutes);
         views::toolbar::show(ui, self, &snap, shared);
+        views::commit_graph_offer::show(ui, self, &snap);
         views::statusbar::show(ui, self, &snap, shared);
         let side = egui::Panel::left(egui::Id::new(("sidebar", &self.path)))
             .resizable(true)

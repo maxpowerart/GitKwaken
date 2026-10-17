@@ -246,6 +246,15 @@ pub struct Optimization {
     pub maintenance: bool,
 }
 
+/// History size above which a repository without a commit-graph gets the
+/// "write it now?" offer (small repositories walk fast enough without one).
+pub const COMMIT_GRAPH_OFFER_MIN_COMMITS: usize = 20_000;
+
+/// Whether to offer writing a commit-graph: a large history and none on disk.
+pub fn offer_commit_graph(commits: usize, has_commit_graph: bool) -> bool {
+    commits > COMMIT_GRAPH_OFFER_MIN_COMMITS && !has_commit_graph
+}
+
 impl Repo {
     // blame -------------------------------------------------------------
     pub fn blame(&self, path: &str, rev: Option<&str>) -> Result<Blame> {
@@ -586,8 +595,7 @@ impl Repo {
             fsmonitor: is_true("core.fsmonitor"),
             untracked_cache: is_true("core.untrackedCache"),
             many_files: is_true("feature.manyFiles"),
-            commit_graph: self.git_dir().join("objects/info/commit-graph").exists()
-                || self.git_dir().join("objects/info/commit-graphs").exists(),
+            commit_graph: self.has_commit_graph(),
             maintenance: self
                 .git()
                 .run(&["config", "--global", "--get-all", "maintenance.repo"])
@@ -608,6 +616,33 @@ impl Repo {
                 })
                 .unwrap_or(false),
         }
+    }
+
+    /// A commit-graph file (or split chain) exists. Two file-existence checks:
+    /// cheap, but still disk I/O, so call it off the UI thread.
+    pub fn has_commit_graph(&self) -> bool {
+        let info = self.git_dir().join("objects/info");
+        info.join("commit-graph").exists() || info.join("commit-graphs").exists()
+    }
+
+    /// Writes the commit-graph (reachable commits, with changed-path Bloom
+    /// filters), streaming git's progress.
+    pub fn write_commit_graph(&self, cancel: &CancelToken, p: crate::ops::Progress) -> Result<()> {
+        self.git()
+            .run_streaming(
+                &[
+                    "commit-graph",
+                    "write",
+                    "--reachable",
+                    "--changed-paths",
+                    "--progress",
+                ],
+                None,
+                cancel,
+                p,
+            )?
+            .check()?;
+        Ok(())
     }
 
     /// One-click optimization for large repositories.

@@ -205,7 +205,10 @@ impl GkApp {
                     }
                 }
                 Action::SelectTab(i) => self.active = i.min(self.tabs.len().saturating_sub(1)),
-                Action::Global(d) => self.global = Some(d),
+                Action::Global(mut d) => {
+                    d.set_repo(self.tabs.get(self.active).map(|t| t.path.clone()));
+                    self.global = Some(d);
+                }
                 Action::StartClone(job) => self.clones.push(*job),
                 Action::ApplySettings => {
                     gk_core::content::set_detect_renames(self.settings.diff.renames);
@@ -287,6 +290,7 @@ impl GkApp {
             }
             if !self.tabs.is_empty() {
                 // Bookmarks and recent repositories while tabs are open.
+                let current = self.tabs.get(self.active).map(|t| t.path.clone());
                 let mut shared = Shared {
                     settings: &mut self.settings,
                     palette: self.palette,
@@ -294,7 +298,7 @@ impl GkApp {
                     actions: &mut self.actions,
                     show_log: &mut self.show_log,
                 };
-                views::welcome::repositories_menu(ui, &mut shared);
+                views::welcome::repositories_menu(ui, &mut shared, current.as_deref());
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 self.updater.ui(ui);
