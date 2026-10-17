@@ -103,6 +103,10 @@ some_future_field = "x"
     assert_eq!(s.mono_font_family, "Consolas");
     assert!(s.compact);
     assert!(s.diff.renames);
+    assert_eq!(
+        s.diff.rename_similarity, 50,
+        "missing field gets the default"
+    );
 }
 
 #[test]
@@ -132,12 +136,19 @@ fn out_of_range_values_are_clamped() {
     let env = TestEnv::new();
     fs::write(
         env.path().join("settings.toml"),
-        "ui_scale = 100.0\nactive_tab = 5\nopen_tabs = [\"a\"]\n",
+        "ui_scale = 100.0\nactive_tab = 5\nopen_tabs = [\"a\"]\n[diff]\nrename_similarity = 250\n",
     )
     .unwrap();
     let s = Settings::load();
     assert_eq!(s.ui_scale, 1.0);
     assert_eq!(s.active_tab, 0);
+    assert_eq!(s.diff.rename_similarity, 100);
+    fs::write(
+        env.path().join("settings.toml"),
+        "[diff]\nrename_similarity = 0\n",
+    )
+    .unwrap();
+    assert_eq!(Settings::load().diff.rename_similarity, 50, "0 falls back");
 }
 
 #[test]

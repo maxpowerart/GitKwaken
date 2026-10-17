@@ -38,6 +38,9 @@ pub fn compute_in(
         .status(gix::progress::Discard)
         .map_err(err)?
         .untracked_files(mode)
+        .tree_index_track_renames(gix::status::tree_index::TrackRenames::Given(
+            crate::rewrites(),
+        ))
         .should_interrupt_owned(interrupt.clone())
         .index_worktree_submodules(gix::status::Submodule::AsConfigured { check_dirty: true })
         .into_iter(patterns.iter().cloned())

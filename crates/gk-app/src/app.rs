@@ -115,6 +115,7 @@ impl GkApp {
             .ok()
             .map(Arc::new);
         gk_core::content::set_detect_renames(settings.diff.renames);
+        gk_core::content::set_rename_similarity(settings.diff.rename_similarity);
         let updater = crate::update::Updater::new(ctx, staged, &settings);
         let keymap_src = settings.keymap.clone();
         let mut app = Self {
@@ -213,6 +214,7 @@ impl GkApp {
                 Action::StartClone(job) => self.clones.push(*job),
                 Action::ApplySettings => {
                     gk_core::content::set_detect_renames(self.settings.diff.renames);
+                    gk_core::content::set_rename_similarity(self.settings.diff.rename_similarity);
                     let family = mono_family(&self.settings);
                     if family != self.mono_family {
                         install_fonts(ctx, &family);

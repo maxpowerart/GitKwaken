@@ -19,7 +19,8 @@ pub fn compute(git: &gk_cli::Git, patterns: &[BString], untracked: Untracked) ->
         Untracked::Normal => "--untracked-files=normal",
         Untracked::No => "--untracked-files=no",
     };
-    let mut args: Vec<String> = ["status", "--porcelain=v2", "-z", "--find-renames", mode]
+    let renames = format!("--find-renames={}%", crate::rename_similarity());
+    let mut args: Vec<String> = ["status", "--porcelain=v2", "-z", &renames, mode]
         .map(String::from)
         .to_vec();
     // `git status` has no --pathspec-from-file; past the Windows command-line

@@ -192,23 +192,40 @@ pub fn load_sides(repo: &Repo, target: &DiffTarget) -> Result<Sides> {
     }
 }
 
-/// Files changed between two trees (`old` = None means the empty tree).
 static DETECT_RENAMES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 /// Rename/copy detection for commit and comparison file lists (settings:
-/// diff.renames). When on, git's own diff.renames configuration applies.
+/// diff.renames). When on, git's own diff.renames configuration applies
+/// (`false` turns it off, `copies` adds copies), with the similarity
+/// threshold of [`set_rename_similarity`].
 pub fn set_detect_renames(on: bool) {
     DETECT_RENAMES.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
-fn diff_options() -> Option<gix::diff::Options> {
-    if DETECT_RENAMES.load(std::sync::atomic::Ordering::Relaxed) {
-        None
-    } else {
-        Some(gix::diff::Options::default().with_rewrites(None))
-    }
+/// Minimum similarity in percent (1-100, default 50) for a rename in commit
+/// and comparison file lists and in status (settings: diff.rename_similarity);
+/// see [`gk_status::set_rename_similarity`].
+pub fn set_rename_similarity(percent: u8) {
+    gk_status::set_rename_similarity(percent);
 }
 
+fn diff_options(g: &gix::Repository) -> gix::diff::Options {
+    let rewrites = if DETECT_RENAMES.load(std::sync::atomic::Ordering::Relaxed) {
+        let threshold = gk_status::rewrites();
+        match gix::diff::new_rewrites(&g.config_snapshot(), true) {
+            Ok((configured, true)) => configured.map(|r| gix::diff::Rewrites {
+                percentage: threshold.percentage,
+                ..r
+            }),
+            _ => Some(threshold),
+        }
+    } else {
+        None
+    };
+    gix::diff::Options::default().with_rewrites(rewrites)
+}
+
+/// Files changed between two trees (`old` = None means the empty tree).
 pub fn tree_changes(
     g: &gix::Repository,
     old: Option<ObjectId>,
@@ -217,7 +234,7 @@ pub fn tree_changes(
     let new_tree = g.find_tree(new).map_err(gix_err)?;
     let old_tree = old.map(|o| g.find_tree(o)).transpose().map_err(gix_err)?;
     let changes = g
-        .diff_tree_to_tree(old_tree.as_ref(), Some(&new_tree), diff_options())
+        .diff_tree_to_tree(old_tree.as_ref(), Some(&new_tree), diff_options(g))
         .map_err(gix_err)?;
     use gix::object::tree::diff::ChangeDetached as C;
     let mut out = Vec::new();
