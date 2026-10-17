@@ -37,6 +37,9 @@ pub struct Options {
     pub maximized: bool,
     /// Outer top-left position, logical points. `None` lets the OS choose.
     pub position: Option<[f32; 2]>,
+    /// Wayland app id / X11 `WM_CLASS` (Linux: must match the `.desktop` file name so the
+    /// desktop shows the right icon). Unused on Windows.
+    pub app_id: Option<String>,
 }
 
 impl Default for Options {
@@ -49,6 +52,7 @@ impl Default for Options {
             icon_rgba: None,
             maximized: false,
             position: None,
+            app_id: None,
         }
     }
 }

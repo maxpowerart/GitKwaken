@@ -84,3 +84,79 @@ jobs:
         with:
           workspaces: packaging/icongen
       - run: cargo build --manifest-path packaging/icongen/Cargo.toml
+
+  # The release's Linux tarball, built the same way as release.yml (oldest supported glibc),
+  # then launched headless from the unpacked tarball: Xvfb + Mesa software rendering.
+  linux-package:
+    name: Linux package + launch smoke test (ubuntu-22.04)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install build and test dependencies
+        run: bash packaging/linux-ci-deps.sh
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: linux-package
+      - name: Build tarball and PKGBUILD
+        run: bash packaging/build-linux.sh
+      - name: Launch smoke test (binary from the tarball)
+        run: |
+          mkdir -p "$RUNNER_TEMP/unpacked"
+          tar -C "$RUNNER_TEMP/unpacked" -xzf dist/GitKwaken-*-x86_64-linux.tar.gz
+          bash scripts/linux-smoke.sh "$RUNNER_TEMP"/unpacked/GitKwaken-*/gitkwaken dist/smoke-ubuntu-22.04.png
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-package
+          if-no-files-found: warn
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+            dist/PKGBUILD
+            dist/*.png
+
+  # The PKGBUILD shipped with the release, built and installed with makepkg/pacman on Arch
+  # (Manjaro's base), then the installed /usr/bin/gitkwaken launched like above. No Vulkan
+  # loader here, so wgpu takes its OpenGL (EGL) path.
+  arch-package:
+    name: Arch package (makepkg + pacman) + launch smoke test
+    needs: linux-package
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install tools
+        run: |
+          pacman -Syu --noconfirm --needed base-devel git namcap \
+            xorg-server-xvfb xorg-xauth xdotool python imagemagick mesa which
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-package
+          path: pkg
+      - name: makepkg (as an unprivileged user) and pacman -U
+        run: |
+          useradd -m builder
+          mkdir /home/builder/pkg
+          cp pkg/PKGBUILD pkg/*.tar.gz /home/builder/pkg/
+          chown -R builder /home/builder/pkg
+          # --nodeps: nothing is compiled; pacman -U below pulls the runtime depends from the
+          # repositories (what makepkg -si does on a desktop), which also checks their names.
+          su builder -c 'cd ~/pkg && makepkg --nodeps --noconfirm'
+          cp /home/builder/pkg/gitkwaken-bin-*.pkg.tar.zst pkg/
+          pacman -U --noconfirm pkg/gitkwaken-bin-*.pkg.tar.zst
+          pacman -Qi gitkwaken-bin
+          pacman -Ql gitkwaken-bin
+          namcap /home/builder/pkg/PKGBUILD /home/builder/pkg/gitkwaken-bin-*.pkg.tar.zst || true
+      - name: Launch smoke test (installed package)
+        run: |
+          git config --global init.defaultBranch main
+          bash scripts/linux-smoke.sh /usr/bin/gitkwaken pkg/smoke-arch.png
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: arch-package
+          if-no-files-found: warn
+          path: |
+            pkg/*.pkg.tar.zst
+            pkg/smoke-arch.png

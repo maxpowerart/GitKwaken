@@ -7,11 +7,13 @@
   dependencies for the given target, and copies each crate's LICENSE / COPYING
   / NOTICE / font-license files from its source directory (the cargo registry).
   Crates that ship no license file get their SPDX expression and a link to the
-  standard text. Binary distributions (zip, setup.exe, msi) must carry this
-  file: MIT, BSD, Apache-2.0, OFL and the other licenses below require their
-  notices to accompany copies of the software.
+  standard text. Binary distributions (zip, setup.exe, msi, Linux tar.gz) must
+  carry this file: MIT, BSD, Apache-2.0, OFL and the other licenses below
+  require their notices to accompany copies of the software.
 .EXAMPLE
   powershell -File scripts/third-party-licenses.ps1 -Out dist\GitKwaken-1.0.0-x64\THIRD-PARTY-LICENSES.txt
+.EXAMPLE
+  pwsh scripts/third-party-licenses.ps1 -Target x86_64-unknown-linux-gnu -Out dist/THIRD-PARTY-LICENSES.txt
 #>
 param(
   [string]$Out = 'THIRD-PARTY-LICENSES.txt',
@@ -49,7 +51,9 @@ $sb = New-Object System.Text.StringBuilder
 [void]$sb.AppendLine('GitKwaken - third-party licenses')
 [void]$sb.AppendLine('================================')
 [void]$sb.AppendLine('')
-[void]$sb.AppendLine('gitkwaken.exe contains the Rust crates listed below (compiled in), and with them')
+$windows = $Target -match 'windows'
+$exe = if ($windows) { 'gitkwaken.exe' } else { 'gitkwaken' }
+[void]$sb.AppendLine("$exe contains the Rust crates listed below (compiled in), and with them")
 [void]$sb.AppendLine('the following bundled data:')
 [void]$sb.AppendLine('- fonts from epaint_default_fonts (Ubuntu-Light: Ubuntu Font Licence 1.0; Hack,')
 [void]$sb.AppendLine('  emoji icon font: SIL Open Font License 1.1 / MIT) - texts in that crate''s entry;')
@@ -58,9 +62,11 @@ $sb = New-Object System.Text.StringBuilder
 [void]$sb.AppendLine('  distribute this software is granted. This software is provided "as is" without')
 [void]$sb.AppendLine('  express or implied warranty, and with no claim as to its suitability for any')
 [void]$sb.AppendLine('  purpose."), themes base16-ocean, InspiredGitHub and Solarized (MIT).')
-[void]$sb.AppendLine('Optional builds with a bundled MinGit (packaging/build-release.ps1 -BundleGit) also')
-[void]$sb.AppendLine('ship Git for Windows under the GNU GPL v2 with its own license files in git\;')
-[void]$sb.AppendLine('its source is at https://github.com/git-for-windows/git (tag of the bundled version).')
+if ($windows) {
+  [void]$sb.AppendLine('Optional builds with a bundled MinGit (packaging/build-release.ps1 -BundleGit) also')
+  [void]$sb.AppendLine('ship Git for Windows under the GNU GPL v2 with its own license files in git\;')
+  [void]$sb.AppendLine('its source is at https://github.com/git-for-windows/git (tag of the bundled version).')
+}
 [void]$sb.AppendLine('')
 [void]$sb.AppendLine("Crates: $(@($pkgs).Count) (target $Target).")
 [void]$sb.AppendLine('')
@@ -119,6 +125,8 @@ foreach ($e in $texts.GetEnumerator()) {
 if (-not [IO.Path]::IsPathRooted($Out)) { $Out = Join-Path (Get-Location) $Out }
 New-Item -ItemType Directory -Force (Split-Path $Out) | Out-Null
 $utf8 = New-Object System.Text.UTF8Encoding($false)
-[IO.File]::WriteAllText($Out, ($sb.ToString() -replace "`r`n", "`n" -replace "`n", "`r`n"), $utf8)
+$text = $sb.ToString() -replace "`r`n", "`n"
+if ($windows) { $text = $text -replace "`n", "`r`n" }
+[IO.File]::WriteAllText($Out, $text, $utf8)
 Write-Host ("==> {0}: {1} crates, {2:N0} KB" -f $Out, @($pkgs).Count, ((Get-Item $Out).Length / 1KB))
 if ($missing) { Write-Host "    no license file in: $($missing -join ', ')" }

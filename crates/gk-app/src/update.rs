@@ -1,4 +1,8 @@
 //! Background update check and the tab-bar button that drives it.
+//!
+//! Only Windows builds update themselves: the release channel carries the Windows zip and the
+//! swap replaces `gitkwaken.exe`. Elsewhere GitKwaken comes from a package manager or the Linux
+//! tarball, so the updater stays off and Help › Check for updates says where to get new versions.
 
 use gk_update::Release;
 use parking_lot::Mutex;
@@ -12,6 +16,8 @@ enum State {
     Checking,
     /// Manual check found nothing newer.
     UpToDate,
+    /// Manual check on a platform without self-update.
+    Unsupported,
     Available(Release),
     Downloading(u64, u64),
     Ready(String),
@@ -20,6 +26,14 @@ enum State {
 
 /// Shared with `main`, which swaps the executable after the window closes.
 pub type Staged = Arc<Mutex<Option<PathBuf>>>;
+
+/// Whether this platform updates itself (see the module docs).
+pub const SELF_UPDATE: bool = cfg!(windows);
+
+/// Help › Check for updates where [`SELF_UPDATE`] is off.
+const UNSUPPORTED: &str = "GitKwaken does not update itself on this platform. Update it with \
+    your package manager, or download the new release from \
+    https://github.com/maxpowerart/GitKwaken/releases";
 
 /// Set by "Restart now": `main` starts the updated executable after swapping it.
 pub static RESTART: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -40,12 +54,13 @@ pub struct Updater {
 
 impl Updater {
     /// Channel URL: `GITKWAKEN_UPDATE_URL`, else Settings → Update channel,
-    /// else the built-in release channel.
+    /// else the built-in release channel. None where [`SELF_UPDATE`] is off.
     pub fn new(ctx: &egui::Context, staged: Staged, settings: &gk_settings::Settings) -> Self {
         let url = std::env::var("GITKWAKEN_UPDATE_URL")
             .ok()
             .or_else(|| (!settings.update_url.is_empty()).then(|| settings.update_url.clone()))
-            .or_else(|| gk_update::DEFAULT_CHANNEL_URL.map(String::from));
+            .or_else(|| gk_update::DEFAULT_CHANNEL_URL.map(String::from))
+            .filter(|_| SELF_UPDATE);
         let u = Self {
             state: Arc::new(Mutex::new(State::Idle)),
             staged,
@@ -67,6 +82,10 @@ impl Updater {
             State::Checking | State::Downloading(..) | State::Ready(_)
         );
         if busy {
+            return;
+        }
+        if !SELF_UPDATE {
+            *self.state.lock() = State::Unsupported;
             return;
         }
         if self.url.is_none() {
@@ -144,7 +163,7 @@ impl Updater {
                 false,
                 UpdateAction::Check,
             ),
-            State::Idle | State::UpToDate | State::Failed(_) => {
+            State::Idle | State::UpToDate | State::Unsupported | State::Failed(_) => {
                 ("Check for updates".into(), true, UpdateAction::Check)
             }
         }
@@ -187,6 +206,13 @@ impl Updater {
                     "GitKwaken {} is up to date",
                     env!("CARGO_PKG_VERSION")
                 ));
+            }
+            State::Unsupported => {
+                if ui.small_button("✖").on_hover_text("Dismiss").clicked() {
+                    *self.state.lock() = State::Idle;
+                }
+                ui.label("Update via your package manager or re-download")
+                    .on_hover_text(UNSUPPORTED);
             }
             State::Available(rel) => {
                 let b = ui

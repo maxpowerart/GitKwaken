@@ -335,10 +335,41 @@ pub fn open_terminal(path: &std::path::Path, shared: &Shared) {
                 .spawn();
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     {
-        let _ = std::process::Command::new("x-terminal-emulator")
-            .current_dir(path)
+        let _ = std::process::Command::new("open")
+            .args(["-a", "Terminal"])
+            .arg(path)
             .spawn();
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        // `x-terminal-emulator` exists only on Debian-likes; elsewhere (Arch/Manjaro, Fedora)
+        // take $TERMINAL or the first common terminal that starts. All open in the cwd.
+        let candidates = std::env::var("TERMINAL").ok().into_iter().chain(
+            [
+                "x-terminal-emulator",
+                "kgx",
+                "gnome-terminal",
+                "konsole",
+                "xfce4-terminal",
+                "mate-terminal",
+                "lxterminal",
+                "alacritty",
+                "kitty",
+                "foot",
+                "xterm",
+            ]
+            .map(String::from),
+        );
+        for c in candidates {
+            if std::process::Command::new(&c)
+                .current_dir(path)
+                .spawn()
+                .is_ok()
+            {
+                break;
+            }
+        }
     }
 }

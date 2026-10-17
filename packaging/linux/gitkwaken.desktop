@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=GitKwaken
+GenericName=Git Client
+Comment=Fast, lightweight git client
+Exec=gitkwaken %F
+Icon=gitkwaken
+Terminal=false
+Categories=Development;RevisionControl;
+Keywords=git;version control;repository;commit;branch;
+StartupWMClass=gitkwaken

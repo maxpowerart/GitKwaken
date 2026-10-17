@@ -10,6 +10,9 @@ pub fn run(options: Options, make_app: MakeApp<'_>) -> Result<()> {
         .with_inner_size(options.size)
         .with_min_inner_size(options.min_size)
         .with_maximized(options.maximized);
+    if let Some(id) = &options.app_id {
+        viewport = viewport.with_app_id(id.clone());
+    }
     if let Some(pos) = options.position {
         viewport = viewport.with_position(pos);
     }
@@ -46,6 +49,10 @@ pub fn run(options: Options, make_app: MakeApp<'_>) -> Result<()> {
                 }
                 None => "eframe".to_owned(),
             };
+            // Test hook (Linux smoke test): report the adapter wgpu picked.
+            if std::env::var_os("GK_DX11_PRINT_BACKEND").is_some() {
+                eprintln!("gk-dx11 backend: {info}");
+            }
             crate::set_backend_info(info);
             Ok(Box::new(Adapter {
                 app: make_app(&cc.egui_ctx),

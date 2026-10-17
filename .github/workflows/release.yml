@@ -6,8 +6,13 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing tag to (re)build, e.g. v1.0.0'
-        required: true
+        description: 'Existing tag to (re)build, e.g. v1.0.0 (ignored for a dry run)'
+        required: false
+        default: ''
+      dry_run:
+        description: 'Dry run: build every package from the selected branch as workflow artifacts; publish nothing'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -15,6 +20,8 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
+  # 'true' only for a dry-run dispatch; empty for tag pushes.
+  DRY_RUN: ${{ inputs.dry_run }}
 
 jobs:
   windows:
@@ -25,7 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ inputs.dry_run && github.sha || env.TAG }}
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -38,7 +45,7 @@ jobs:
         run: |
           $meta = cargo metadata --format-version 1 --no-deps | ConvertFrom-Json
           $ver = ($meta.packages | Where-Object name -eq 'gk-app').version
-          if ("v$ver" -ne $env:TAG) { throw "tag $env:TAG does not match gk-app version $ver" }
+          if ($env:DRY_RUN -ne 'true' -and "v$ver" -ne $env:TAG) { throw "tag $env:TAG does not match gk-app version $ver" }
           "VERSION=$ver" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Ensure Inno Setup
@@ -81,6 +88,7 @@ jobs:
             dist/SHA256SUMS.txt
 
       - name: Publish GitHub release
+        if: ${{ !inputs.dry_run }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
@@ -95,3 +103,82 @@ jobs:
             dist/GitKwaken-${{ env.VERSION }}-x64.msi
             dist/update.json
             dist/SHA256SUMS.txt
+
+  # Built on the oldest Ubuntu runner so the binary needs only glibc 2.35 and runs on newer
+  # distributions (Manjaro / Arch, Fedora, Debian 12+, Ubuntu 22.04+). No self-update on Linux:
+  # nothing is added to update.json.
+  linux:
+    name: Linux x86_64 release
+    runs-on: ubuntu-22.04
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.dry_run && github.sha || env.TAG }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install build and test dependencies
+        run: bash packaging/linux-ci-deps.sh
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-linux
+
+      - name: Check tag matches Cargo version
+        id: version
+        run: |
+          ver="$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name == "gk-app") | .version')"
+          if [ "$DRY_RUN" != true ] && [ "v$ver" != "$TAG" ]; then
+            echo "tag $TAG does not match gk-app version $ver" >&2
+            exit 1
+          fi
+          echo "VERSION=$ver" >> "$GITHUB_ENV"
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+
+      - name: Build tarball and PKGBUILD
+        run: bash packaging/build-linux.sh
+
+      - name: Launch smoke test (binary from the tarball)
+        run: |
+          mkdir -p "$RUNNER_TEMP/unpacked"
+          tar -C "$RUNNER_TEMP/unpacked" -xzf "dist/GitKwaken-$VERSION-x86_64-linux.tar.gz"
+          bash scripts/linux-smoke.sh "$RUNNER_TEMP/unpacked/GitKwaken-$VERSION-x86_64-linux/gitkwaken"
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: GitKwaken-${{ env.VERSION }}-x86_64-linux
+          path: |
+            dist/GitKwaken-${{ env.VERSION }}-x86_64-linux.tar.gz
+            dist/GitKwaken-${{ env.VERSION }}-x86_64-linux.tar.gz.sha256
+            dist/PKGBUILD
+
+  # Attaches the Linux files to the release the Windows job created (one writer at a time:
+  # two jobs creating the same release in parallel race).
+  publish-linux:
+    name: Publish Linux assets
+    if: ${{ !inputs.dry_run }}
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      VERSION: ${{ needs.linux.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: GitKwaken-${{ needs.linux.outputs.version }}-x86_64-linux
+          path: dist
+
+      - name: Attach to the GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          fail_on_unmatched_files: true
+          files: |
+            dist/GitKwaken-${{ env.VERSION }}-x86_64-linux.tar.gz
+            dist/GitKwaken-${{ env.VERSION }}-x86_64-linux.tar.gz.sha256
+            dist/PKGBUILD

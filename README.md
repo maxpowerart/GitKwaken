@@ -16,8 +16,9 @@ background threads, so the UI never blocks on the repository.
 > copied from other projects; third-party code is used only as normal dependencies under their
 > own licenses (see [Third-party software](#third-party-software)).
 
-> Status: 1.0.0. Windows is the primary target; Linux and macOS build through an `eframe`
-> fallback renderer (compile-checked, not release-tested).
+> Status: 1.0.0. Windows is the primary target. Linux x86_64 releases use an `eframe`/wgpu
+> renderer instead of Direct3D (launch-tested in CI under Xvfb on Ubuntu and Arch; see
+> [Linux](#linux-x86_64)). macOS builds through the same fallback but is only compile-checked.
 
 ## Features
 
@@ -64,7 +65,7 @@ only materializes visible rows, so list and graph cost is independent of reposit
 
 ## Installing
 
-Grab a release from the Releases page:
+Grab a release from the Releases page. Windows:
 
 - `GitKwaken-<ver>-x64-setup.exe`: per-user installer (no admin rights), Start-menu entry,
   optional desktop icon and "Open in GitKwaken" folder context menu; upgrades in place.
@@ -89,6 +90,48 @@ installer run.
 Requirements: Windows 10 1809+ x64 and [Git for Windows](https://git-scm.com/download/win)
 (GitKwaken drives the system `git`; a custom path can be set in Settings).
 
+### Linux (x86_64)
+
+- `GitKwaken-<ver>-x86_64-linux.tar.gz`: the `gitkwaken` binary with a desktop entry, icons
+  and license files. Built on Ubuntu 22.04, so it runs on glibc 2.35 or newer (Arch, Manjaro,
+  Fedora, Debian 12, Ubuntu 22.04+). Unpack and run `./gitkwaken [repo...]`; it needs `git` on
+  `PATH`, X11 or Wayland, and a Vulkan or OpenGL driver (Mesa is enough).
+- `PKGBUILD` (Arch Linux, Manjaro): installs that tarball as the `gitkwaken-bin` package,
+  with the menu entry and icons. Download the `PKGBUILD` and the tarball of the same release
+  into one folder, then:
+
+  ```sh
+  makepkg -si
+  ```
+
+  makepkg checks the tarball against the checksum pinned in the release's `PKGBUILD` and uses
+  the local file instead of downloading it. Uninstall with `sudo pacman -R gitkwaken-bin`.
+  The template in the repository (`packaging/arch/PKGBUILD`) has no pinned checksum.
+
+Without the PKGBUILD, a per-user desktop entry from the unpacked tarball:
+
+```sh
+install -Dm755 gitkwaken ~/.local/bin/gitkwaken
+install -Dm644 gitkwaken.desktop ~/.local/share/applications/gitkwaken.desktop
+cp -r icons ~/.local/share/
+```
+
+Limits on Linux:
+
+- No self-update: Help › Check for updates points to the releases page. Update by installing
+  the new tarball / PKGBUILD.
+- Windows-only features are absent: Explorer integration (folder context menu, App Paths,
+  `--register-shell-integration`), the antivirus (Defender) exclusion hints in Diagnostics,
+  the bundled-MinGit build, and the Direct3D renderer's test hooks used by the E2E suites.
+- Open/save dialogs go through the XDG desktop portal (`xdg-desktop-portal` plus a backend
+  such as `-gtk` or `-kde`), with `zenity` as the fallback and for message boxes.
+- The Terminal button uses Settings › Terminal, else `$TERMINAL`, else the first of
+  `x-terminal-emulator`, `kgx`, `gnome-terminal`, `konsole`, `xfce4-terminal`, … that starts.
+- CI checks that the release build starts, renders a repository and exits cleanly, under Xvfb
+  with Mesa software rendering on Ubuntu 22.04 and on Arch Linux (installed through the
+  PKGBUILD). It has not had the hands-on testing the Windows build has had; please report
+  problems with your desktop (GNOME/KDE, X11/Wayland) and GPU driver.
+
 ## Building
 
 ```sh
@@ -103,6 +146,15 @@ Linux needs the usual eframe/GTK development packages:
 ```sh
 sudo apt-get install libxkbcommon-dev libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev \
                      libxcb-xfixes0-dev libssl-dev
+```
+
+(Arch/Manjaro: `rust` and `base-devel`; winit and wgpu load the system libraries at run time.)
+The Linux release package and its launch test, as CI runs them (`packaging/linux-ci-deps.sh`
+lists the Ubuntu packages, including `pwsh` and ImageMagick for packaging):
+
+```sh
+bash packaging/build-linux.sh       # -> dist/GitKwaken-<ver>-x86_64-linux.tar.gz, dist/PKGBUILD
+bash scripts/linux-smoke.sh target/x86_64-unknown-linux-gnu/release/gitkwaken
 ```
 
 Release packaging (zip, `update.json`, the Inno Setup installer if Inno Setup 6 is installed,
