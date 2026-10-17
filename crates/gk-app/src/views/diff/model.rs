@@ -396,6 +396,34 @@ pub fn segments(len: usize, hl: &[std::ops::Range<usize>]) -> Vec<(std::ops::Ran
     out
 }
 
+/// Range of diff line indices shown by `rows` (a hunk header counts as the
+/// hunk's first line); empty when there are none.
+pub fn row_lines(rows: &[Row], hunks: &[gk_diff::Hunk]) -> std::ops::Range<usize> {
+    let mut lo = usize::MAX;
+    let mut hi = 0;
+    let mut add = |i: u32| {
+        if i != NONE {
+            lo = lo.min(i as usize);
+            hi = hi.max(i as usize + 1);
+        }
+    };
+    for r in rows {
+        match *r {
+            Row::Hunk(h) => {
+                if let Some(h) = hunks.get(h as usize) {
+                    add(h.lines.start as u32);
+                }
+            }
+            Row::Line(i) => add(i),
+            Row::Pair(a, b) => {
+                add(a);
+                add(b);
+            }
+        }
+    }
+    if lo < hi { lo..hi } else { 0..0 }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -596,5 +624,19 @@ mod tests {
         assert_eq!(l.rows(false)[r], Row::Line(first));
         assert!(row_of_line(l.rows(true), first).is_some());
         assert_eq!(row_of_line(l.rows(false), 9999), None);
+    }
+
+    #[test]
+    fn row_lines_spans_visible_rows() {
+        let d = diff(b"a\nb\nc\n", b"a\nB\nc\nd\n", Options::default());
+        let hunks = &d.hunks;
+        assert_eq!(row_lines(&[], hunks), 0..0);
+        assert_eq!(row_lines(&[Row::Hunk(0)], hunks), 0..1);
+        assert_eq!(row_lines(&[Row::Line(2), Row::Line(3)], hunks), 2..4);
+        assert_eq!(
+            row_lines(&[Row::Pair(NONE, 4), Row::Pair(1, NONE)], hunks),
+            1..5
+        );
+        assert_eq!(row_lines(&[Row::Pair(NONE, NONE)], hunks), 0..0);
     }
 }
