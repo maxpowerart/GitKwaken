@@ -58,6 +58,8 @@ pub struct Layout {
     checkpoints: Vec<State>,
     state: State,
     cache: Mutex<Vec<(usize, Vec<Vec<Edge>>)>>,
+    /// Reused edge buffer for [`push`](Self::push).
+    scratch: Vec<Edge>,
 }
 
 impl State {
@@ -200,7 +202,10 @@ impl Layout {
         self.rows.iter().map(|r| r.width).max().unwrap_or(0)
     }
 
-    fn parents_of(&self, row: usize) -> &[u32] {
+    /// Parent rows of `row` as pushed ([`NONE`] for parents outside the graph).
+    /// Feeding them back into [`push`](Self::push) rebuilds the same layout,
+    /// which is how cached histories are restored.
+    pub fn parents_of(&self, row: usize) -> &[u32] {
         &self.parents[self.parent_start[row] as usize..self.parent_start[row + 1] as usize]
     }
 
@@ -216,8 +221,8 @@ impl Layout {
         }
         self.parents.extend_from_slice(parents);
         self.parent_start.push(self.parents.len() as u32);
-        let mut scratch = Vec::new();
-        let r = self.state.step(id, parents, &mut scratch);
+        self.scratch.clear();
+        let r = self.state.step(id, parents, &mut self.scratch);
         self.rows.push(r);
         debug_assert_eq!(id as usize, row, "ids must be row numbers");
     }
@@ -334,6 +339,13 @@ mod tests {
         for r in (0..n as usize).rev().step_by(37) {
             assert_eq!(l.row_edges(r), expected[r], "row {r}");
         }
+        // Re-pushing the stored parents reproduces the layout exactly.
+        let mut again = Layout::new();
+        for r in 0..l.len() {
+            again.push(r as u32, l.parents_of(r));
+        }
+        assert_eq!(again.rows, l.rows);
+        assert_eq!(again.row_edges(n as usize - 1), l.row_edges(n as usize - 1));
     }
 
     #[test]

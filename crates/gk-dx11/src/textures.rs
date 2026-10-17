@@ -1,14 +1,25 @@
-//! CPU-side mirror of every live egui texture.
+//! CPU-side mirror of the font atlas and small egui textures.
 //!
 //! egui only sends each texture (including the font atlas) once, as a series
 //! of deltas. When the D3D11 device is lost all GPU textures vanish, so we keep
 //! the latest full image per texture and replay it into the new renderer.
+//!
+//! Large user images (diff previews of photos, ...) are not mirrored: the
+//! mirror would often be their only CPU copy, tens of megabytes each, kept
+//! for an event (device loss) that almost never happens. After a device loss
+//! they render blank until the view reloads them.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use egui::epaint::{ColorImage, ImageData, ImageDelta, TextureId};
 use egui::{TextureOptions, TexturesDelta};
+
+/// User textures up to this many pixels (256×256, icons and avatars) are mirrored.
+const MAX_MIRRORED_PIXELS: usize = 256 * 256;
+
+/// The font atlas: always mirrored, whatever its size.
+const FONT_TEXTURE: TextureId = TextureId::Managed(0);
 
 #[derive(Default)]
 pub struct TextureMirror {
@@ -21,6 +32,9 @@ impl TextureMirror {
         for (id, d) in &delta.set {
             let ImageData::Color(src) = &d.image;
             match d.pos {
+                None if *id != FONT_TEXTURE && src.pixels.len() > MAX_MIRRORED_PIXELS => {
+                    self.images.remove(id);
+                }
                 // Full images are shared `Arc`s: storing them costs nothing.
                 None => {
                     self.images.insert(*id, (src.clone(), d.options));
@@ -132,6 +146,25 @@ mod tests {
         assert_eq!(replay.len(), 1);
         assert_eq!(replay[0].0, b);
         assert!(replay[0].1.pos.is_none());
+    }
+
+    #[test]
+    fn large_user_images_are_not_mirrored() {
+        let (font, small, big) = (
+            TextureId::Managed(0),
+            TextureId::Managed(1),
+            TextureId::User(2),
+        );
+        let mut m = TextureMirror::default();
+        m.record(&set(font, None, img(1024, 512, Color32::BLACK)));
+        m.record(&set(small, None, img(16, 16, Color32::BLACK)));
+        m.record(&set(big, None, img(1024, 512, Color32::BLACK)));
+        assert!(m.get(font).is_some(), "font atlas is always kept");
+        assert!(m.get(small).is_some());
+        assert!(m.get(big).is_none());
+        // Partial updates of an unmirrored image are ignored too.
+        m.record(&set(big, Some([0, 0]), img(1, 1, Color32::RED)));
+        assert!(m.get(big).is_none());
     }
 
     #[test]

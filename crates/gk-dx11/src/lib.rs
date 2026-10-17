@@ -10,6 +10,8 @@
 
 #[cfg(not(windows))]
 mod fallback;
+mod mapped;
+pub use mapped::map_file_static;
 #[cfg(windows)]
 mod textures;
 #[cfg(windows)]

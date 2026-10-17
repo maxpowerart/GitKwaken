@@ -10,6 +10,7 @@ bstr = { workspace = true }
 gix = { workspace = true }
 parking_lot = { workspace = true }
 crossbeam-channel = { workspace = true }
+tracing = { workspace = true }
 notify = "8"
 gk-cli = { path = "../gk-cli" }
 

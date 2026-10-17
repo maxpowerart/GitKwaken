@@ -166,6 +166,7 @@ fn parse_track(s: &str) -> (u32, u32, bool) {
 }
 
 pub fn load(repo: &Repo) -> Result<Refs> {
+    let _span = tracing::info_span!("refs.load").entered();
     let git = repo.git();
     let mut refs = Refs::default();
     // Three independent git processes; on Windows each costs ~25 ms to spawn,
@@ -302,7 +303,12 @@ pub fn load(repo: &Repo) -> Result<Refs> {
         b.name = name.to_string();
     }
 
-    // Labels for the history view.
+    refs.labels = labels_of(&refs);
+    Ok(refs)
+}
+
+/// Labels per commit id for the history view, derived from the other fields.
+pub(crate) fn labels_of(refs: &Refs) -> BTreeMap<String, Vec<Label>> {
     let mut labels: BTreeMap<String, Vec<Label>> = BTreeMap::new();
     if let (Some(id), Head::Detached(_)) = (&refs.head_id, &refs.head) {
         labels.entry(id.clone()).or_default().push(Label::Head);
@@ -331,8 +337,7 @@ pub fn load(repo: &Repo) -> Result<Refs> {
     if let Some(s) = refs.stashes.first() {
         labels.entry(s.id.clone()).or_default().push(Label::Stash);
     }
-    refs.labels = labels;
-    Ok(refs)
+    labels
 }
 
 pub fn repo_state(repo: &Repo) -> RepoState {

@@ -295,6 +295,38 @@ impl Git {
         let out = self.with_cwd(std::env::temp_dir()).read(&["--version"])?;
         parse_version(&out).ok_or_else(|| anyhow!("unrecognized git version: {out}"))
     }
+
+    /// Startup check: the auto-detected git (see [`find_git`], which honors
+    /// `GITKWAKEN_GIT`) is present and at least [`MIN_VERSION`]. The error is
+    /// a user-facing sentence. Spawns one process (~25 ms on Windows): call
+    /// it off the UI thread.
+    pub fn check_minimum() -> std::result::Result<(u32, u32, u32), String> {
+        Git::new(std::env::temp_dir(), CommandLog::default()).check_version()
+    }
+
+    /// Like [`check_minimum`](Self::check_minimum) for this handle's executable.
+    pub fn check_version(&self) -> std::result::Result<(u32, u32, u32), String> {
+        let v = self.version().map_err(|e| {
+            format!(
+                "Git was not found or could not be run ({}): {e:#}. Install Git for Windows {}.{} or newer, or set its path in Settings.",
+                self.exe.display(),
+                MIN_VERSION.0,
+                MIN_VERSION.1
+            )
+        })?;
+        check_min(v)
+    }
+}
+
+fn check_min(v: (u32, u32, u32)) -> std::result::Result<(u32, u32, u32), String> {
+    if (v.0, v.1) >= MIN_VERSION {
+        Ok(v)
+    } else {
+        Err(format!(
+            "Git {}.{}.{} is too old: GitKwaken needs {}.{} or newer. Some operations will fail.",
+            v.0, v.1, v.2, MIN_VERSION.0, MIN_VERSION.1
+        ))
+    }
 }
 
 fn spawn_readers(
@@ -423,6 +455,17 @@ mod tests {
             Some((2, 39, 3))
         );
         assert_eq!(parse_version("nope"), None);
+    }
+
+    #[test]
+    fn minimum_version_check() {
+        assert_eq!(check_min((2, 45, 0)), Ok((2, 45, 0)));
+        assert!(check_min((3, 0, 0)).is_ok());
+        assert!(check_min((2, 44, 9)).unwrap_err().contains("2.45"));
+        // The test machine's git is new enough; a missing executable is an error.
+        assert!(Git::check_minimum().is_ok());
+        let missing = Git::new(".", CommandLog::default()).with_exe("Z:/no/such/git.exe");
+        assert!(missing.check_version().unwrap_err().contains("not found"));
     }
 
     #[test]

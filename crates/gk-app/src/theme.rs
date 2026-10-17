@@ -109,22 +109,49 @@ impl Palette {
     }
 }
 
+/// Default monospace family (Windows ships it everywhere).
+pub const DEFAULT_MONO_FONT: &str = "Consolas";
+
 /// Uses the platform UI fonts when present (Segoe UI / Consolas on Windows)
-/// and adds symbol and emoji fonts as fallbacks so icons like ⑂ ⇄ 🏷 render.
+/// and adds Segoe UI Symbol as a fallback so icons like ⑂ ⇄ ⎘ render.
+///
+/// The monospace family comes from `GITKWAKEN_MONO_FONT`; use
+/// [`install_fonts_with`] to pass `settings.mono_font_family`.
 pub fn install_fonts(ctx: &egui::Context) {
+    let env = std::env::var("GITKWAKEN_MONO_FONT").ok();
+    install_fonts_with(ctx, env.as_deref());
+}
+
+/// Like [`install_fonts`] with an explicit monospace font: a family name
+/// ("Cascadia Mono", "JetBrains Mono"), a file name in the Windows font
+/// folders ("CascadiaMono.ttf") or a full path. Unknown names fall back to
+/// Consolas.
+///
+/// Memory: font files are mapped once per process (see
+/// [`gk_dx11::map_file_static`]); only touched pages count. Segoe UI Emoji
+/// (13 MB, color glyphs egui cannot draw anyway) is not loaded: egui's
+/// built-in Noto Emoji and emoji-icon-font, which sit before it in the
+/// fallback chain, already cover the pictographs the UI uses.
+/// `GITKWAKEN_EMOJI_FONT=1` brings it back for exotic emoji in commit
+/// messages.
+pub fn install_fonts_with(ctx: &egui::Context, mono: Option<&str>) {
+    ctx.set_fonts(font_definitions(mono));
+}
+
+fn font_definitions(mono: Option<&str>) -> egui::FontDefinitions {
     use egui::{FontData, FontDefinitions, FontFamily};
+    use std::sync::Arc;
     let mut fonts = FontDefinitions::default();
-    let dir = std::env::var_os("WINDIR").map(|w| std::path::PathBuf::from(w).join("Fonts"));
-    let load = |name: &str| -> Option<FontData> {
-        let p = dir.as_ref()?.join(name);
-        std::fs::read(p).ok().map(FontData::from_owned)
+    // Mapped, not read: egui would copy owned bytes once more, and a mapped
+    // font only costs the pages egui touches.
+    let load = |p: Option<std::path::PathBuf>| -> Option<Arc<FontData>> {
+        gk_dx11::map_file_static(&p?).map(|b| Arc::new(FontData::from_static(b)))
     };
-    let mut add = |key: &str, file: &str, family: FontFamily, primary: bool| {
-        if let Some(data) = load(file) {
-            fonts
-                .font_data
-                .insert(key.to_string(), std::sync::Arc::new(data));
-            let list = fonts.families.entry(family).or_default();
+    let mut add = |key: &str, data: Option<Arc<FontData>>, families: &[FontFamily], primary| {
+        let Some(data) = data else { return };
+        fonts.font_data.insert(key.to_string(), data);
+        for family in families {
+            let list = fonts.families.entry(family.clone()).or_default();
             if primary {
                 list.insert(0, key.to_string());
             } else {
@@ -132,20 +159,105 @@ pub fn install_fonts(ctx: &egui::Context) {
             }
         }
     };
-    add("segoe-ui", "segoeui.ttf", FontFamily::Proportional, true);
-    add("consolas", "consola.ttf", FontFamily::Monospace, true);
-    for family in [FontFamily::Proportional, FontFamily::Monospace] {
-        add("segoe-symbol", "seguisym.ttf", family.clone(), false);
-        add("segoe-emoji", "seguiemj.ttf", family, false);
+    let both = [FontFamily::Proportional, FontFamily::Monospace];
+    add(
+        "segoe-ui",
+        load(system_font("segoeui.ttf")),
+        &[FontFamily::Proportional],
+        true,
+    );
+    let mono_data = mono
+        .filter(|m| !m.trim().is_empty())
+        .and_then(|m| load(resolve_font(m)))
+        .or_else(|| load(resolve_font(DEFAULT_MONO_FONT)));
+    add("mono", mono_data, &[FontFamily::Monospace], true);
+    add(
+        "segoe-symbol",
+        load(system_font("seguisym.ttf")),
+        &both,
+        false,
+    );
+    if std::env::var_os("GITKWAKEN_EMOJI_FONT").is_some_and(|v| v == "1") {
+        add(
+            "segoe-emoji",
+            load(system_font("seguiemj.ttf")),
+            &both,
+            false,
+        );
     }
-    ctx.set_fonts(fonts);
+    fonts
 }
 
+/// Font folders: the system one, then the per-user one (fonts installed
+/// without admin rights).
+fn font_dirs() -> Vec<std::path::PathBuf> {
+    let mut v = Vec::new();
+    if let Some(w) = std::env::var_os("WINDIR") {
+        v.push(std::path::PathBuf::from(w).join("Fonts"));
+    }
+    if let Some(l) = std::env::var_os("LOCALAPPDATA") {
+        v.push(std::path::PathBuf::from(l).join(r"Microsoft\Windows\Fonts"));
+    }
+    v
+}
+
+fn system_font(file: &str) -> Option<std::path::PathBuf> {
+    font_dirs()
+        .into_iter()
+        .map(|d| d.join(file))
+        .find(|p| p.is_file())
+}
+
+/// Maps a family name, file name or path to a font file.
+fn resolve_font(name: &str) -> Option<std::path::PathBuf> {
+    let name = name.trim();
+    let p = std::path::Path::new(name);
+    let lower = name.to_ascii_lowercase();
+    if [".ttf", ".otf", ".ttc"].iter().any(|e| lower.ends_with(e)) {
+        return if p.is_absolute() {
+            p.is_file().then(|| p.to_path_buf())
+        } else {
+            system_font(name)
+        };
+    }
+    // Family names whose file names are not derivable from the name.
+    const KNOWN: &[(&str, &str)] = &[
+        ("consolas", "consola.ttf"),
+        ("courier new", "cour.ttf"),
+        ("lucida console", "lucon.ttf"),
+        ("cascadia mono", "CascadiaMono.ttf"),
+        ("cascadia code", "CascadiaCode.ttf"),
+        ("segoe ui mono", "SegUIMono.ttf"),
+    ];
+    if let Some((_, file)) = KNOWN.iter().find(|(n, _)| *n == lower) {
+        return system_font(file);
+    }
+    // "JetBrains Mono" -> JetBrainsMono-Regular.ttf, JetBrainsMono.ttf, ...
+    let compact: String = name.chars().filter(|c| !c.is_whitespace()).collect();
+    ["-Regular.ttf", ".ttf", "-Regular.otf", ".otf"]
+        .iter()
+        .find_map(|suffix| system_font(&format!("{compact}{suffix}")))
+}
+
+/// Compatibility wrapper: monospace text at `font_size - 0.5`. Prefer
+/// [`apply_with`] with `settings.mono_font_size`.
 pub fn apply(
     ctx: &egui::Context,
     theme: gk_settings::Theme,
     ui_scale: f32,
     font_size: f32,
+) -> Palette {
+    apply_with(ctx, theme, ui_scale, font_size, font_size - 0.5)
+}
+
+/// Applies theme, zoom and text sizes; monospace text (diffs, ids, console)
+/// uses `mono_font_size` (`settings.mono_font_size`).
+pub fn apply_with(
+    ctx: &egui::Context,
+    theme: gk_settings::Theme,
+    ui_scale: f32,
+    font_size: f32,
+    mono_font_size: f32,
 ) -> Palette {
     let dark = match theme {
         gk_settings::Theme::Dark => true,
@@ -189,7 +301,7 @@ pub fn apply(
         s.text_styles
             .insert(TextStyle::Small, FontId::proportional(font_size - 2.0));
         s.text_styles
-            .insert(TextStyle::Monospace, FontId::monospace(font_size - 0.5));
+            .insert(TextStyle::Monospace, FontId::monospace(mono_font_size));
         s.text_styles
             .insert(TextStyle::Heading, FontId::proportional(font_size + 4.0));
         s.spacing.item_spacing = egui::vec2(6.0, 4.0);
@@ -199,5 +311,68 @@ pub fn apply(
         Palette::dark()
     } else {
         Palette::light()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every icon the UI draws must still render without Segoe UI Emoji.
+    #[test]
+    fn ui_symbols_render_without_emoji_font() {
+        let Some(emoji) = system_font("seguiemj.ttf") else {
+            return; // not Windows
+        };
+        // egui's `has_glyph` reports false for glyphs of the face that also
+        // holds the replacement character, so compare against the old font
+        // set (with Segoe UI Emoji) instead of expecting no misses.
+        let missing = |defs: egui::FontDefinitions| -> String {
+            let ctx = egui::Context::default();
+            ctx.set_fonts(defs);
+            let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+            let icons = "…✖—↑⑂→↓✔◀🔍⚠⟳•⇄🏷⬇▸☰✎⬆▼▲−▾📁▣⚙●○↔⎘⏎←≈▶📝🕘👤☁📦🌲⋯⚑📂×";
+            ctx.fonts_mut(|f| {
+                icons
+                    .chars()
+                    .filter(|c| {
+                        !f.has_glyph(&egui::FontId::proportional(13.0), *c)
+                            || !f.has_glyph(&egui::FontId::monospace(12.0), *c)
+                    })
+                    .collect()
+            })
+        };
+        let mut with_emoji = font_definitions(None);
+        let data = egui::FontData::from_owned(std::fs::read(emoji).unwrap());
+        with_emoji
+            .font_data
+            .insert("segoe-emoji".into(), std::sync::Arc::new(data));
+        for list in with_emoji.families.values_mut() {
+            list.push("segoe-emoji".into());
+        }
+        assert_eq!(missing(font_definitions(None)), missing(with_emoji));
+        let defs = font_definitions(None);
+        assert!(!defs.font_data.contains_key("segoe-emoji"));
+        assert!(defs.font_data.contains_key("mono"));
+    }
+
+    #[test]
+    fn mono_font_names_resolve() {
+        if system_font("consola.ttf").is_none() {
+            return;
+        }
+        assert!(resolve_font("Consolas").is_some());
+        assert!(resolve_font("consola.ttf").is_some());
+        assert!(resolve_font("No Such Font 123").is_none());
+        let abs = system_font("consola.ttf").unwrap();
+        assert_eq!(resolve_font(abs.to_str().unwrap()), Some(abs));
+    }
+
+    #[test]
+    fn mono_size_is_applied() {
+        let ctx = egui::Context::default();
+        apply_with(&ctx, gk_settings::Theme::Dark, 1.0, 13.0, 15.5);
+        let size = ctx.style_of(egui::Theme::Dark).text_styles[&egui::TextStyle::Monospace].size;
+        assert_eq!(size, 15.5);
     }
 }

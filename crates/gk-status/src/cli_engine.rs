@@ -3,6 +3,14 @@ use anyhow::{Result, bail};
 use bstr::{BString, ByteSlice};
 
 /// Status via `git status --porcelain=v2 -z`; the reference implementation.
+///
+/// fsmonitor: nothing to do here. When the repository sets `core.fsmonitor`
+/// (the Optimize dialog turns it on, together with `core.untrackedCache`),
+/// this `git status` asks the fsmonitor daemon which paths changed since its
+/// last token and skips stat-ing the rest, so a full scan of a 1M-file tree
+/// costs about as much as the changes. [`crate::fsmonitor_state`] reports
+/// whether that is in effect; the gix engine and the watcher fast path do not
+/// use the daemon.
 pub fn compute(git: &gk_cli::Git, patterns: &[BString], untracked: Untracked) -> Result<Status> {
     let mode = match untracked {
         Untracked::All => "--untracked-files=all",

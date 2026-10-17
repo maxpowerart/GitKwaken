@@ -180,6 +180,38 @@ pub struct Options {
     pub untracked: Untracked,
 }
 
+/// Whether git's builtin fsmonitor daemon serves this repository.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FsMonitor {
+    /// `core.fsmonitor` is unset or false.
+    Off,
+    /// Configured (a hook path or `true`) but the daemon is not running yet;
+    /// the next `git status` starts it.
+    Configured,
+    /// `git fsmonitor--daemon status` reports it watching this worktree.
+    Running,
+}
+
+/// Reports the fsmonitor state (two short git calls, ~50 ms on Windows: call
+/// it off the UI thread). With [`Engine::Cli`], full scans of a repository
+/// in state `Configured` or `Running` are answered by the daemon (see
+/// `cli_engine::compute`).
+pub fn fsmonitor_state(git: &gk_cli::Git) -> FsMonitor {
+    let configured = git
+        .run_raw(&["config", "--type=bool-or-str", "core.fsmonitor"], None)
+        .ok()
+        .filter(|o| o.success())
+        .map(|o| o.stdout_str().trim().to_string())
+        .is_some_and(|v| !v.is_empty() && v != "false");
+    if !configured {
+        return FsMonitor::Off;
+    }
+    match git.run_raw(&["fsmonitor--daemon", "status"], None) {
+        Ok(o) if o.success() => FsMonitor::Running,
+        _ => FsMonitor::Configured,
+    }
+}
+
 /// Computes status, limited to `patterns` when non-empty.
 pub fn compute(
     workdir: &std::path::Path,
@@ -188,6 +220,12 @@ pub fn compute(
     opts: &Options,
     interrupt: &std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> anyhow::Result<Status> {
+    let _span = tracing::info_span!(
+        "status.compute",
+        engine = ?opts.engine,
+        paths = patterns.len()
+    )
+    .entered();
     let start = std::time::Instant::now();
     let mut status = match opts.engine {
         Engine::Gix => gix_engine::compute(workdir, patterns, opts.untracked, interrupt)?,
@@ -209,6 +247,19 @@ mod tests {
         assert!(path_within(b"a/b".as_bstr(), b"a/b".as_bstr()));
         assert!(!path_within(b"a/bc".as_bstr(), b"a/b".as_bstr()));
         assert!(path_within(b"x".as_bstr(), b"".as_bstr()));
+    }
+
+    #[test]
+    fn fsmonitor_detection() {
+        let dir = tempfile::tempdir().unwrap();
+        let git = gk_cli::Git::new(dir.path(), gk_cli::CommandLog::default());
+        git.run(&["init", "-q"]).unwrap();
+        assert_eq!(fsmonitor_state(&git), FsMonitor::Off);
+        git.run(&["config", "core.fsmonitor", "false"]).unwrap();
+        assert_eq!(fsmonitor_state(&git), FsMonitor::Off);
+        git.run(&["config", "core.fsmonitor", "true"]).unwrap();
+        // Not started by anything yet (no status ran since).
+        assert_ne!(fsmonitor_state(&git), FsMonitor::Off);
     }
 
     #[test]

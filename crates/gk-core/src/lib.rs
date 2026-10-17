@@ -2,9 +2,12 @@
 //! git operations and the background session the UI talks to.
 
 pub mod advanced;
+pub mod cache;
 pub mod content;
 pub mod history;
 pub mod ops;
+pub mod pool;
+pub mod profiling;
 pub mod refs;
 mod repo;
 pub mod session;

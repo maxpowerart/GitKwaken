@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# Tracy profiling: `gk_core::profiling::init()` installs a tracing-tracy
+# subscriber. Off by default; without it the spans cost one relaxed atomic load.
+profile = ["dep:tracing-tracy", "dep:tracing-subscriber"]
+
 [dependencies]
 anyhow = { workspace = true }
 bstr = { workspace = true }
@@ -11,11 +16,16 @@ gix = { workspace = true }
 parking_lot = { workspace = true }
 crossbeam-channel = { workspace = true }
 rayon = { workspace = true }
+tracing = { workspace = true }
 lru = "0.18"
+redb = "4"
 gk-cli = { path = "../gk-cli" }
 gk-status = { path = "../gk-status" }
 gk-graph = { path = "../gk-graph" }
 gk-diff = { path = "../gk-diff" }
+gk-settings = { path = "../gk-settings" }
+tracing-tracy = { version = "0.12", optional = true }
+tracing-subscriber = { version = "0.3", optional = true, default-features = false, features = ["registry", "std"] }
 
 [dev-dependencies]
 tempfile = "3"
