@@ -28,6 +28,21 @@ gk-bench ──► gk-core / gk-status / gk-graph   (measurements on real repos)
 | `gk-update` | Update manifest check, SHA-256-verified download, exe self-replace. |
 | `gk-app` | `gitkwaken.exe`: tabs, views, dialogs. Also the askpass helper when launched by git. |
 
+### Deviations from the design document
+
+- **Object reads in process, not a long-lived `git cat-file --batch`.** Blobs, trees and
+  commits are read through gitoxide (`gix`, one handle per thread). It needs no pipe protocol
+  or child process to keep alive, reads packs and the commit-graph directly, and was faster
+  in every measurement. The git CLI stays the tool for writes, network and anything with
+  filters git must run (LFS, `ident`, `working-tree-encoding`).
+- **Status engine.** The default full scan is `git status --porcelain=v2` (faster on Windows
+  with `core.fscache`, and it talks to the fsmonitor daemon); the gitoxide engine is an
+  option. The watcher fast path always works in process on the gix index.
+- **UI toolkit.** egui on a custom Direct3D 11 host (`gk-dx11`) instead of GPUI.
+- **Packaging.** Inno Setup installer, zip and winget manifests instead of cargo-dist / MSI.
+- **Highlighting.** Diffs up to 20k lines are highlighted whole on a background thread
+  rather than only the visible lines; larger diffs are not highlighted.
+
 ## Threads
 
 One `Session` per open repository tab. Per session:

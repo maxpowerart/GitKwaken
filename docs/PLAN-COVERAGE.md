@@ -11,17 +11,17 @@ Status legend:
 
 Evidence uses `impl:` for the code, `UI:` for the entry point, `test:` for unit/integration tests (`crate/path.rs::fn`), `E2E:` for UI scenarios (`scripts/e2e/*.script`, run by `scripts/run-e2e*.sh`; `fa-*` by `run-e2e-features-a.sh`, `fb-*` by `run-e2e-features-b.sh`; all six suites run in CI through `scripts/ci-e2e.sh` / `.github/workflows/e2e.yml`). Paths are relative to the repo root. `it/` = `crates/gk-core/tests/it/`.
 
-Summary: 167 requirements. **144 Done, 18 Partial, 1 Missing, 4 Deviation.** The full list is under Gaps.
+Summary: 167 requirements. **161 Done, 2 Partial, 0 Missing, 4 Deviation.** The open items are under Gaps.
 
 Measurements (Windows 11, release builds, 2026-10-17; details and commands are in `docs/BENCHMARKS.md`):
 
-- Status, r1m (1M files): full refresh 415 ms (CLI engine), gix engine 898 ms, `git status` 407 ms. Watcher-triggered fast path 0.2 ms. Save to status, end to end: 22 ms median (adaptive 15 ms debounce, `gk-bench save-latency`).
+- Status, r1m (1M files): full refresh 415 ms (CLI engine, the default), gix engine 898 ms, `git status` 407 ms. Watcher-triggered fast path 0.2 ms. Save to status, end to end: 22 ms median (adaptive 15 ms debounce, `gk-bench save-latency`).
+- Start: process creation to the first frame with history rows from the cache, git.git: 218 ms median (`scripts/measure-startup.ps1`); 306 ms without cache.
 - History, git.git (85,618 commits): first rows 19.5 ms without cache and 29 ms from the warm redb snapshot cache (`gk-bench history-first`, `gk-bench open`). Full build 97 ms, search "fix" 75.6 ms.
-- History, Linux kernel (1,485,415 commits): build 2.48 s, layout 36 MB, search 492 ms, peak working set 1.17 GB (whole bench process).
-- Scrolling: 120 fps on history; 117 fps (vsync) and > 900 fps unlocked on a 1M-row list.
-- Stage 100k files: 8-11 s, bound by object writes on this disk (bulk path `update-index --stdin`; was 152 s).
-- Filter 1M paths (nucleo): 81 ms single-threaded from `&str`, 21-31 ms with rayon. 50k-line diff computation: 19.8 ms. File history, first 50 commits: 48-244 ms.
-- Idle memory: demo repo about 76 MB (about 42 MB of it is shared driver/DLL pages, syntect about 8 MB); r1m 368 MB.
+- History, Linux kernel (1,485,415 commits): first screen 20.9 ms, full build 1.89 s in the background; scrolling it at 120 fps with the worst frame at 10.3 ms; app memory 318 MB steady.
+- Stage 100k files: 0.55-0.69 s (in-process hashing, one pack; was 8-11 s through `update-index`, 152 s through pathspecs).
+- Filter 1M paths: 4.7-13.7 ms per keystroke (parallel, incremental). 50k-line diff with 1,515 edits: 27 ms from click to drawn (diff 5.2 ms). File history, first 50 commits: 48-244 ms.
+- Memory: demo repo 65 MB working set, of which ~48 MB is the GPU driver (empty window 64 MB private vs 16 MB with WARP); git.git 91 MB; r1m 64 MB.
 - Against SourceGit (`scripts/compare-clients.ps1`): window shown in 225-256 ms vs 367-490 ms; 0% idle CPU vs about 55%.
 
 ## Functionality
@@ -277,23 +277,23 @@ Measurements (Windows 11, release builds, 2026-10-17; details and commands are i
 | Integration tests of operations | Done | `crates/gk-core/tests/it/{ops,rebase,remote,refs,content,history,session,repo,advanced,paths}.rs` (108 tests; `advanced.rs` has 15: bisect, flow, sparse, worktrees, submodules, clean, optimize, LFS, blame) | |
 | UI tests | Done | `history/ui_tests.rs`, `file_status.rs::renders_headless`, `diff.rs::hunk_actions_on_a_real_repository`; E2E: `run-e2e.sh`, `run-e2e-history.sh`, `run-e2e-remote.sh`, `run-e2e-update.sh`, `run-e2e-features-a.sh` (18 `fa-*`), `run-e2e-features-b.sh` (18 `fb-*`); CI: `.github/workflows/e2e.yml` runs all six suites through `scripts/ci-e2e.sh` (windows-latest, WARP) | |
 | Benchmark corpus (linux kernel, chromium, synthetic 1M, LFS repo) | Done | `scripts/fetch-corpus.sh` (`linux`, `chromium`, `lfs`), `gk-bench gen` / `gen-dag`; `docs/BENCHMARKS.md` (Corpus) | Chromium can be fetched by script but was not fetched or measured. |
-| Benchmarks in CI failing on >10% regression | Partial | `crates/gk-bench/src/regress.rs` (gate: 10% and 2 ms), `.github/workflows/bench.yml` | No baseline is committed (`bench/` does not exist), so CI only records a baseline and gates nothing until `bench/baseline-windows.json` is committed. |
-| Comparison with SourceTree / Fork / GitKraken / SourceGit / git CLI before releases | Partial | `scripts/compare-clients.ps1`; `docs/BENCHMARKS.md` (Comparison): window shown sooner than SourceGit (225-256 ms vs 367-490 ms), 0% idle CPU vs about 55% | Only SourceGit and the git CLI were measured. The script supports Fork, but Fork was not run. SourceTree and GitKraken are not covered. The comparison is not part of the release process. |
+| Benchmarks in CI failing on >10% regression | Done | `.github/workflows/bench.yml`: builds `gk-bench` at the base commit (PR merge base, or the previous commit on main) and at the current one, runs both on the same runner (`gk-bench regress --record` then compare), fails when a metric is > 10% and > 2 ms slower in both the median and the fastest run (`crates/gk-bench/src/regress.rs` `compare`); test: `regress.rs::gate_uses_percentage_and_absolute_floor`, `noisy_median_with_steady_minimum_passes` | The workflow has not run on GitHub yet (the repository is not published); the A/B commands were run locally. |
+| Comparison with SourceTree / Fork / GitKraken / SourceGit / git CLI before releases | Partial | `scripts/compare-clients.ps1` (GitKwaken, SourceGit, Fork, SourceTree, git CLI; window time, load time, startup and idle CPU, window-only screenshots); `docs/BENCHMARKS.md` (Comparison): window shown sooner than SourceGit (225-256 ms vs 367-490 ms), 0% idle CPU vs about 55% | Measured against SourceGit and the git CLI only. SourceTree is installed on the dev machine but its first-run setup (Atlassian account) was never completed, so it cannot be timed unattended; Fork and GitKraken are not installed. Not wired into the release workflow. |
 
 ## Performance budgets
 
 | Requirement | Status | Evidence | Note |
 |---|---|---|---|
-| First frame < 300 ms from cache | Partial | redb snapshot published on open (`session.rs:262`, `cache.rs`); `gk-bench open` (`crates/gk-bench/src/startup.rs`, Session::open to first rows): 29 ms from a warm cache; window shown in 225-256 ms (`scripts/compare-clients.ps1`); test: `session/tests.rs::cached_snapshot_is_published_then_validated` | Both parts are under budget, but they were measured separately. There is no single measurement from process start to the first frame with cached content. |
+| First frame < 300 ms from cache | Done | redb snapshot published on open (`session.rs`, `cache.rs`); trace `GITKWAKEN_STARTUP_LOG` (`crates/gk-app/src/startup.rs`); `scripts/measure-startup.ps1`: process creation → first frame with cached history rows, git.git: median 218 ms (205-280, 7 runs); cold, without cache: 306 ms; test: `session/tests.rs::cached_snapshot_is_published_then_validated` | |
 | History first screen < 100 ms | Done | first 2,000 rows are published before the full layout (`history.rs:71`, `session.rs:860-878`); git.git first rows: 19.5 ms without cache (`gk-bench history-first`), 29 ms from cache (`gk-bench open`); test: `session/tests.rs::partial_history_then_full` | |
 | Full status warm < 1.5 s at 1M files | Done | r1m full refresh 415 ms (CLI engine), gix 898 ms (`gk-bench status`) | |
 | Status after save < 50 ms | Done | adaptive 15 ms debounce (`crates/gk-status/src/watch.rs:22`; busy mode 150 ms at `watch.rs:32`), fast path 0.2 ms; save to status, end to end: 22 ms median (`gk-bench save-latency`); test: `session/tests.rs::status_after_save_is_fast` | |
-| 1M-row scroll at 120 fps, no frame > 16 ms | Partial | 120 fps scrolling history; 117 fps (vsync) and > 900 fps unlocked on a 1M-row list; Linux (1.48M commits) history build 2.48 s | Frame-time spikes are not recorded (no frame-time histogram). Scrolling the 1.48M-commit history is not measured. |
+| 1M-row scroll at 120 fps, no frame > 16 ms | Done | app on Linux (1,485,415 commits), `GITKWAKEN_AUTOSCROLL=40` + `GK_DX11_FRAME_STATS` (per-300-frame average and worst interval, `gk-dx11/src/win/mod.rs` `frame_stats`): 120 fps in every window after startup, worst frame 9.7-10.3 ms, UI build ≤ 2.3 ms (`docs/BENCHMARKS.md`) | |
 | Stage 100k files < 2 s | Done | impl: `crates/gk-core/src/stage.rs` (above 1,000 paths: files read, converted with gitoxide's filter pipeline and hashed in parallel, new blobs written as one pack by `packwrite.rs`, index rewritten once under `index.lock` with real stat data), git `update-index` for what it cannot do like `git add`; test: `it/stage.rs::bulk_stage_equals_git_add*` (`ls-files -s`, status and commit tree equal to `git add -A`, autocrlf on/off, eol/text/binary attributes, filter driver, ident, exec bit, deletions, file-to-folder); gk-bench `stage` on a 100k-file repo: 0.55-0.62 s (1,000 distinct contents), 0.66-0.69 s (100k new blobs), `git diff` right after 40-60 ms (entries are clean) | Paths with a `filter`, `ident` or `working-tree-encoding` attribute, symlinks, submodules, conflicted / intent-to-add / skip-worktree / assume-unchanged entries, file-to-folder clashes, case clashes and files over 64 MB go through git; split or sparse indexes and pending resolve-undo data send everything to git. The untracked-cache and fsmonitor index extensions are dropped (git rebuilds them). `GITKWAKEN_GIT_STAGE=1` forces git. |
 | Filter 1M paths < 50 ms per keystroke | Done | `views/file_status/filter.rs` (rayon over 8k-entry chunks, results concatenated in status order; when the query only grows, only the previous matches are filtered), `views/file_status/list.rs` `sync`; test (release, `--ignored`): `filter.rs::filter_1m_paths_per_keystroke`, `list.rs::sync_1m_paths_per_keystroke` | 1M synthetic paths (`src/module_NNN/sub_NN/file_NNNNNNN.ext`), 32 hardware threads: filter 4-14 ms per keystroke (one thread: 47-272 ms), whole flat-list row rebuild 8-24 ms. Fewer cores scale the full pass down accordingly; typing forward uses the smaller incremental set. |
-| Open a 50k-line diff < 100 ms | Partial | `gk-bench diff 50000`: diff 19.8 ms, whole file 15.3 ms, ignore whitespace 33.5 ms | Only the diff computation is measured, not open-to-rendered in the app. Highlighting is skipped above 20k lines (`views/diff/syntax.rs:20`). |
+| Open a 50k-line diff < 100 ms | Done | app: click in File Status → diff drawn, 50k-line file with 1,515 scattered edits (12,120 diff lines): 27 ms (`GITKWAKEN_STARTUP_LOG` `diff_open`, `views/diff.rs`); parts via `gk-bench diff-open`: read 4.9 ms + diff 5.2 ms (Myers above 20k lines, `gk-diff/src/lib.rs` `HISTOGRAM_MAX_LINES`); test: `gk-diff::tests::large_scattered_edits_are_exact_and_fast` | Opened during startup, while status and history load, it takes 89-102 ms. Highlighting skips diffs over 20k lines (`views/diff/syntax.rs`). |
 | File history < 1 s for the first 50 | Done | `views/search.rs:18-19,222-243` (a `-n 50` first page is shown while the full `--follow` walk runs in parallel); `gk-bench file-history`: 48-244 ms for the first 50 on git.git (full `--follow` walk 484-786 ms) | |
-| Memory < 60 MB small repo / < 400 MB reference | Partial | demo repo about 76 MB (was 107 MB: emoji font dropped, fonts memory-mapped, no CPU copy of textures, syntect lazy); r1m 368 MB; Linux 1.17 GB peak (whole gk-bench process) | Small repo is over budget: about 42 MB is shared driver/DLL pages and the full syntect syntax set is about 8 MB. Linux is far over 400 MB. |
+| Memory < 60 MB small repo / < 400 MB reference | Partial | reference (1M files / 1M commits): Linux 1.48M commits 318 MB steady, 337 MB peak from the cache; r1m 1M files 64 MB; git.git 91 MB; path interning (`gk-status/src/path.rs`), fonts memory-mapped, no CPU copy of textures, syntect loaded lazily | Small repo: 65 MB working set, of which ~48 MB is the D3D11 user-mode GPU driver (empty window: 64 MB private with the GPU, 16 MB with `GK_DX11_WARP=1`); the app's own memory is ~25 MB. A cold first open of Linux peaks at ~500 MB while the history is built. |
 
 ## Risks
 
@@ -305,55 +305,11 @@ Measurements (Windows 11, release builds, 2026-10-17; details and commands are i
 
 ## Gaps
 
-One line per Partial or Missing item: what to add, and where. 18 Partial and 1 Missing.
+Two Partial items, no Missing ones.
 
-**Repositories**
+- **Client comparison (Partial):** only SourceGit and the git CLI were timed. SourceTree support is in `scripts/compare-clients.ps1`, but its first-run setup has to be finished by hand before it can be timed; Fork and GitKraken were not installed. Run the script against them before a release and add it to the release checklist.
+- **Memory (Partial):** the reference budget holds (Linux 1.48M commits: 318 MB steady). The small-repo budget (60 MB) is missed by the process total (65 MB working set) because ~48 MB is the D3D11 user-mode GPU driver, measured against `GK_DX11_WARP=1`; the app's own share is ~25 MB. A cold first open of a 1.5M-commit history peaks at ~500 MB while it is built.
 
-- Bookmarks (Partial): add "Bookmark this repository…" to the tab context menu (`app.rs:263`), the "Repositories ▾" menu (`views/welcome.rs:347`) and the palette (`views/palette.rs`), so you can bookmark while tabs are open.
+Known limits that are not plan rows: `Repo::unstage_all` (`git reset -q`) takes ~7 s right after staging 100k files (git re-hashes them); the file list still copies each status path into a `String` (`views/file_status.rs`).
 
-**Authentication**
-
-- Git Credential Manager (Partial): detect `credential.helper` and the GCM install, and show the status in Optimize › Diagnostics or About (`dialogs/diagnostics.rs`, `dialogs/repo_tools.rs:546`).
-- SSH agent (Partial): detect the Windows `ssh-agent` service or `SSH_AUTH_SOCK`, list keys (`ssh-add -l`), and offer `core.sshCommand` in Settings (`dialogs/settings.rs`, `dialogs/diagnostics.rs`).
-
-**UI/UX**
-
-- Keyboard access (Partial): add Shift+F10 / `ListKeys` to the File Status lists (reuse `history/keys.rs::keyboard_menu` with the menus at `list.rs:554,624`) and Delete = discard. Add keymap actions for stage/unstage/discard of the hunk or selected lines in the diff (`views/diff.rs:735-743`).
-- Compact density (Partial): apply `settings.compact` to the sidebar row height, the History/Reflog row height and `spacing.item_spacing` in `theme::apply_with` (`theme.rs:244`, `views/sidebar.rs`, `views/history.rs:531`).
-
-**Architecture**
-
-- Interning (Partial): intern status paths (an `Arc<str>` table or an arena) and share them between status, lists and the tree (`gk-status/src/lib.rs:76` `Entry.path`, `views/file_status/tree.rs`).
-
-**Status engine**
-
-- fsmonitor (Partial): when `core.fsmonitor` is on and the engine is gix, ask the daemon for changed paths before a full scan, or switch that repo to the CLI engine automatically. Show `fsmonitor_state()` in Optimize or Diagnostics (`gk-status/src/lib.rs:199`, `gk-status/src/fast.rs`).
-
-**History engine**
-
-- Commit-graph offer (Partial): when a repo with more than ~10k commits opens with no commit-graph, show a one-click "Write commit-graph" message (`session.rs` history_loop, `views/statusbar.rs`).
-- Blame streaming (Partial): use `git blame --incremental` through `run_streaming` and fill lines as records arrive (`gk-core/src/advanced.rs:251`, `views/blame.rs:90`).
-
-**Write operations**
-
-- Discard backup (Missing): before discarding, run `git stash create` (plus copies of untracked files), record the commit under `refs/gitkwaken/discarded`, and add a "Restore discarded changes" action (`gk-core/src/ops.rs:126`, `dialogs/worktree.rs`).
-
-**Stack**
-
-- nucleo in the palette (Partial): replace the scorer in `views/palette.rs:200` with `nucleo-matcher`, reusing `file_status/tree.rs::Filter`.
-
-**Tests**
-
-- CI benchmarks (Partial): run `bench.yml` once, download the `bench-baseline` artifact and commit it as `bench/baseline-windows.json`, so the gate becomes active.
-- Client comparison (Partial): run `compare-clients.ps1 -Fork <path>`, measure SourceTree and GitKraken by hand, and add the run to a release checklist (`docs/`, `.github/workflows/release.yml`).
-
-**Performance budgets**
-
-- First frame (Partial): add a single process-start-to-first-cached-frame measurement, for example a frame timestamp in the app logged when the cached snapshot first renders, read by `compare-clients.ps1` or a `gk-bench` case.
-- 1M-row scroll (Partial): record a frame-time histogram (`crates/gk-dx11` stats) during a scripted scroll over `bench-data/linux` (`scripts/e2e/`).
-- Stage 100k (Partial): the 2 s budget looks unreachable through git on NTFS with Defender (8-11 s, bound by object writes). Either write blobs in-process with gix in parallel, or document the budget as hardware-bound.
-- Filter 1M (Partial): cache `Utf32String` per status generation and match in parallel with rayon, or narrow incrementally from the previous result set (`views/file_status/list.rs:166`, `tree.rs::Filter`).
-- 50k-line diff (Partial): add an app-side open-to-render measurement (diff, `diff/model.rs` layout and first paint) to `gk-bench diff` or an E2E timing.
-- Memory (Partial): about 42 MB of shared driver/DLL pages block the small-repo budget. Trim the syntect set to common syntaxes (about 8 MB), and reduce the Linux peak (1.17 GB) in the history layout and cache.
-
-Follow-ups on Done rows that are not gaps: record the gix-instead-of-`cat-file` deviation in `docs/ARCHITECTURE.md`; have Optimize offer `core.longpaths=true` on Windows (`gk-core/src/advanced.rs:614`); add integration tests for signed tags, history filter arguments run through `git log`, and the notes round trip; add a rename similarity threshold.
+Follow-ups on Done rows that are not gaps: add integration tests for signed tags, history filter arguments run through `git log`, and the notes round trip; add a rename similarity threshold.

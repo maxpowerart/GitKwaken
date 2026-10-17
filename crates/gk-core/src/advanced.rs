@@ -562,9 +562,13 @@ impl Repo {
         Ok(())
     }
 
-    /// One-click optimization for large repositories.
+    /// One-click optimization for large repositories. On Windows it also
+    /// turns on `core.longpaths`, so paths over 260 characters check out.
     pub fn optimize(&self, cancel: &CancelToken, p: crate::ops::Progress) -> Result<()> {
         self.config_set("core.fsmonitor", "true", false)?;
+        if cfg!(windows) {
+            self.config_set("core.longpaths", "true", false)?;
+        }
         self.config_set("core.untrackedCache", "true", false)?;
         self.config_set("feature.manyFiles", "true", false)?;
         self.config_set("fetch.writeCommitGraph", "true", false)?;

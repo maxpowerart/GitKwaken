@@ -475,7 +475,10 @@ mod tests {
         assert_eq!((d.additions, d.deletions), (909, 909));
         assert_eq!(d.hunks.len(), 909);
         let h = &d.hunks[1];
-        assert_eq!((h.old_start, h.old_len, h.new_start, h.new_len), (63, 7, 63, 7));
+        assert_eq!(
+            (h.old_start, h.old_len, h.new_start, h.new_len),
+            (63, 7, 63, 7)
+        );
         // Was ~70 ms (Histogram) plus a quadratic hunk-position scan; generous
         // bound for debug builds on slow CI machines.
         assert!(took.as_millis() < 2_000, "{took:?}");

@@ -496,6 +496,9 @@ fn optimize_sets_config_and_writes_commit_graph() {
     ] {
         assert_eq!(r.config_get(k).as_deref(), Some(v), "{k}");
     }
+    if cfg!(windows) {
+        assert_eq!(r.config_get("core.longpaths").as_deref(), Some("true"));
+    }
     let info = r.git_dir().join("objects/info");
     assert!(
         info.join("commit-graph").exists() || info.join("commit-graphs").exists(),
