@@ -145,8 +145,11 @@ pub fn write_worktree(repo: &Repo, g: &gix::Repository, path: &str, data: &[u8])
     Ok(())
 }
 
-/// Old and new content for a diff target. `None` means the side does not exist.
-pub fn load_sides(repo: &Repo, target: &DiffTarget) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+/// Old and new content of a diff; `None` means the side does not exist.
+pub type Sides = (Option<Vec<u8>>, Option<Vec<u8>>);
+
+/// Old and new content for a diff target.
+pub fn load_sides(repo: &Repo, target: &DiffTarget) -> Result<Sides> {
     let g = repo.gix();
     match target {
         DiffTarget::Unstaged { path } => {

@@ -18,7 +18,7 @@ impl Repo {
             return Ok(());
         }
         self.git()
-            .run_stdin(&["add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"], &nul_paths(paths))?;
+            .run_stdin(&["add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"], &literal_paths(paths))?;
         Ok(())
     }
 
@@ -35,12 +35,12 @@ impl Repo {
             // No commits yet: remove from the index entirely.
             self.git().run_stdin(
                 &["rm", "--cached", "-r", "-q", "--pathspec-from-file=-", "--pathspec-file-nul"],
-                &nul_paths(paths),
+                &literal_paths(paths),
             )?;
         } else {
             self.git().run_stdin(
                 &["reset", "-q", "--pathspec-from-file=-", "--pathspec-file-nul", "--"],
-                &nul_paths(paths),
+                &literal_paths(paths),
             )?;
         }
         Ok(())
@@ -60,7 +60,7 @@ impl Repo {
         if !tracked.is_empty() {
             self.git().run_stdin(
                 &["checkout", "--pathspec-from-file=-", "--pathspec-file-nul", "--"],
-                &nul_paths(tracked),
+                &literal_paths(tracked),
             )?;
         }
         for p in untracked {
@@ -78,25 +78,32 @@ impl Repo {
     /// `pick` selects lines of a full-context diff of the matching target.
     pub fn stage_lines(&self, path: &str, unstage: bool, pick: &dyn Fn(&DLine) -> bool) -> Result<()> {
         let g = self.gix();
-        let (old, new, mode) = if unstage {
-            let t = DiffTarget::Staged { path: path.to_string(), old_path: None };
-            let (o, n) = content::load_sides(self, &t)?;
-            (o, n, SelectMode::Revert)
+        if content::index_blob(&g, path, 2)?.is_some() || content::index_blob(&g, path, 3)?.is_some() {
+            bail!("{path} has conflicts; resolve them first");
+        }
+        let (target, mode) = if unstage {
+            (DiffTarget::Staged { path: path.to_string(), old_path: None }, SelectMode::Revert)
         } else {
-            // Untracked files need an intent-to-add entry first.
-            if content::index_blob(&g, path, 0)?.is_none() {
-                self.git().run(&["add", "-N", "--", path])?;
-            }
-            let t = DiffTarget::Unstaged { path: path.to_string() };
-            let (o, n) = content::load_sides(self, &t)?;
-            (o, n, SelectMode::Apply)
+            // Untracked files get their index entry from update-index below.
+            (DiffTarget::Unstaged { path: path.to_string() }, SelectMode::Apply)
         };
+        let (old, new) = content::load_sides(self, &target)?;
         let d = diff(old.as_deref().unwrap_or_default(), new.as_deref().unwrap_or_default(), Options::full());
         if d.binary {
             bail!("cannot stage lines of a binary file");
         }
+        if !d.lines.iter().any(|l| l.kind != gk_diff::LineKind::Context && pick(l)) {
+            return Ok(());
+        }
         let result = apply_selection(&d, pick, mode);
-        let mode_str = index_mode(&g, path).unwrap_or_else(|| "100644".to_string());
+        // Staging all of a deletion, or unstaging all of an addition, removes
+        // the index entry instead of leaving an empty file.
+        let side_missing = if unstage { old.is_none() } else { new.is_none() };
+        if side_missing && result.is_empty() {
+            self.git().run(&["rm", "--cached", "-f", "-q", "--", path])?;
+            return Ok(());
+        }
+        let mode_str = index_mode(&g, path).unwrap_or_else(|| worktree_mode(&self.abs(path)).to_string());
         let id = self.git().run_stdin(&["hash-object", "-w", "--stdin", "--no-filters"], &result)?.stdout_str();
         let id = id.trim();
         let info = format!("{mode_str},{id},{path}");
@@ -120,7 +127,12 @@ impl Repo {
     // ---------------------------------------------------------------- commit
 
     pub fn commit(&self, opts: &CommitOptions) -> Result<String> {
-        let mut args: Vec<&str> = vec!["commit", "-F", "-", "--cleanup=strip"];
+        let empty = opts.message.trim().is_empty();
+        if empty && !opts.amend {
+            bail!("commit message is empty");
+        }
+        // Amending with an empty message keeps the previous one.
+        let mut args: Vec<&str> = if empty { vec!["commit", "--no-edit"] } else { vec!["commit", "-F", "-", "--cleanup=strip"] };
         if opts.amend {
             args.push("--amend");
         }
@@ -143,10 +155,7 @@ impl Repo {
             author = format!("--author={a}");
             args.push(&author);
         }
-        if opts.message.trim().is_empty() && !opts.amend {
-            bail!("commit message is empty");
-        }
-        let out = self.git().run_stdin(&args, opts.message.as_bytes())?;
+        let out = if empty { self.git().run(&args)? } else { self.git().run_stdin(&args, opts.message.as_bytes())? };
         Ok(out.stdout_str())
     }
 
@@ -261,20 +270,26 @@ impl Repo {
 
     /// Interactive rebase driven by a prepared todo list.
     pub fn rebase_interactive(&self, base: &str, todo: &[TodoItem], autosquash: bool) -> Result<String> {
-        let dir = std::env::temp_dir().join(format!("gitkwaken-todo-{}", std::process::id()));
+        // Unique per call: concurrent rebases (several sessions) must not share files.
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
+        let dir = std::env::temp_dir().join(format!("gitkwaken-todo-{}-{seq}-{nanos}", std::process::id()));
         std::fs::create_dir_all(&dir)?;
         let mut todo_text = String::new();
         for (i, t) in todo.iter().enumerate() {
+            // The summary is only a comment for git, but must stay on one line.
+            let summary = t.summary.replace(['\r', '\n'], " ");
             match (t.action, &t.new_message) {
                 // Reword without an editor: pick, then amend with the prepared message.
                 (TodoAction::Reword, Some(msg)) => {
                     let msg_file = dir.join(format!("msg-{i}"));
                     std::fs::write(&msg_file, msg)?;
-                    let mf = msg_file.to_string_lossy().replace('\\', "/");
-                    todo_text.push_str(&format!("pick {} {}\n", t.id, t.summary));
-                    todo_text.push_str(&format!("exec git commit --amend -q --allow-empty -F '{mf}'\n"));
+                    let mf = sh_quote(&msg_file);
+                    todo_text.push_str(&format!("pick {} {summary}\n", t.id));
+                    todo_text.push_str(&format!("exec git commit --amend -q --allow-empty --cleanup=strip -F {mf}\n"));
                 }
-                _ => todo_text.push_str(&format!("{} {} {}\n", t.action.word(), t.id, t.summary)),
+                _ => todo_text.push_str(&format!("{} {} {summary}\n", t.action.word(), t.id)),
             }
         }
         let todo_file = dir.join("todo");
@@ -290,8 +305,12 @@ impl Repo {
             .git()
             .env("GIT_SEQUENCE_EDITOR", editor)
             .env("GIT_EDITOR", "true")
-            .run_raw(&args, None)?;
-        conflict_aware(out)
+            .run_raw(&args, None);
+        // Reword messages are needed until the rebase finishes.
+        if !self.git_dir().join("rebase-merge").exists() {
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+        conflict_aware(out?)
     }
 
     pub fn continue_op(&self, state: crate::RepoState) -> Result<String> {
@@ -409,7 +428,7 @@ impl Repo {
             self.git().run(&args)?;
         } else {
             args.extend(["--pathspec-from-file=-", "--pathspec-file-nul"]);
-            self.git().run_stdin(&args, &nul_paths(paths))?;
+            self.git().run_stdin(&args, &literal_paths(paths))?;
         }
         Ok(())
     }
@@ -479,13 +498,21 @@ impl Repo {
         if opts.no_verify {
             args.push("--no-verify".into());
         }
-        args.push(opts.remote.clone());
+        // An empty remote with no refspecs means git's default push.
+        if !opts.remote.is_empty() || !opts.refspecs.is_empty() {
+            args.push(opts.remote.clone());
+        }
         for (local, remote) in &opts.refspecs {
             if remote.is_empty() || remote == local {
                 args.push(local.clone());
             } else {
                 args.push(format!("{local}:{remote}"));
             }
+        }
+        // `push -u <remote>` alone fails for a branch without upstream: push HEAD
+        // to a branch of the same name.
+        if opts.set_upstream && opts.refspecs.is_empty() && !opts.remote.is_empty() {
+            args.push("HEAD".into());
         }
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         let out = self.git().run_streaming(&args, None, cancel, p)?.check()?;
@@ -577,6 +604,19 @@ impl Repo {
     }
 }
 
+/// Index mode for a file not in the index yet.
+fn worktree_mode(abs: &std::path::Path) -> &'static str {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if std::fs::metadata(abs).is_ok_and(|m| m.permissions().mode() & 0o111 != 0) {
+            return "100755";
+        }
+    }
+    let _ = abs;
+    "100644"
+}
+
 fn index_mode(g: &gix::Repository, path: &str) -> Option<String> {
     use bstr::ByteSlice;
     let index = g.index_or_empty().ok()?;
@@ -587,21 +627,33 @@ fn index_mode(g: &gix::Repository, path: &str) -> Option<String> {
 /// Treats "stopped because of conflicts" as success, other failures as errors.
 fn conflict_aware(out: gk_cli::Output) -> Result<String> {
     let text = format!("{}{}", out.stdout_str(), out.stderr_str());
-    if out.success() {
-        return Ok(text);
-    }
-    let lower = text.to_lowercase();
-    if lower.contains("conflict") || lower.contains("could not apply") {
+    if out.success() || stopped_on_conflict(&text) {
         return Ok(text);
     }
     Err(anyhow!(text.trim().to_string()))
 }
 
+/// True when git output says an operation stopped on new conflicts. Failures
+/// that merely mention conflicts (e.g. "Exiting because of an unresolved
+/// conflict" when continuing too early) are not matched.
+pub fn stopped_on_conflict(text: &str) -> bool {
+    if text.contains("CONFLICT (") {
+        return true;
+    }
+    let lower = text.to_lowercase();
+    ["could not apply", "could not revert", "patch failed at"].iter().any(|m| lower.contains(m))
+}
+
+/// Single-quotes a path for sh, with forward slashes.
+fn sh_quote(p: &std::path::Path) -> String {
+    let s = p.to_string_lossy().replace('\\', "/");
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
 /// A tiny script git runs as its sequence editor: copies our todo over git's.
 fn sequence_editor(todo: &std::path::Path) -> Result<String> {
-    let t = todo.to_string_lossy().replace('\\', "/");
     // git runs the editor through sh, available with every git installation.
-    Ok(format!("cp '{t}'"))
+    Ok(format!("cp {}", sh_quote(todo)))
 }
 
 #[derive(Debug, Clone, Default)]
@@ -625,12 +677,19 @@ pub enum FastForward {
     Only,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct MergeOptions {
     pub ff: FastForward,
     pub squash: bool,
+    /// Commit the merge right away (default); false stops before committing.
     pub commit: bool,
     pub message: Option<String>,
+}
+
+impl Default for MergeOptions {
+    fn default() -> Self {
+        Self { ff: FastForward::Allow, squash: false, commit: true, message: None }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -700,4 +759,10 @@ pub struct TodoItem {
     pub summary: String,
     /// New message for `Reword` (applied via `exec git commit --amend -F`).
     pub new_message: Option<String>,
+}
+
+/// NUL-separated `:(literal)` pathspecs, so `*`, `?` and `[` in file names
+/// never match other files.
+pub(crate) fn literal_paths(paths: &[String]) -> Vec<u8> {
+    nul_paths(paths.iter().map(|p| format!(":(literal){p}")))
 }

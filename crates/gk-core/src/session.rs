@@ -127,7 +127,8 @@ type OpFn = Box<dyn FnOnce(&Repo, &CancelToken, &mut (dyn FnMut(Line) + Send)) -
 
 struct OpJob {
     label: String,
-    run: OpFn,
+    /// `None` stops the op thread.
+    run: Option<OpFn>,
     refresh: Refresh,
 }
 
@@ -152,6 +153,27 @@ struct Shared {
 pub struct Session {
     inner: Arc<Shared>,
     _watcher: Arc<Mutex<Option<watch::Watcher>>>,
+    _close: Arc<CloseGuard>,
+}
+
+/// Stops the worker threads when the last [`Session`] clone is dropped. The
+/// threads own `Shared` (and its channel senders), so they would otherwise
+/// never see their channels disconnect.
+struct CloseGuard(Arc<Shared>);
+
+impl Drop for CloseGuard {
+    fn drop(&mut self) {
+        let i = &self.0;
+        i.closed.store(true, Ordering::SeqCst);
+        i.status_interrupt.lock().store(true, Ordering::SeqCst);
+        // Wake both loops so they notice `closed`.
+        let _ = i.refresh_tx.send(Refresh::default());
+        let _ = i.op_tx.send(OpJob {
+            label: String::new(),
+            run: None,
+            refresh: Refresh::default(),
+        });
+    }
 }
 
 impl Session {
@@ -203,7 +225,7 @@ impl Session {
                 Err(e) => push_message(&inner, MessageKind::Error, format!("file watcher unavailable: {e}")),
             }
         }
-        let s = Self { inner, _watcher: watcher };
+        let s = Self { _close: Arc::new(CloseGuard(inner.clone())), inner, _watcher: watcher };
         s.refresh_all();
         s
     }
@@ -261,14 +283,14 @@ impl Session {
         label: impl Into<String>,
         f: impl FnOnce(&Repo, &CancelToken, &mut (dyn FnMut(Line) + Send)) -> anyhow::Result<String> + Send + 'static,
     ) {
-        let _ = self.inner.op_tx.send(OpJob { label: label.into(), run: Box::new(f), refresh: Refresh::all() });
+        let _ = self.inner.op_tx.send(OpJob { label: label.into(), run: Some(Box::new(f)), refresh: Refresh::all() });
     }
 
     /// Like [`run_op`](Self::run_op) for quick index-only operations; refreshes status only.
     pub fn run_index_op(&self, label: impl Into<String>, f: impl FnOnce(&Repo) -> anyhow::Result<()> + Send + 'static) {
         let _ = self.inner.op_tx.send(OpJob {
             label: label.into(),
-            run: Box::new(move |r, _, _| f(r).map(|_| String::new())),
+            run: Some(Box::new(move |r, _, _| f(r).map(|_| String::new()))),
             refresh: Refresh { status_full: true, ..Default::default() },
         });
     }
@@ -495,9 +517,10 @@ fn refresh_loop(inner: Arc<Shared>, rx: Receiver<Refresh>) {
 
 fn op_loop(inner: Arc<Shared>, rx: Receiver<OpJob>) {
     while let Ok(job) = rx.recv() {
-        if inner.closed.load(Ordering::SeqCst) {
+        // Jobs queued before closing still run; the sentinel ends the loop.
+        let Some(run) = job.run else {
             return;
-        }
+        };
         let cancel = CancelToken::new();
         {
             let mut s = inner.snap.write();
@@ -523,7 +546,7 @@ fn op_loop(inner: Arc<Shared>, rx: Receiver<OpJob>) {
             drop(s);
             (i2.repaint)();
         };
-        let result = (job.run)(&inner.repo, &cancel, &mut on_line);
+        let result = run(&inner.repo, &cancel, &mut on_line);
         {
             let mut s = inner.snap.write();
             s.op = None;
@@ -532,7 +555,7 @@ fn op_loop(inner: Arc<Shared>, rx: Receiver<OpJob>) {
         match result {
             Ok(text) => {
                 let t = text.trim();
-                if t.to_lowercase().contains("conflict") {
+                if crate::ops::stopped_on_conflict(t) {
                     push_message(&inner, MessageKind::Error, format!("{}: conflicts — resolve them, then continue.\n{t}", job.label));
                 }
             }

@@ -84,25 +84,21 @@ fn worktree_entry(item: &WtItem) -> Option<Entry> {
     use gix::status::index_worktree::iter::Summary;
     let path = item.rela_path().to_owned();
     if let WtItem::Modification {
-        status: gix_status_conflict @ gix::status::plumbing::index_as_worktree::EntryStatus::Conflict { .. },
+        status: gix::status::plumbing::index_as_worktree::EntryStatus::Conflict { summary, .. },
         ..
     } = item
     {
-        if let gix::status::plumbing::index_as_worktree::EntryStatus::Conflict { summary, .. } =
-            gix_status_conflict
-        {
-            use gix::status::plumbing::index_as_worktree::Conflict as C;
-            let c = match summary {
-                C::BothDeleted => Conflict::BothDeleted,
-                C::AddedByUs => Conflict::AddedByUs,
-                C::DeletedByThem => Conflict::DeletedByThem,
-                C::AddedByThem => Conflict::AddedByThem,
-                C::DeletedByUs => Conflict::DeletedByUs,
-                C::BothAdded => Conflict::BothAdded,
-                C::BothModified => Conflict::BothModified,
-            };
-            return Some(Entry::new(path, Kind::Conflict(c)));
-        }
+        use gix::status::plumbing::index_as_worktree::Conflict as C;
+        let c = match summary {
+            C::BothDeleted => Conflict::BothDeleted,
+            C::AddedByUs => Conflict::AddedByUs,
+            C::DeletedByThem => Conflict::DeletedByThem,
+            C::AddedByThem => Conflict::AddedByThem,
+            C::DeletedByUs => Conflict::DeletedByUs,
+            C::BothAdded => Conflict::BothAdded,
+            C::BothModified => Conflict::BothModified,
+        };
+        return Some(Entry::new(path, Kind::Conflict(c)));
     }
     let kind = match item.summary()? {
         Summary::Removed => Kind::Deleted,
@@ -116,10 +112,11 @@ fn worktree_entry(item: &WtItem) -> Option<Entry> {
     };
     let mut entry = Entry::new(path, kind);
     // Collapsed untracked directories are reported with a trailing slash.
-    if let WtItem::DirectoryContents { entry: dir, .. } = item {
-        if dir.disk_kind == Some(gix::dir::entry::Kind::Directory) && !entry.path.ends_with(b"/") {
-            entry.path.push(b'/');
-        }
+    if let WtItem::DirectoryContents { entry: dir, .. } = item
+        && dir.disk_kind == Some(gix::dir::entry::Kind::Directory)
+        && !entry.path.ends_with(b"/")
+    {
+        entry.path.push(b'/');
     }
     Some(entry)
 }

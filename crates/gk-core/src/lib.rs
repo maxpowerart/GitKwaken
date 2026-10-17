@@ -1,6 +1,7 @@
 //! Repository model and orchestration for GitKwaken: refs, history, diffs,
 //! git operations and the background session the UI talks to.
 
+pub mod advanced;
 pub mod content;
 pub mod history;
 pub mod ops;

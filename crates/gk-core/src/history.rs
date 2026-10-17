@@ -100,7 +100,10 @@ pub fn resolve_tips(repo: &Repo, scope: &Scope, all_tips: &[String]) -> Vec<Obje
     match scope {
         Scope::All => {
             for t in all_tips {
-                if let Ok(id) = ObjectId::from_hex(t.as_bytes()) {
+                // Tags may point at trees or blobs, which cannot be walked.
+                if let Ok(id) = ObjectId::from_hex(t.as_bytes())
+                    && g.find_header(id).is_ok_and(|h| h.kind() == gix::object::Kind::Commit)
+                {
                     out.push(id);
                 }
             }
@@ -112,12 +115,11 @@ pub fn resolve_tips(repo: &Repo, scope: &Scope, all_tips: &[String]) -> Vec<Obje
         }
         Scope::Revs(revs) => {
             for r in revs {
-                if let Ok(id) = g.rev_parse_single(r.as_str()) {
-                    if let Ok(obj) = id.object() {
-                        if let Ok(c) = obj.peel_to_commit() {
-                            out.push(c.id);
-                        }
-                    }
+                if let Ok(id) = g.rev_parse_single(r.as_str())
+                    && let Ok(obj) = id.object()
+                    && let Ok(c) = obj.peel_to_commit()
+                {
+                    out.push(c.id);
                 }
             }
         }

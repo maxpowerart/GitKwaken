@@ -191,7 +191,7 @@ pub fn diff(old: &[u8], new: &[u8], opts: Options) -> FileDiff {
     }
 
     let ranges: Vec<Range<usize>> = if opts.context == u32::MAX {
-        if seq.is_empty() { Vec::new() } else { vec![0..seq.len()] }
+        if seq.is_empty() { Vec::new() } else { std::iter::once(0..seq.len()).collect() }
     } else {
         let ctx = opts.context as usize;
         let mut ranges: Vec<Range<usize>> = Vec::new();

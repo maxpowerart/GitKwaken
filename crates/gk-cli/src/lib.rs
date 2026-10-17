@@ -111,6 +111,13 @@ impl Git {
         g
     }
 
+    /// Uses `exe` instead of the auto-detected git executable.
+    pub fn with_exe(&self, exe: impl Into<PathBuf>) -> Self {
+        let mut g = self.clone();
+        g.exe = exe.into();
+        g
+    }
+
     /// Adds an environment variable to every command spawned by this handle.
     pub fn env(&self, key: impl Into<OsString>, value: impl Into<OsString>) -> Self {
         let mut g = self.clone();

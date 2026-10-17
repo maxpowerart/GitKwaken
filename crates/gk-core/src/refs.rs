@@ -192,10 +192,11 @@ pub fn load(repo: &Repo) -> Result<Refs> {
             if !symref.is_empty() {
                 continue; // origin/HEAD
             }
-            if let Some((remote, b)) = r.split_once('/') {
+            // Split into remote and branch once the remote names are known.
+            if r.contains('/') {
                 refs.remote_branches.push(RemoteBranch {
-                    remote: remote.to_string(),
-                    name: b.to_string(),
+                    remote: String::new(),
+                    name: r.to_string(),
                     target: oid.to_string(),
                 });
             }
@@ -244,8 +245,12 @@ pub fn load(repo: &Repo) -> Result<Refs> {
     let remotes = git.run_raw(&["remote", "-v"], None)?;
     let mut by_name: BTreeMap<String, Remote> = BTreeMap::new();
     for line in remotes.stdout_str().lines() {
-        let mut it = line.split_whitespace();
-        let (Some(name), Some(url), kind) = (it.next(), it.next(), it.next()) else { continue };
+        // "<name>\t<url> (fetch)"; URLs (local paths) may contain spaces.
+        let Some((name, rest)) = line.split_once('\t') else { continue };
+        let (url, kind) = match rest.rsplit_once(' ') {
+            Some((u, k)) if k == "(fetch)" || k == "(push)" => (u, Some(k)),
+            _ => (rest, None),
+        };
         let e = by_name.entry(name.to_string()).or_insert_with(|| Remote {
             name: name.to_string(),
             fetch_url: String::new(),
@@ -258,6 +263,22 @@ pub fn load(repo: &Repo) -> Result<Refs> {
         }
     }
     refs.remotes = by_name.into_values().collect();
+    // Remote names may contain '/': prefer the longest configured remote.
+    for b in &mut refs.remote_branches {
+        let full = std::mem::take(&mut b.name);
+        let known = refs
+            .remotes
+            .iter()
+            .map(|r| r.name.as_str())
+            .filter(|n| full.len() > n.len() + 1 && full.starts_with(n) && full.as_bytes()[n.len()] == b'/')
+            .max_by_key(|n| n.len());
+        let (remote, name) = match known {
+            Some(n) => (n, &full[n.len() + 1..]),
+            None => full.split_once('/').unwrap_or(("", full.as_str())),
+        };
+        b.remote = remote.to_string();
+        b.name = name.to_string();
+    }
 
     // Labels for the history view.
     let mut labels: BTreeMap<String, Vec<Label>> = BTreeMap::new();
@@ -283,7 +304,11 @@ pub fn load(repo: &Repo) -> Result<Refs> {
 pub fn repo_state(repo: &Repo) -> RepoState {
     let gd = repo.git_dir();
     if gd.join("rebase-merge").is_dir() {
-        RepoState::Rebasing { interactive: gd.join("rebase-merge/interactive").exists() }
+        // The merge backend writes `interactive` for plain rebases too; only
+        // those drop redundant commits by default.
+        let interactive =
+            gd.join("rebase-merge/interactive").exists() && !gd.join("rebase-merge/drop_redundant_commits").exists();
+        RepoState::Rebasing { interactive }
     } else if gd.join("rebase-apply").is_dir() {
         if gd.join("rebase-apply/applying").exists() {
             RepoState::ApplyingMailbox

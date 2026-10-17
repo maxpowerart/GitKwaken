@@ -253,10 +253,10 @@ fn debounce_loop(
 fn collapse(paths: BTreeSet<BString>) -> Vec<BString> {
     let mut out: Vec<BString> = Vec::with_capacity(paths.len());
     for p in paths {
-        if let Some(prev) = out.last() {
-            if crate::path_within(p.as_ref(), prev.as_ref()) {
-                continue;
-            }
+        if let Some(prev) = out.last()
+            && crate::path_within(p.as_ref(), prev.as_ref())
+        {
+            continue;
         }
         out.push(p);
     }

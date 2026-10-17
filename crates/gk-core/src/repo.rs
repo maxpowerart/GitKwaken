@@ -16,8 +16,14 @@ pub struct Repo {
 }
 
 impl Repo {
-    /// Opens the repository containing `path`.
+    /// Opens the repository containing `path`. The git executable is found via
+    /// `GITKWAKEN_GIT`, then PATH (see [`gk_cli::find_git`]).
     pub fn open(path: &Path, log: CommandLog) -> Result<Self> {
+        Self::open_with_git(path, log, None)
+    }
+
+    /// Like [`open`](Self::open), with an explicit git executable.
+    pub fn open_with_git(path: &Path, log: CommandLog, git_exe: Option<PathBuf>) -> Result<Self> {
         let ts = gix::ThreadSafeRepository::discover(path)
             .map_err(gix_err)
             .with_context(|| format!("not a git repository: {}", path.display()))?;
@@ -27,8 +33,19 @@ impl Repo {
             .map(Path::to_path_buf)
             .ok_or_else(|| anyhow!("bare repositories are not supported"))?;
         let git_dir = local.git_dir().to_path_buf();
-        let git = Git::new(&workdir, log);
+        let mut git = Git::new(&workdir, log);
+        if let Some(exe) = git_exe {
+            git = git.with_exe(exe);
+        }
         Ok(Self { ts, workdir, git_dir, git })
+    }
+
+    /// Adds environment variables (e.g. `GIT_ASKPASS`) to every git call.
+    pub fn with_env(mut self, vars: impl IntoIterator<Item = (String, String)>) -> Repo {
+        for (k, v) in vars {
+            self.git = self.git.env(k, v);
+        }
+        self
     }
 
     /// A gitoxide handle for the current thread.

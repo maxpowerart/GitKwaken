@@ -56,7 +56,7 @@ pub fn parse_porcelain_v2(data: &[u8]) -> Result<Status> {
                 if fields.len() < 10 {
                     bail!("malformed rename record: {}", rec.as_bstr());
                 }
-                let orig = records.next().map(|o| BString::from(o));
+                let orig = records.next().map(BString::from);
                 push_xy(&mut status, fields[1], fields[9], orig, fields[2]);
             }
             b'u' => {

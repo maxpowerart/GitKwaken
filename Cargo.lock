@@ -2388,6 +2388,7 @@ dependencies = [
  "anyhow",
  "bstr",
  "gk-cli",
+ "gk-core",
  "gk-status",
  "rayon",
 ]

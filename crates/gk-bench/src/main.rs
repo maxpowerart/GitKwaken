@@ -80,10 +80,10 @@ fn bench_history(dir: &Path) -> Result<()> {
         history::build(&repo, &tips, &AtomicBool::new(false))
     })?;
     println!(
-        "commits {}  max graph width {} lanes  edges {}",
+        "commits {}  max graph width {} lanes  layout memory {} KB",
         h.len(),
         h.layout.max_width(),
-        h.layout.edges.len()
+        h.layout.memory() / 1024
     );
     let g = repo.gix();
     let first: Vec<_> = h.ids.iter().take(60).copied().collect();
