@@ -7,6 +7,8 @@
     GitKwaken-<ver>-x64\              staging folder (gitkwaken.exe, LICENSE-*, README.md)
     GitKwaken-<ver>-x64.zip           portable build; also what the self-updater downloads
     GitKwaken-<ver>-x64-setup.exe     installer (only when ISCC.exe is found)
+    GitKwaken-<ver>-x64.msi           per-user MSI (only when the WiX CLI `wix` is found;
+                                      dotnet tool install --global wix --version 6.0.2)
     update.json                       self-update channel manifest (see crates/gk-update)
     SHA256SUMS.txt
 
@@ -29,6 +31,8 @@
   Git for Windows version for -BundleGit, e.g. 2.47.1. Default: latest release.
 .PARAMETER DistDir
   Output folder. Default: <repo>\dist.
+.PARAMETER SkipMsi
+  Do not build the MSI even when WiX is installed.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File packaging\build-release.ps1
@@ -46,11 +50,36 @@ param(
     [switch]$SkipBuild,
     [switch]$BundleGit,
     [string]$MinGitVersion,
-    [string]$DistDir
+    [string]$DistDir,
+    [switch]$SkipMsi
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+# Plain text -> minimal RTF (the WiX license dialog only accepts RTF).
+function ConvertTo-Rtf([string]$Text) {
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append('{\rtf1\ansi\ansicpg1252\deff0{\fonttbl{\f0\fswiss Segoe UI;}}\viewkind4\uc1\pard\f0\fs18 ')
+    foreach ($ch in ($Text -replace "`r`n", "`n").ToCharArray()) {
+        $c = [int]$ch
+        if ($ch -eq '\' -or $ch -eq '{' -or $ch -eq '}') { [void]$sb.Append('\').Append($ch) }
+        elseif ($ch -eq "`n") { [void]$sb.Append("\par`r`n") }
+        elseif ($c -gt 127) { [void]$sb.Append('\u').Append([int16]$c).Append('?') }
+        else { [void]$sb.Append($ch) }
+    }
+    [void]$sb.Append('}')
+    $sb.ToString()
+}
+
+# WiX CLI (dotnet global tool `wix`), or $null.
+function Find-Wix {
+    $cmd = Get-Command 'wix' -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    $p = Join-Path $env:USERPROFILE '.dotnet\tools\wix.exe'
+    if (Test-Path $p) { return $p }
+    $null
+}
 
 # Downloads MinGit into $Dest (git\cmd\git.exe, ...) after checking its SHA-256
 # against the "MinGit-<v>-64-bit.zip | <sha256>" row of the release notes.
@@ -129,6 +158,8 @@ try {
         if (-not $Notes) { $Notes = "GitKwaken $Version" }
     }
     $Name = "GitKwaken-$Version-x64"
+    # Installer version resources and the MSI ProductVersion are numeric: 1.0.1-beta.1 -> 1.0.1.
+    $NumericVersion = ($Version -split '[-+]')[0]
     Write-Host "==> GitKwaken $Version (target dir: $TargetDir)"
 
     # ---------------------------------------------------------------- build
@@ -205,7 +236,7 @@ try {
     if ($Iscc) {
         Write-Host "==> Inno Setup: $Iscc"
         $urlDef = if ($RepoUrl) { "/DAppUrl=$RepoUrl" } else { "/DAppUrl=https://github.com" }
-        & $Iscc /Qp "/DAppVersion=$Version" "/DSourceDir=$Stage" "/DOutputDir=$Dist" $urlDef (Join-Path $PSScriptRoot 'gitkwaken.iss')
+        & $Iscc /Qp "/DAppVersion=$Version" "/DNumericVersion=$NumericVersion" "/DSourceDir=$Stage" "/DOutputDir=$Dist" $urlDef (Join-Path $PSScriptRoot 'gitkwaken.iss')
         if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
         $Setup = Join-Path $Dist "$Name-setup.exe"
         Write-Host ("==> {0} ({1:N2} MB)" -f $Setup, ((Get-Item $Setup).Length / 1MB))
@@ -213,8 +244,66 @@ try {
         Write-Warning 'Inno Setup (ISCC.exe) not found - installer skipped. Install with: winget install JRSoftware.InnoSetup'
     }
 
+    # ---------------------------------------------------------------- msi
+    # Per-user WiX MSI (packaging/wix/gitkwaken.wxs). WiX CLI: dotnet tool install --global wix
+    # --version 6.0.2; the UI/Util extensions of the same version are added to the global
+    # extension cache on first use.
+    $Msi = $null
+    $Wix = if ($SkipMsi) { $null } else { Find-Wix }
+    if ($Wix) {
+        $wixVer = ((& $Wix --version) -split '\+')[0].Trim()
+        if ($LASTEXITCODE -ne 0 -or -not $wixVer) { throw "cannot run $Wix --version" }
+        Write-Host "==> WiX $wixVer`: $Wix"
+        $exts = @(& $Wix extension list -g)
+        foreach ($e in 'WixToolset.UI.wixext', 'WixToolset.Util.wixext') {
+            if (-not ($exts | Where-Object { $_ -match ('^' + [regex]::Escape("$e $wixVer") + '\b') })) {
+                & $Wix extension add -g "$e/$wixVer"
+                if ($LASTEXITCODE -ne 0) { throw "wix extension add $e/$wixVer failed" }
+            }
+        }
+        # MSI ProductVersion is numeric ($NumericVersion); MajorUpgrade allows same-version
+        # upgrades, so successive pre-releases of one version still replace each other.
+        $WixObj = Join-Path $Dist 'wix'
+        New-Item -ItemType Directory -Force $WixObj | Out-Null
+        $LicenseRtf = Join-Path $WixObj 'License.rtf'
+        $licText = "GitKwaken is dual-licensed under the MIT license or the Apache License, Version 2.0, " +
+            "at your option. Both texts are installed next to gitkwaken.exe (LICENSE-MIT, LICENSE-APACHE).`n`n" +
+            [System.IO.File]::ReadAllText((Join-Path $Root 'LICENSE-MIT')) + "`n`n" +
+            [System.IO.File]::ReadAllText((Join-Path $Root 'LICENSE-APACHE'))
+        [System.IO.File]::WriteAllText($LicenseRtf, (ConvertTo-Rtf $licText), [System.Text.Encoding]::ASCII)
+        $Msi = Join-Path $Dist "$Name.msi"
+        if (Test-Path $Msi) { Remove-Item -Force $Msi }
+        $wixArgs = @(
+            'build', (Join-Path $PSScriptRoot 'wix\gitkwaken.wxs'), '-arch', 'x64', '-nologo',
+            '-ext', "WixToolset.UI.wixext/$wixVer", '-ext', "WixToolset.Util.wixext/$wixVer",
+            '-d', "Version=$NumericVersion", '-d', "SourceDir=$Stage",
+            '-d', "IconFile=$(Join-Path $Root 'assets\icon.ico')", '-d', "LicenseRtf=$LicenseRtf",
+            '-d', "AppUrl=$(if ($RepoUrl) { $RepoUrl } else { 'https://github.com' })",
+            '-intermediatefolder', (Join-Path $WixObj 'obj'), '-pdbtype', 'none', '-o', $Msi
+        )
+        # ICE validation. Expected warnings: ICE61 (same-version upgrades allowed) and ICE91
+        # (per-user files); errors fail the build.
+        $validateArgs = @('msi', 'validate', '-nologo')
+        if (Test-Path (Join-Path $Stage 'git\cmd\git.exe')) {
+            $wixArgs += @('-d', 'BundleGit=1')
+            # The harvested MinGit tree (<Files>) uses file KeyPaths (ICE38) and has no
+            # RemoveFile row per sub-folder (ICE64); both only matter for roaming profiles, and
+            # uninstall removes the whole tree (verified with msiexec /x).
+            $validateArgs += @('-sice', 'ICE38', '-sice', 'ICE64')
+        }
+        & $Wix @wixArgs
+        if ($LASTEXITCODE -ne 0) { throw "wix build failed ($LASTEXITCODE)" }
+        & $Wix @validateArgs $Msi
+        if ($LASTEXITCODE -ne 0) { throw "wix msi validate failed ($LASTEXITCODE)" }
+        Write-Host ("==> {0} ({1:N2} MB, ProductVersion {2})" -f $Msi, ((Get-Item $Msi).Length / 1MB), $NumericVersion)
+    } elseif ($SkipMsi) {
+        Write-Host '==> MSI skipped (-SkipMsi)'
+    } else {
+        Write-Warning 'WiX CLI (wix) not found - MSI skipped. Install with: dotnet tool install --global wix --version 6.0.2'
+    }
+
     # ---------------------------------------------------------------- checksums
-    $sums = foreach ($f in @($Zip, $Setup) | Where-Object { $_ }) {
+    $sums = foreach ($f in @($Zip, $Setup, $Msi) | Where-Object { $_ }) {
         '{0}  {1}' -f (Get-FileHash -Algorithm SHA256 $f).Hash.ToLowerInvariant(), (Split-Path -Leaf $f)
     }
     [System.IO.File]::WriteAllText((Join-Path $Dist 'SHA256SUMS.txt'), (($sums -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding $false))

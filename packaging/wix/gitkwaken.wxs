@@ -1,0 +1,185 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  WiX v6 (wix.exe, `dotnet tool install -g wix`) source for the GitKwaken MSI.
+
+  Built by packaging/build-release.ps1:
+    wix build packaging\wix\gitkwaken.wxs -arch x64
+      -ext WixToolset.UI.wixext/<ver> -ext WixToolset.Util.wixext/<ver>
+      -d Version=1.0.0 -d SourceDir=<dist\GitKwaken-1.0.0-x64> -d IconFile=<assets\icon.ico>
+      -d LicenseRtf=<License.rtf> -d AppUrl=https://github.com/<owner>/<repo> [-d BundleGit=1]
+      -o dist\GitKwaken-1.0.0-x64.msi
+
+  Mirrors packaging/gitkwaken.iss:
+    * per-user, no UAC: %LOCALAPPDATA%\Programs\GitKwaken (the Inno default). Per-user is
+      deliberate: the built-in self-updater (crates/gk-update) swaps gitkwaken.exe in place, which
+      needs a user-writable install dir. There is no per-machine MSI.
+    * Start menu shortcut, optional desktop shortcut (off by default), "Open in GitKwaken"
+      folder context menu (on by default), App Paths entry.
+    * MajorUpgrade keyed on the UpgradeCode below; any newer (or same-version, e.g. two
+      pre-releases of 1.0.1) MSI replaces the old one, so there is a single ARP entry.
+  Do not install the MSI and the Inno installer side by side: both use the same folder.
+
+  Per-user components keep their KeyPath in HKCU\Software\GitKwaken\Installer (ICE38) and the
+  folders under %LOCALAPPDATA% have RemoveFolder entries (ICE64).
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+
+  <?ifndef Version?>
+    <?define Version = "0.0.0"?>
+  <?endif?>
+  <?ifndef AppUrl?>
+    <?define AppUrl = "https://github.com"?>
+  <?endif?>
+
+  <!-- NEVER change UpgradeCode: it is what makes a new MSI upgrade an existing install. -->
+  <Package Name="GitKwaken"
+           Manufacturer="GitKwaken contributors"
+           Version="$(var.Version)"
+           UpgradeCode="D71DD7FA-045F-4B1E-B410-41854FA9111D"
+           Scope="perUser"
+           Language="1033"
+           Compressed="yes">
+    <SummaryInformation Description="GitKwaken $(var.Version) - fast git client" />
+
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <!-- Add/Remove Programs -->
+    <Icon Id="gitkwaken.ico" SourceFile="$(var.IconFile)" />
+    <Property Id="ARPPRODUCTICON" Value="gitkwaken.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="$(var.AppUrl)" />
+    <Property Id="ARPHELPLINK" Value="$(var.AppUrl)/issues" />
+    <Property Id="ARPURLUPDATEINFO" Value="$(var.AppUrl)/releases" />
+    <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" />
+
+    <!-- Reuse the folder of a previous install (like Inno's UsePreviousAppDir). -->
+    <Property Id="INSTALLFOLDER">
+      <RegistrySearch Id="PreviousInstallDir" Root="HKCU" Key="Software\GitKwaken\Installer"
+                      Name="InstallDir" Type="raw" />
+    </Property>
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsDir" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="GitKwaken">
+          <?ifdef BundleGit?>
+          <Directory Id="GitDir" Name="git" />
+          <?endif?>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+    <StandardDirectory Id="DesktopFolder" />
+
+    <Feature Id="Main" Title="GitKwaken" Description="The GitKwaken application."
+             Level="1" AllowAbsent="no" ConfigurableDirectory="INSTALLFOLDER">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="StartMenuShortcut" />
+      <ComponentRef Id="InstallerKeyCleanup" />
+      <Feature Id="ContextMenu" Title="Folder context menu"
+               Description="Add &quot;Open in GitKwaken&quot; to the folder context menu in Explorer."
+               Level="1">
+        <ComponentRef Id="ContextMenuKeys" />
+      </Feature>
+      <!-- Level above INSTALLLEVEL (1): off by default, like the Inno "desktopicon" task. -->
+      <Feature Id="DesktopShortcut" Title="Desktop shortcut"
+               Description="Create a GitKwaken shortcut on the desktop." Level="1000">
+        <ComponentRef Id="DesktopShortcutComponent" />
+      </Feature>
+    </Feature>
+
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <!-- Files + registry KeyPath cannot use generated GUIDs: fixed ones, never change them. -->
+      <Component Id="AppExe" Guid="266EE99A-164B-4E06-901C-0A225546C8F5">
+        <File Id="gitkwaken.exe" Source="$(var.SourceDir)\gitkwaken.exe" />
+        <RegistryValue Root="HKCU" Key="Software\GitKwaken\Installer" Name="InstallDir"
+                       Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+        <!-- Leftovers of the self-updater (gk-update): gitkwaken.exe.old[.<pid>], .new -->
+        <RemoveFile Id="RemoveUpdaterOld" Name="gitkwaken.exe.old*" On="both" />
+        <RemoveFile Id="RemoveUpdaterNew" Name="gitkwaken.exe.new" On="both" />
+        <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
+        <RemoveFolder Id="RemoveProgramsDir" Directory="ProgramsDir" On="uninstall" />
+      </Component>
+      <Component Id="Docs" Guid="3E23831A-CCD0-4A70-B64F-CECDAB3AB223">
+        <File Id="LICENSE_MIT" Source="$(var.SourceDir)\LICENSE-MIT" />
+        <File Id="LICENSE_APACHE" Source="$(var.SourceDir)\LICENSE-APACHE" />
+        <File Id="README.md" Source="$(var.SourceDir)\README.md" />
+        <RegistryValue Root="HKCU" Key="Software\GitKwaken\Installer" Name="Docs"
+                       Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <!-- "App Paths" so `Win+R gitkwaken` works. -->
+      <Component Id="AppPaths">
+        <RegistryKey Root="HKCU" ForceDeleteOnUninstall="yes"
+                     Key="Software\Microsoft\Windows\CurrentVersion\App Paths\gitkwaken.exe">
+          <RegistryValue Type="string" Value="[INSTALLFOLDER]gitkwaken.exe" KeyPath="yes" />
+        </RegistryKey>
+      </Component>
+      <?ifdef BundleGit?>
+      <!-- Bundled MinGit (build-release.ps1 -BundleGit); gk-cli prefers <exe dir>\git\cmd\git.exe. -->
+      <Component Id="GitDirCleanup" Directory="GitDir">
+        <RegistryValue Root="HKCU" Key="Software\GitKwaken\Installer" Name="BundledGit"
+                       Type="integer" Value="1" KeyPath="yes" />
+        <RemoveFolder Id="RemoveGitDir" On="uninstall" />
+      </Component>
+      <Files Directory="GitDir" Include="$(var.SourceDir)\git\**" />
+      <?endif?>
+    </ComponentGroup>
+
+    <Component Id="StartMenuShortcut" Directory="ProgramMenuFolder">
+      <Shortcut Id="StartMenuShortcut" Name="GitKwaken" Description="Fast git client"
+                Target="[INSTALLFOLDER]gitkwaken.exe" WorkingDirectory="INSTALLFOLDER" />
+      <RegistryValue Root="HKCU" Key="Software\GitKwaken\Installer" Name="StartMenuShortcut"
+                     Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <Component Id="DesktopShortcutComponent" Directory="DesktopFolder">
+      <Shortcut Id="DesktopShortcut" Name="GitKwaken" Description="Fast git client"
+                Target="[INSTALLFOLDER]gitkwaken.exe" WorkingDirectory="INSTALLFOLDER" />
+      <RegistryValue Root="HKCU" Key="Software\GitKwaken\Installer" Name="DesktopShortcut"
+                     Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <!-- Same keys and commands as packaging/gitkwaken.iss [Registry] (HKA = HKCU per-user). -->
+    <Component Id="ContextMenuKeys" Directory="INSTALLFOLDER">
+      <!-- Right-click on a folder. -->
+      <RegistryKey Root="HKCU" Key="Software\Classes\Directory\shell\GitKwaken"
+                   ForceDeleteOnUninstall="yes">
+        <RegistryValue Type="string" Value="Open in GitKwaken" KeyPath="yes" />
+        <RegistryValue Name="Icon" Type="string" Value="&quot;[INSTALLFOLDER]gitkwaken.exe&quot;,0" />
+        <RegistryValue Key="command" Type="string"
+                       Value="&quot;[INSTALLFOLDER]gitkwaken.exe&quot; &quot;%V&quot;" />
+      </RegistryKey>
+      <!-- Right-click on the background of an open folder. -->
+      <RegistryKey Root="HKCU" Key="Software\Classes\Directory\Background\shell\GitKwaken"
+                   ForceDeleteOnUninstall="yes">
+        <RegistryValue Type="string" Value="Open in GitKwaken" />
+        <RegistryValue Name="Icon" Type="string" Value="&quot;[INSTALLFOLDER]gitkwaken.exe&quot;,0" />
+        <RegistryValue Key="command" Type="string"
+                       Value="&quot;[INSTALLFOLDER]gitkwaken.exe&quot; &quot;%V&quot;" />
+      </RegistryKey>
+    </Component>
+
+    <!-- On uninstall remove HKCU\Software\GitKwaken (only the KeyPath values above live there;
+         the app keeps its settings in files, see gk-settings). -->
+    <Component Id="InstallerKeyCleanup" Directory="INSTALLFOLDER">
+      <RegistryKey Root="HKCU" Key="Software\GitKwaken" ForceDeleteOnUninstall="yes">
+        <RegistryValue Key="Installer" Name="Version" Type="string" Value="$(var.Version)"
+                       KeyPath="yes" />
+      </RegistryKey>
+    </Component>
+
+    <!-- UI: license (MIT OR Apache-2.0), feature selection, install, finish (+ launch). -->
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch GitKwaken" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <Property Id="WixShellExecTarget" Value="[#gitkwaken.exe]" />
+    <CustomAction Id="LaunchApplication" BinaryRef="Wix4UtilCA_X64" DllEntry="WixShellExec"
+                  Impersonate="yes" />
+    <UI>
+      <ui:WixUI Id="WixUI_FeatureTree" />
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApplication"
+               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed" />
+    </UI>
+  </Package>
+</Wix>

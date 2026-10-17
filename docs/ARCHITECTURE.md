@@ -39,7 +39,18 @@ gk-bench ──► gk-core / gk-status / gk-graph   (measurements on real repos)
   with `core.fscache`, and it talks to the fsmonitor daemon); the gitoxide engine is an
   option. The watcher fast path always works in process on the gix index.
 - **UI toolkit.** egui on a custom Direct3D 11 host (`gk-dx11`) instead of GPUI.
-- **Packaging.** Inno Setup installer, zip and winget manifests instead of cargo-dist / MSI.
+- **Packaging.** The release (`packaging/build-release.ps1`, `.github/workflows/release.yml`)
+  ships a portable zip (also the self-update payload, with `update.json`), an Inno Setup
+  installer and a WiX v6 MSI (`packaging/wix/gitkwaken.wxs`), plus winget manifests. Both
+  installers are per-user (`%LOCALAPPDATA%\Programs\GitKwaken`, HKCU context menu and App
+  Paths) because the self-updater swaps `gitkwaken.exe` in place and needs a user-writable
+  folder; the MSI has no per-machine variant, so no "disable self-update" marker is needed.
+  cargo-dist 0.33.0 is configured (`dist-workspace.toml`) and builds the zip + sha256, but it
+  is not the release pipeline and its own `msi` installer is not enabled: dist generates MSIs
+  only through cargo-wix with a WiX v3 template (per-machine Program Files + PATH; "WiX v4
+  isn't yet supported"), which would be a second, conflicting installer definition. dist's
+  GitHub CI is not generated either: it always writes `.github/workflows/release.yml` (tag
+  push), which would replace or race ours.
 - **Highlighting.** Diffs up to 20k lines are highlighted whole on a background thread
   rather than only the visible lines; larger diffs are not highlighted.
 

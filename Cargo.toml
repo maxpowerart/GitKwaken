@@ -22,5 +22,9 @@ debug = "line-tables-only"
 lto = "thin"
 codegen-units = 16
 
+# Used by cargo-dist (dist-workspace.toml): same settings as `release`.
+[profile.dist]
+inherits = "release"
+
 [profile.dev.package."*"]
 opt-level = 2
