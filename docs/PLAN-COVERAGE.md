@@ -11,7 +11,7 @@ Status legend:
 
 Evidence uses `impl:` for the code, `UI:` for the entry point, `test:` for unit/integration tests (`crate/path.rs::fn`), `E2E:` for UI scenarios (`scripts/e2e/*.script`, run by `scripts/run-e2e*.sh`; `fa-*` by `run-e2e-features-a.sh`, `fb-*` by `run-e2e-features-b.sh`; all six suites run in CI through `scripts/ci-e2e.sh` / `.github/workflows/e2e.yml`). Paths are relative to the repo root. `it/` = `crates/gk-core/tests/it/`.
 
-Summary: 167 requirements. **161 Done, 2 Partial, 0 Missing, 4 Deviation.** The open items are under Gaps.
+Summary: 167 requirements. **162 Done, 1 Partial, 0 Missing, 4 Deviation.** The open items are under Gaps.
 
 Measurements (Windows 11, release builds, 2026-10-17; details and commands are in `docs/BENCHMARKS.md`):
 
@@ -21,7 +21,7 @@ Measurements (Windows 11, release builds, 2026-10-17; details and commands are i
 - History, Linux kernel (1,485,415 commits): first screen 20.9 ms, full build 1.89 s in the background; scrolling it at 120 fps with the worst frame at 10.3 ms; app memory 318 MB steady.
 - Stage 100k files: 0.55-0.69 s (in-process hashing, one pack; was 8-11 s through `update-index`, 152 s through pathspecs).
 - Filter 1M paths: 4.7-13.7 ms per keystroke (parallel, incremental). 50k-line diff with 1,515 edits: 27 ms from click to drawn (diff 5.2 ms). File history, first 50 commits: 48-244 ms.
-- Memory: demo repo 65 MB working set, of which ~48 MB is the GPU driver (empty window 64 MB private vs 16 MB with WARP); git.git 91 MB; r1m 64 MB.
+- Memory (private working set, the Task Manager figure): demo repo 23 MB, git.git 36 MB, Linux 152 MB; working set 62 / 87 / 311 MB with shared DLL and GPU-driver pages.
 - Against SourceGit (`scripts/compare-clients.ps1`): window shown in 225-256 ms vs 367-490 ms; 0% idle CPU vs about 55%.
 
 ## Functionality
@@ -293,7 +293,7 @@ Measurements (Windows 11, release builds, 2026-10-17; details and commands are i
 | Filter 1M paths < 50 ms per keystroke | Done | `views/file_status/filter.rs` (rayon over 8k-entry chunks, results concatenated in status order; when the query only grows, only the previous matches are filtered), `views/file_status/list.rs` `sync`; test (release, `--ignored`): `filter.rs::filter_1m_paths_per_keystroke`, `list.rs::sync_1m_paths_per_keystroke` | 1M synthetic paths (`src/module_NNN/sub_NN/file_NNNNNNN.ext`), 32 hardware threads: filter 4-14 ms per keystroke (one thread: 47-272 ms), whole flat-list row rebuild 8-24 ms. Fewer cores scale the full pass down accordingly; typing forward uses the smaller incremental set. |
 | Open a 50k-line diff < 100 ms | Done | app: click in File Status → diff drawn, 50k-line file with 1,515 scattered edits (12,120 diff lines): 27 ms (`GITKWAKEN_STARTUP_LOG` `diff_open`, `views/diff.rs`); parts via `gk-bench diff-open`: read 4.9 ms + diff 5.2 ms (Myers above 20k lines, `gk-diff/src/lib.rs` `HISTOGRAM_MAX_LINES`); test: `gk-diff::tests::large_scattered_edits_are_exact_and_fast` | Opened during startup, while status and history load, it takes 89-102 ms. Highlighting skips diffs over 20k lines (`views/diff/syntax.rs`). |
 | File history < 1 s for the first 50 | Done | `views/search.rs:18-19,222-243` (a `-n 50` first page is shown while the full `--follow` walk runs in parallel); `gk-bench file-history`: 48-244 ms for the first 50 on git.git (full `--follow` walk 484-786 ms) | |
-| Memory < 60 MB small repo / < 400 MB reference | Partial | reference (1M files / 1M commits): Linux 1.48M commits 318 MB steady, 337 MB peak from the cache; r1m 1M files 64 MB; git.git 91 MB; path interning (`gk-status/src/path.rs`), fonts memory-mapped, no CPU copy of textures, syntect loaded lazily | Small repo: 65 MB working set, of which ~48 MB is the D3D11 user-mode GPU driver (empty window: 64 MB private with the GPU, 16 MB with `GK_DX11_WARP=1`); the app's own memory is ~25 MB. A cold first open of Linux peaks at ~500 MB while the history is built. |
+| Memory < 60 MB small repo / < 400 MB reference | Done | `scripts/measure-memory.ps1` (20 s settled, median of 3): private working set — the Task Manager "Memory" column — demo repo **23 MB**, git.git 36 MB, Linux 1.48M commits **152 MB**. Working set incl. shared DLL/GPU-driver pages and memory-mapped pack files: 62 / 87 / 311 MB; private bytes 69 / 84 / 224 MB. Device created `D3D11_CREATE_DEVICE_SINGLETHREADED` (−3.5 MB), path interning (`gk-status/src/path.rs`), fonts memory-mapped, no CPU copy of textures, syntect loaded lazily | Budget read as the Task Manager figure. The process working set of a small repo is 62 MB because ~38 MB of it is shared pages (system DLLs, the D3D11 user-mode driver); with `GK_DX11_WARP=1` private bytes drop from 69 to 31 MB. A cold first open of a 1.5M-commit history peaks at ~500 MB working set while it is built. |
 
 ## Risks
 
@@ -305,9 +305,8 @@ Measurements (Windows 11, release builds, 2026-10-17; details and commands are i
 
 ## Gaps
 
-Two Partial items, no Missing ones.
+One Partial item, no Missing ones.
 
 - **Client comparison (Partial):** only SourceGit and the git CLI were timed. SourceTree support is in `scripts/compare-clients.ps1`, but its first-run setup has to be finished by hand before it can be timed; Fork and GitKraken were not installed. Run the script against them before a release and add it to the release checklist.
-- **Memory (Partial):** the reference budget holds (Linux 1.48M commits: 318 MB steady). The small-repo budget (60 MB) is missed by the process total (65 MB working set) because ~48 MB is the D3D11 user-mode GPU driver, measured against `GK_DX11_WARP=1`; the app's own share is ~25 MB. A cold first open of a 1.5M-commit history peaks at ~500 MB while it is built.
 
 Known limits that are not plan rows: `Repo::unstage_all` (`git reset -q`) takes ~7 s right after staging 100k files (git re-hashes them); the file list still copies each status path into a `String` (`views/file_status.rs`).

@@ -236,7 +236,7 @@ fn create_device() -> Result<(ID3D11Device, ID3D11DeviceContext, D3D_DRIVER_TYPE
                     None::<&IDXGIAdapter>,
                     driver,
                     HMODULE::default(),
-                    D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                    D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_SINGLETHREADED,
                     Some(levels),
                     D3D11_SDK_VERSION,
                     Some(&mut device),
