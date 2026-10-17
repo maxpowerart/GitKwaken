@@ -3,7 +3,7 @@
 wait 2500
 key F ctrl shift
 wait 1500
-click 485 609
+click 560 634
 wait 5000
 move 700 300
 wait 300
