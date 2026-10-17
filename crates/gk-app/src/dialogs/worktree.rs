@@ -104,9 +104,9 @@ impl Discard {
         } else {
             "Discard changes".to_string()
         };
+        // Backs up first; nothing is unstaged or discarded if that fails.
         let job = move |repo: &gk_core::Repo| -> anyhow::Result<()> {
-            repo.unstage(&plan.unstage)?;
-            repo.discard(&plan.tracked, &plan.untracked)
+            repo.discard_changes(&plan.unstage, &plan.tracked, &plan.untracked)
         };
         if all {
             tab.session
@@ -155,7 +155,7 @@ impl TabDialog for Discard {
             560.0,
             "Discard",
             |ui, ctl| {
-                ui.label("The following changes will be permanently discarded:");
+                ui.label("The following changes will be discarded:");
                 egui::Frame::group(ui.style()).show(ui, |ui| {
                     egui::ScrollArea::vertical()
                         .max_height(260.0)
@@ -189,7 +189,10 @@ impl TabDialog for Discard {
                 if changed {
                     warning(ui, "The working copy changed: review the updated list.");
                 }
-                ui.colored_label(DANGER, "This cannot be undone.");
+                hint(
+                    ui,
+                    "A copy is saved first: \"Discarded changes…\" (command palette, Reflog view) restores it.",
+                );
                 ctl.danger = true;
                 if plan.tracked.is_empty() && plan.untracked.is_empty() {
                     hint(ui, "Nothing to discard.");

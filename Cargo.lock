@@ -2554,7 +2554,9 @@ version = "1.0.0"
 dependencies = [
  "anyhow",
  "bstr",
+ "crc32fast",
  "crossbeam-channel",
+ "flate2",
  "gix",
  "gk-cli",
  "gk-diff",

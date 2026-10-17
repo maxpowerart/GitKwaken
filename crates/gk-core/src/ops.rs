@@ -3,7 +3,7 @@
 
 use crate::content::{self, DiffTarget};
 use crate::{Repo, repo::gix_err};
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use gk_cli::{CancelToken, Line, nul_paths};
 use gk_diff::{Line as DLine, Options, SelectMode, apply_selection, diff};
 
@@ -20,12 +20,25 @@ impl Repo {
         let (dirs, files): (Vec<String>, Vec<String>) =
             paths.iter().cloned().partition(|p| p.ends_with('/'));
         if files.len() > BULK_PATHS {
-            // Linear in the number of paths; applies the same clean filters
-            // (autocrlf, LFS) as `git add`.
-            self.git().run_stdin(
-                &["update-index", "--add", "--remove", "-z", "--stdin"],
-                &nul_paths(&files),
-            )?;
+            // Read, hash and write blobs in parallel and update the index in
+            // one write; git only gets what that cannot do exactly like it.
+            // GITKWAKEN_GIT_STAGE=1 forces git (troubleshooting, benchmarks).
+            let rest = if std::env::var_os("GITKWAKEN_GIT_STAGE").is_some() {
+                files.clone()
+            } else {
+                self.stage_in_process(&files).unwrap_or_else(|e| {
+                    tracing::debug!("in-process staging failed, using git: {e:#}");
+                    files.clone()
+                })
+            };
+            if !rest.is_empty() {
+                // Linear in the number of paths; applies the same clean
+                // filters (autocrlf, LFS) as `git add`.
+                self.git().run_stdin(
+                    &["update-index", "--add", "--remove", "-z", "--stdin"],
+                    &nul_paths(&rest),
+                )?;
+            }
             if !dirs.is_empty() {
                 self.git().run_stdin(
                     &["add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"],
@@ -122,8 +135,31 @@ impl Repo {
         Ok(())
     }
 
-    /// Discards worktree changes of tracked files and deletes untracked ones.
+    /// Discards worktree changes of tracked files and deletes untracked ones,
+    /// after saving them (see [`Repo::backup_discard`]).
     pub fn discard(&self, tracked: &[String], untracked: &[String]) -> Result<()> {
+        self.discard_changes(&[], tracked, untracked)
+    }
+
+    /// Unstages `unstage`, then discards like [`discard`](Self::discard).
+    /// The worktree content and the staged entries are backed up first; if
+    /// that fails nothing is changed.
+    pub fn discard_changes(
+        &self,
+        unstage: &[String],
+        tracked: &[String],
+        untracked: &[String],
+    ) -> Result<()> {
+        if unstage.is_empty() && tracked.is_empty() && untracked.is_empty() {
+            return Ok(());
+        }
+        self.backup_discard(tracked, untracked, unstage)
+            .context("Could not save a backup of the changes, so nothing was discarded")?;
+        self.unstage(unstage)?;
+        self.discard_unsaved(tracked, untracked)
+    }
+
+    fn discard_unsaved(&self, tracked: &[String], untracked: &[String]) -> Result<()> {
         if !tracked.is_empty() {
             self.git().run_stdin(
                 &[
@@ -235,6 +271,8 @@ impl Repo {
             bail!("cannot discard lines of a binary file");
         }
         let result = apply_selection(&d, pick, SelectMode::Revert);
+        self.backup_discard(&[path.to_string()], &[], &[])
+            .context("Could not save a backup of the changes, so nothing was discarded")?;
         content::write_worktree(self, &g, path, &result)
     }
 

@@ -167,6 +167,11 @@ fn items(tab: Option<&RepoTab>, snap: Option<&Snapshot>, km: &keymap::Keymap) ->
         none(),
         Cmd::Dialog(|_| Dialog::undo()),
     );
+    add(
+        "Discarded changes… (restore)",
+        none(),
+        Cmd::Dialog(|_| Dialog::discarded()),
+    );
     // Actions on the selected commit(s), as in the commit context menu.
     add(
         "Checkout selected commit…",

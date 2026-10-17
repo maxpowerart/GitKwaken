@@ -18,6 +18,8 @@ crossbeam-channel = { workspace = true }
 rayon = { workspace = true }
 tracing = { workspace = true }
 lru = "0.18"
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+crc32fast = "1"
 redb = "4"
 gk-cli = { path = "../gk-cli" }
 gk-status = { path = "../gk-status" }
