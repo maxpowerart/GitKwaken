@@ -140,8 +140,9 @@ pub fn path_within(path: &BStr, dir: &BStr) -> bool {
 /// Engine selection; the CLI engine is the reference implementation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Engine {
-    #[default]
     Gix,
+    /// Default: on Windows git's fscache makes the CLI the fastest full scan.
+    #[default]
     Cli,
 }
 

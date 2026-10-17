@@ -1,0 +1,19 @@
+[package]
+name = "gk-askpass"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+getrandom = "0.3"
+
+# Askpass client used by the integration tests (GUI subsystem on Windows, like the app).
+[[bin]]
+name = "gk-askpass-test"
+path = "src/bin/gk-askpass-test.rs"
+test = false
+doc = false
+
+[dev-dependencies]
+tempfile = "3"
