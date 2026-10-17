@@ -49,7 +49,8 @@ try {
     $Version = $Version.TrimStart('v')
     $TargetDir = $meta.target_directory   # honours CARGO_TARGET_DIR
     if (-not $Repo) {
-        $origin = git remote get-url origin 2>$null
+        $origin = $null
+        if (@(git remote) -contains 'origin') { $origin = git remote get-url origin }
         if ($LASTEXITCODE -eq 0 -and $origin -match 'github.com[:/]([^/]+/[^/]+?)(.git)?$') { $Repo = $Matches[1] }
     }
     if ($Repo) {
