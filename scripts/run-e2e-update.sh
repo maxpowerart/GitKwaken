@@ -22,7 +22,10 @@ bash "$ROOT/scripts/make-demo-repo.sh" "$W/repo" >/dev/null
 cat > "$W/update.script" <<'EOF'
 wait 4000
 click 1336 14
-wait 5000
+wait 15000
+click 1094 14
+wait 3000
+# second attempt in case the download was slow (no-op once closed)
 click 1094 14
 wait 3000
 EOF
