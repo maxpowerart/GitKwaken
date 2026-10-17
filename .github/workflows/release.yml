@@ -63,6 +63,28 @@ jobs:
           "$env:USERPROFILE\.dotnet\tools" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
           & "$env:USERPROFILE\.dotnet\tools\wix.exe" --version
 
+      - name: Release notes from CHANGELOG.md
+        shell: pwsh
+        run: |
+          # The "## <version>" section, up to the next "## " heading.
+          $lines = Get-Content CHANGELOG.md -Encoding utf8
+          $start = [array]::FindIndex([string[]]$lines, [Predicate[string]]{ param($l) $l -match "^## v?$([regex]::Escape($env:VERSION))(\s|$)" })
+          $notes = ''
+          if ($start -ge 0) {
+            $section = $lines[($start + 1)..($lines.Count - 1)]
+            $end = [array]::FindIndex([string[]]$section, [Predicate[string]]{ param($l) $l -match '^## ' })
+            if ($end -ge 0) { $section = if ($end -gt 0) { $section[0..($end - 1)] } else { @() } }
+            $notes = ($section -join "`n").Trim()
+          }
+          if (-not $notes) {
+            Write-Warning "CHANGELOG.md has no section for $env:VERSION"
+            $notes = "GitKwaken $env:VERSION."
+          }
+          $file = Join-Path $env:RUNNER_TEMP 'notes.md'
+          [IO.File]::WriteAllText($file, $notes + "`n", (New-Object Text.UTF8Encoding $false))
+          "NOTES_FILE=$file" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Get-Content $file
+
       - name: Build zip, installers (Inno + MSI) and update.json
         shell: pwsh
         run: |
@@ -70,7 +92,7 @@ jobs:
             -Version $env:VERSION `
             -Repo "${{ github.repository }}" `
             -DownloadBaseUrl "https://github.com/${{ github.repository }}/releases/download/$env:TAG" `
-            -Notes "GitKwaken $env:VERSION. Release notes: https://github.com/${{ github.repository }}/releases/tag/$env:TAG"
+            -Notes ([IO.File]::ReadAllText($env:NOTES_FILE).Trim())
           # The script only warns when ISCC / wix are missing; a release must have both.
           foreach ($f in "dist/GitKwaken-$env:VERSION-x64-setup.exe", "dist/GitKwaken-$env:VERSION-x64.msi") {
             if (-not (Test-Path $f)) { throw "$f was not built" }
@@ -95,6 +117,7 @@ jobs:
           name: GitKwaken ${{ env.VERSION }}
           draft: false
           prerelease: ${{ contains(env.TAG, '-') }}
+          body_path: ${{ env.NOTES_FILE }}
           generate_release_notes: true
           fail_on_unmatched_files: false
           files: |

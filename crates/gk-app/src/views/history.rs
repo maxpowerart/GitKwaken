@@ -316,6 +316,34 @@ fn set_scope(tab: &mut RepoTab, scope: Scope) {
     tab.session.set_options(o);
 }
 
+/// Branches picked in the history filter ("Show branches:" of the branch picker); empty while
+/// the history shows all branches or the current one.
+pub fn filtered_branches(scope: &Scope) -> &[String] {
+    match scope {
+        Scope::Revs(v) => v,
+        _ => &[],
+    }
+}
+
+/// Adds `name` (a local branch, or `remote/branch`) to the history filter or removes it, like
+/// its checkbox in the branch picker; an empty filter shows all branches again.
+pub fn toggle_branch_filter(tab: &mut RepoTab, name: &str) {
+    let mut v = filtered_branches(&tab.session.options().scope).to_vec();
+    if v.iter().any(|p| p == name) {
+        v.retain(|p| p != name);
+    } else {
+        v.push(name.to_string());
+    }
+    set_scope(
+        tab,
+        if v.is_empty() {
+            Scope::All
+        } else {
+            Scope::Revs(v)
+        },
+    );
+}
+
 /// Text of the branch picker button.
 pub fn scope_label(s: &Scope) -> String {
     match s {

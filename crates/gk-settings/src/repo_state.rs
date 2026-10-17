@@ -18,8 +18,10 @@ pub struct RepoState {
     /// Newest first, deduplicated, capped at [`MAX_RECENT_MESSAGES`].
     pub recent_messages: Vec<String>,
     pub sidebar_collapsed: BTreeSet<String>,
-    /// "all" | "current"
+    /// "all" | "local" | "current" | "revs:<branch> <branch>…" (the history branch filter).
     pub history_scope: String,
+    /// Local branches shown in the sidebar's PINNED section, in pin order.
+    pub pinned_branches: Vec<String>,
     pub layout: Layout,
     pub last_view: String,
     pub file_view_tree: bool,
@@ -34,6 +36,7 @@ impl Default for RepoState {
             recent_messages: Vec::new(),
             sidebar_collapsed: BTreeSet::new(),
             history_scope: "all".into(),
+            pinned_branches: Vec::new(),
             layout: Layout::default(),
             last_view: "history".into(),
             file_view_tree: false,
@@ -100,7 +103,8 @@ impl RepoState {
 
     fn normalize(&mut self) {
         self.recent_messages.truncate(MAX_RECENT_MESSAGES);
-        if self.history_scope != "all" && self.history_scope != "current" {
+        let s = self.history_scope.as_str();
+        if !matches!(s, "all" | "local" | "current") && !s.starts_with("revs:") {
             self.history_scope = "all".into();
         }
     }

@@ -16,7 +16,7 @@ background threads, so the UI never blocks on the repository.
 > copied from other projects; third-party code is used only as normal dependencies under their
 > own licenses (see [Third-party software](#third-party-software)).
 
-> Status: 1.0.2. Windows is the primary target. Linux x86_64 releases use an `eframe`/wgpu
+> Status: 1.0.3. Windows is the primary target. Linux x86_64 releases use an `eframe`/wgpu
 > renderer instead of Direct3D (launch-tested in CI under Xvfb on Ubuntu and Arch; see
 > [Linux](#linux-x86_64)). macOS builds through the same fallback but is only compile-checked.
 
@@ -42,11 +42,13 @@ SourceTree parity, roughly grouped the way SourceTree does it:
 - **Advanced**: submodules, worktrees, git-flow, LFS, bisect, sparse checkout, clean, repository
   optimization, archive export, built-in git console with a log of every executed command,
   command palette.
-- **Layout**: SourceTree's window: menu bar (File, Edit, View, Repository, Actions, Tools, Help),
-  repository tabs, large-icon toolbar, sidebar with WORKSPACE (File Status, History, Search)
-  above branches, tags, remotes, stashes and submodules.
-- **App**: dark / light themes, persistent window and per-repository layout, self-updater (Windows, Linux) with
-  SHA-256-verified downloads, per-user installer or portable zip.
+- **Layout**: SourceTree's window: menu bar (File, Edit, View, Repository, Actions, Tools, Help)
+  that is also the title bar on Windows, repository tabs, large-icon toolbar, sidebar with
+  WORKSPACE (File Status, History, Search), PINNED branches, then branches, tags, remotes,
+  stashes and submodules. Pin and history-filter buttons next to each branch.
+- **App**: dark / light themes, persistent window and per-repository layout, self-updater
+  (Windows, Linux) that shows the release's changelog before installing, SHA-256-verified
+  downloads, per-user installer or portable zip.
 
 ## Performance
 

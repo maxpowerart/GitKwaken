@@ -52,6 +52,9 @@ fn main() {
         position: w.position,
         // packaging/linux/gitkwaken.desktop
         app_id: Some("gitkwaken".into()),
+        // SourceTree-style caption: the menu bar carries the window buttons.
+        // GITKWAKEN_SYSTEM_FRAME=1 brings the system title bar back.
+        custom_frame: std::env::var_os("GITKWAKEN_SYSTEM_FRAME").is_none(),
     };
     let initial_paths: Vec<std::path::PathBuf> = std::env::args_os()
         .skip(1)

@@ -34,73 +34,96 @@ M="$(cygpath -m "$W")"
 cat > "$W/u.script" <<EOF
 # Help menu, update slot (row 2, same place in every state): "Check for updates" →
 # "Install update 99.0.0" → (downloading, disabled) → "Restart to finish update 99.0.0".
-# Escape closes the menu when the entry was disabled. Extra rounds are no-ops.
+# "Install update" opens the changelog dialog; Enter there installs. Escape closes the menu
+# when the entry was disabled. Extra rounds are no-ops.
 wait 5000
 click 282 12
 wait 400
 click 333 59.2
-wait 300
+wait 500
+key Enter
+wait 200
 key Escape
 wait 6000
 shot $M/offer.png
 click 282 12
 wait 400
 click 333 59.2
-wait 300
+wait 500
+key Enter
+wait 200
 key Escape
 wait 3500
 click 282 12
 wait 400
 click 333 59.2
-wait 300
+wait 500
+key Enter
+wait 200
 key Escape
 wait 3500
 click 282 12
 wait 400
 click 333 59.2
-wait 300
+wait 500
+key Enter
+wait 200
 key Escape
 wait 3500
 click 282 12
 wait 400
 click 333 59.2
-wait 300
+wait 500
+key Enter
+wait 200
 key Escape
 wait 3500
 click 282 12
 wait 400
 click 333 59.2
-wait 300
+wait 500
+key Enter
+wait 200
 key Escape
 wait 3500
 click 282 12
 wait 400
 click 333 59.2
-wait 300
+wait 500
+key Enter
+wait 200
 key Escape
 wait 3500
 click 282 12
 wait 400
 click 333 59.2
-wait 300
+wait 500
+key Enter
+wait 200
 key Escape
 wait 3500
 click 282 12
 wait 400
 click 333 59.2
-wait 300
+wait 500
+key Enter
+wait 200
 key Escape
 wait 3500
 click 282 12
 wait 400
 click 333 59.2
-wait 300
+wait 500
+key Enter
+wait 200
 key Escape
 wait 3500
 click 282 12
 wait 400
 click 333 59.2
-wait 300
+wait 500
+key Enter
+wait 200
 key Escape
 wait 3500
 EOF
