@@ -16,7 +16,7 @@ background threads, so the UI never blocks on the repository.
 > copied from other projects; third-party code is used only as normal dependencies under their
 > own licenses (see [Third-party software](#third-party-software)).
 
-> Status: 1.0.0. Windows is the primary target. Linux x86_64 releases use an `eframe`/wgpu
+> Status: 1.0.1. Windows is the primary target. Linux x86_64 releases use an `eframe`/wgpu
 > renderer instead of Direct3D (launch-tested in CI under Xvfb on Ubuntu and Arch; see
 > [Linux](#linux-x86_64)). macOS builds through the same fallback but is only compile-checked.
 
