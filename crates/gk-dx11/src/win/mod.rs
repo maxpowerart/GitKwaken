@@ -1,6 +1,7 @@
 //! Windows host: winit event loop + egui-winit input + Direct3D 11 rendering.
 
 mod gfx;
+pub(crate) mod script;
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -256,13 +257,14 @@ impl Running {
         let mut input = self.state.take_egui_input(&self.window);
         input.viewports.insert(ViewportId::ROOT, self.info.clone());
         self.info.events.clear();
+        let scripted = script::inject(&mut input);
 
         let app = &mut self.app;
         let ui_start = std::time::Instant::now();
         let output = ctx.run_ui(input, |ui| app.ui(ui));
         frame_stats(ui_start.elapsed());
-        if std::env::var_os("GK_DX11_SCREENSHOT").is_some() {
-            // Keep frames coming until the scheduled screenshot is taken.
+        if scripted || std::env::var_os("GK_DX11_SCREENSHOT").is_some() {
+            // Keep frames coming while a script runs or a screenshot is pending.
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
         self.textures.record(&output.textures_delta);

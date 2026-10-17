@@ -110,7 +110,7 @@ impl Gfx {
         };
         unsafe { self.context.ClearRenderTargetView(&rtv, &clear) };
         self.renderer.render(&self.context, &rtv, ctx, output)?;
-        if let Some(path) = take_screenshot_request() {
+        if let Some(path) = super::script::take_shot().or_else(take_screenshot_request) {
             match self.capture() {
                 Ok(img) => {
                     let result = save_png(&path, &img);
