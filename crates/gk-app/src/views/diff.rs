@@ -102,6 +102,8 @@ pub struct DiffView {
     /// Startup trace only (`GITKWAKEN_STARTUP_LOG`): when the shown target was
     /// first requested, to log request-to-rendered time once.
     trace_open: Option<(DiffTarget, Instant)>,
+    /// Same, to log request-to-visible-lines-highlighted time once.
+    trace_hl: Option<(DiffTarget, Instant)>,
     inline: HashMap<u32, Inline>,
     sel: Selection,
     /// Line where the current drag selection started.
@@ -185,6 +187,11 @@ impl DiffView {
             && self.trace_open.as_ref().is_none_or(|(t, _)| t != target)
         {
             self.trace_open = Some((target.clone(), Instant::now()));
+            self.trace_hl = self.trace_open.clone();
+        }
+        if shared.settings.diff.syntax_highlight {
+            // While the diff loads, so its first highlight is not delayed.
+            syntax::warm(target.path());
         }
         // Large files: measure first, diff only within the limit or on request.
         let limit = shared.settings.diff.max_file_kb.saturating_mul(1024);
@@ -611,25 +618,6 @@ impl DiffView {
                 p.removed_word
             }
         };
-        // Token colors, computed in the background; plain text until ready.
-        let syn: Option<Arc<Highlights>> =
-            if shared.settings.diff.syntax_highlight && d.lines.len() <= syntax::MAX_LINES {
-                self.syntax.get_or_start(&shown.diff, p.dark, || {
-                    syntax::spawn(
-                        shown.diff.clone(),
-                        shown.target.path().to_string(),
-                        p.dark,
-                        ui.ctx().clone(),
-                    )
-                })
-            } else {
-                None
-            };
-        let spans_of = |i: u32, kind: LineKind, old_side: bool| -> &[Span] {
-            syn.as_deref()
-                .map_or(&[], |h| h.spans(i as usize, kind, old_side))
-        };
-
         let mut sa = egui::ScrollArea::both()
             .auto_shrink([false, false])
             .id_salt("gk-diff-scroll");
@@ -652,6 +640,35 @@ impl DiffView {
             let scroll_x = vp.min.x;
             let first = ((vp.min.y / row_h).floor().max(0.0) as usize).min(rows.len());
             let last = (((vp.max.y / row_h).ceil() as usize) + 1).min(rows.len());
+
+            // Token colors of the visible lines (and a margin), computed in
+            // the background; plain text until a batch lands.
+            let syn: Option<Arc<Highlights>> = if shared.settings.diff.syntax_highlight {
+                let vis_lines = model::row_lines(&rows[first..last], &d.hunks);
+                let syn = self.syntax.get(
+                    &shown.diff,
+                    p.dark,
+                    shown.target.path(),
+                    vis_lines.clone(),
+                    Some(ui.ctx()),
+                );
+                if syn.as_ref().is_some_and(|h| h.covers(vis_lines))
+                    && let Some((t, at)) = self.trace_hl.take_if(|(t, _)| *t == shown.target)
+                {
+                    let lines = d.lines.len();
+                    crate::startup::record(
+                        &format!("diff_highlighted:{}:{lines}_lines", t.path()),
+                        at.elapsed(),
+                    );
+                }
+                syn
+            } else {
+                None
+            };
+            let spans_of = |i: u32, kind: LineKind, old_side: bool| -> &[Span] {
+                syn.as_deref()
+                    .map_or(&[], |h| h.spans(i as usize, kind, old_side))
+            };
 
             // One interaction surface for selection; buttons added later sit on top.
             let body = ui.interact(vis, body_id, Sense::click_and_drag());

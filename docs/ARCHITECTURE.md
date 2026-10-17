@@ -40,8 +40,6 @@ gk-bench ──► gk-core / gk-status / gk-graph   (measurements on real repos)
   option. The watcher fast path always works in process on the gix index.
 - **UI toolkit.** egui on a custom Direct3D 11 host (`gk-dx11`) instead of GPUI.
 - **Packaging.** Inno Setup installer, zip and winget manifests instead of cargo-dist / MSI.
-- **Highlighting.** Diffs up to 20k lines are highlighted whole on a background thread
-  rather than only the visible lines; larger diffs are not highlighted.
 
 ## Threads
 
@@ -93,6 +91,14 @@ One `Session` per open repository tab. Per session:
   commit details, history search, and batches of commit metadata for visible graph rows. Each
   `Load<T>` slot holds a ticket, so a stale result (user already moved on) is dropped; completion
   calls the repaint callback.
+- **`gk-syntax`** (per shown diff, `views/diff/syntax.rs`): syntax highlighting of the visible
+  lines only. The diff body publishes its visible line range (± 200 lines) each frame; the worker
+  highlights the 128-line windows of the hunks it intersects (visible ones first), resuming from
+  parser checkpoints saved at window boundaries, and hands spans back in batches that the UI merges
+  (repaint per batch). A jump far into a huge hunk first shows provisional colors (parse from a
+  fresh state) while the exact forward parse catches up; the forward parse yields to a newer
+  scroll at each window. The worker exits when the wanted range is done and is restarted on demand;
+  a replaced diff stops it. `gk-syntax-warm` loads the syntax of a file type while its diff loads.
 
 App-wide (not per session):
 
