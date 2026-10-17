@@ -25,7 +25,11 @@ fn main() -> Result<()> {
             let runs: usize = args.get(3).map(|s| s.parse()).transpose()?.unwrap_or(3);
             bench_status(&dir, runs)
         }
-        _ => bail!("usage: gk-bench gen <dir> <files> | status <dir> [runs]"),
+        Some("history") => {
+            let dir = PathBuf::from(args.get(2).context("dir")?);
+            bench_history(&dir)
+        }
+        _ => bail!("usage: gk-bench gen <dir> <files> | status <dir> [runs] | history <dir>"),
     }
 }
 
@@ -63,6 +67,37 @@ fn time<T>(label: &str, runs: usize, mut f: impl FnMut() -> Result<T>) -> Result
     }
     println!("{label:<44} best {best:>9.1} ms");
     Ok(last.unwrap())
+}
+
+/// Times refs loading, the full commit walk + topo sort + lane layout, and
+/// metadata decoding for one screen of rows.
+fn bench_history(dir: &Path) -> Result<()> {
+    use gk_core::history;
+    let repo = gk_core::Repo::open(dir, CommandLog::default())?;
+    let refs = time("refs::load", 3, || gk_core::refs::load(&repo))?;
+    let tips = history::resolve_tips(&repo, &history::Scope::All, &refs.tips());
+    let h = time("history::build (all branches)", 3, || {
+        history::build(&repo, &tips, &AtomicBool::new(false))
+    })?;
+    println!(
+        "commits {}  max graph width {} lanes  edges {}",
+        h.len(),
+        h.layout.max_width(),
+        h.layout.edges.len()
+    );
+    let g = repo.gix();
+    let first: Vec<_> = h.ids.iter().take(60).copied().collect();
+    time("commit_meta x60 (one screen)", 3, || {
+        first.iter().map(|id| history::commit_meta(&g, *id)).collect::<Result<Vec<_>>>()
+    })?;
+    let mid: Vec<_> = h.ids.iter().skip(h.len() / 2).take(60).copied().collect();
+    time("commit_meta x60 (middle of history)", 3, || {
+        mid.iter().map(|id| history::commit_meta(&g, *id)).collect::<Result<Vec<_>>>()
+    })?;
+    time("search 'fix' over all commits", 1, || {
+        Ok(history::search(&repo, &h, "fix", &AtomicBool::new(false)).len())
+    })?;
+    Ok(())
 }
 
 fn bench_status(dir: &Path, runs: usize) -> Result<()> {

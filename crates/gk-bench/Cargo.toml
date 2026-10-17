@@ -11,3 +11,4 @@ bstr = { workspace = true }
 rayon = { workspace = true }
 gk-cli = { path = "../gk-cli" }
 gk-status = { path = "../gk-status" }
+gk-core = { path = "../gk-core" }
