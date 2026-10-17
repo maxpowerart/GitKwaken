@@ -513,18 +513,24 @@ impl AppDialog for SettingsDialog {
                                     ui.label("Git executable:");
                                     ui.horizontal(|ui| {
                                         ui.add(egui::TextEdit::singleline(&mut self.git_path).desired_width(260.0).hint_text("auto-detect"));
+                                        // The git binary has no extension outside Windows.
+                                        let picker = if cfg!(windows) { rfd::FileDialog::new().add_filter("git", &["exe"]) } else { rfd::FileDialog::new() };
                                         if ui.button("Browse…").clicked()
-                                            && let Some(p) = rfd::FileDialog::new().add_filter("git", &["exe"]).pick_file()
+                                            && let Some(p) = picker.pick_file()
                                         {
                                             self.git_path = p.display().to_string();
                                         }
                                     });
                                     ui.end_row();
                                     ui.label("Updates:");
-                                    ui.checkbox(&mut d.check_updates, "Check for updates on startup");
-                                    ui.end_row();
-                                    ui.label("Update channel:");
-                                    ui.add(egui::TextEdit::singleline(&mut d.update_url).desired_width(260.0).hint_text("default (GitHub releases)"));
+                                    if crate::update::SELF_UPDATE {
+                                        ui.checkbox(&mut d.check_updates, "Check for updates on startup");
+                                        ui.end_row();
+                                        ui.label("Update channel:");
+                                        ui.add(egui::TextEdit::singleline(&mut d.update_url).desired_width(260.0).hint_text("default (GitHub releases)"));
+                                    } else {
+                                        ui.label("via your package manager or a new release download");
+                                    }
                                     ui.end_row();
                                     ui.label("Monospace font:");
                                     ui.horizontal(|ui| {

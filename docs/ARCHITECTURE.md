@@ -67,6 +67,29 @@ gk-bench ──► gk-core / gk-status / gk-graph   (measurements on real repos)
   from inside the msiexec session to these exact keys was dropped (other key names and the
   Inno installer were fine), so the app also re-creates them on start when
   `HKCU\Software\GitKwaken\Installer` says it was installed by the MSI with the context menu.
+- **Linux packaging.** A second job in `release.yml` builds
+  `GitKwaken-<ver>-x86_64-linux.tar.gz` with `packaging/build-linux.sh` on `ubuntu-22.04`, the
+  oldest hosted runner, so the binary only needs glibc 2.35 and runs on newer distributions
+  (Manjaro/Arch included). The tarball holds `gitkwaken` (debug info stripped), the licenses,
+  `THIRD-PARTY-LICENSES.txt` (`scripts/third-party-licenses.ps1 -Target
+  x86_64-unknown-linux-gnu`, run with `pwsh`), `gitkwaken.desktop` and hicolor icons 16-512 px.
+  The binary links only glibc/libgcc; winit and wgpu `dlopen` X11/Wayland, xkbcommon and
+  Vulkan or EGL at run time. The same job writes a `PKGBUILD` (`packaging/arch/PKGBUILD` with
+  the version and tarball checksum filled in) that is attached to the release next to the
+  tarball; a separate `publish-linux` job uploads both after the Windows job has created the
+  release, since two jobs creating one release in parallel race. The window's Wayland app id /
+  X11 `WM_CLASS` is `gitkwaken` (`gk_dx11::Options::app_id`), matching the desktop file, so
+  docks show the right icon. CI (`ci.yml`) builds the same tarball on every push, launches it
+  under Xvfb with Mesa software rendering (`scripts/linux-smoke.sh`: first frame with history
+  rows, 10 s alive, close by `WM_DELETE_WINDOW` with exit 0 and settings saved, restart with
+  the tab restored, `SIGTERM`), then builds and installs the `PKGBUILD` with
+  `makepkg`/`pacman` in an `archlinux` container and runs the same test on the installed
+  package. `release.yml` also has a `dry_run` dispatch input that builds every package from a
+  branch as workflow artifacts without publishing.
+  No self-update on Linux (or macOS): the in-app updater is off
+  (`update::SELF_UPDATE = cfg!(windows)`), Help › Check for updates points to the package
+  manager / release page, and `update.json` stays Windows-only. A Linux channel would need a
+  second manifest and a tar.gz swap, and would fight package managers that own `/usr/bin`.
 
 ## Threads
 
@@ -150,7 +173,7 @@ App-wide (not per session):
 `gk-dx11` hosts egui on a winit window with a Direct3D 11 flip-model swap chain (legacy blit model
 as fallback, WARP if no hardware device, full re-creation on device loss). Measured: 117 FPS with
 vsync (display-limited) and > 900 FPS unlocked on a 1M-row list. Off Windows the same `Options` /
-`run` API is implemented on top of `eframe`.
+`run` API is implemented on top of `eframe` (wgpu: Vulkan, else OpenGL/EGL; X11 or Wayland).
 
 ## Self-update
 
@@ -158,4 +181,4 @@ vsync (display-limited) and > 900 FPS unlocked on a 1M-row list. Off Windows the
 `version`, `notes`, `url` and `sha256` of the portable zip. The app compares semver, downloads
 to `%TEMP%\gitkwaken-update`, verifies the hash, extracts `gitkwaken.exe`, and on exit renames the
 running exe to `gitkwaken.exe.old` (allowed while running), moves the new one in, and deletes
-`.old` on the next start (`cleanup_old`).
+`.old` on the next start (`cleanup_old`). Windows only; see Linux packaging above.

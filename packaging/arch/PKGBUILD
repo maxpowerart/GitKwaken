@@ -1,0 +1,59 @@
+# Maintainer: GitKwaken contributors
+#
+# Arch Linux / Manjaro package of the prebuilt Linux release
+# (GitKwaken-<version>-x86_64-linux.tar.gz from the GitHub release).
+#
+# Every release carries a copy of this file with _ver and the checksum filled in
+# (packaging/build-linux.sh). Put that PKGBUILD and the tarball in one folder and
+# run `makepkg -si`; makepkg uses the tarball found next to the PKGBUILD instead
+# of downloading it.
+# This template keeps 'SKIP' as the checksum; the release copy pins it.
+
+pkgname=gitkwaken-bin
+_ver=1.0.0
+pkgver=${_ver//-/_}
+pkgrel=1
+pkgdesc='Fast, lightweight git client'
+arch=('x86_64')
+url='https://github.com/maxpowerart/GitKwaken'
+license=('MIT OR Apache-2.0')
+# The binary links glibc and libgcc only; winit and wgpu load the windowing,
+# keyboard and graphics libraries at run time (X11 or Wayland, then Vulkan or
+# EGL/OpenGL through libglvnd and whichever driver is installed).
+depends=(
+  'git'
+  'glibc'
+  'gcc-libs'
+  'hicolor-icon-theme'
+  'libglvnd'
+  'libx11'
+  'libxcursor'
+  'libxi'
+  'libxrandr'
+  'libxkbcommon'
+  'libxkbcommon-x11'
+  'wayland'
+)
+optdepends=(
+  'vulkan-icd-loader: Vulkan renderer (otherwise OpenGL via EGL)'
+  'xdg-desktop-portal: open/save dialogs (with a backend such as xdg-desktop-portal-gtk or -kde)'
+  'zenity: message boxes, and open/save dialogs when no portal is running'
+)
+provides=('gitkwaken')
+conflicts=('gitkwaken')
+options=('!debug')
+source=("https://github.com/maxpowerart/GitKwaken/releases/download/v${_ver}/GitKwaken-${_ver}-x86_64-linux.tar.gz")
+sha256sums=('SKIP')
+
+package() {
+  cd "GitKwaken-${_ver}-x86_64-linux"
+  install -Dm755 gitkwaken "$pkgdir/usr/bin/gitkwaken"
+  install -Dm644 gitkwaken.desktop "$pkgdir/usr/share/applications/gitkwaken.desktop"
+  local icon
+  for icon in icons/hicolor/*/apps/gitkwaken.png; do
+    install -Dm644 "$icon" "$pkgdir/usr/share/$icon"
+  done
+  install -Dm644 -t "$pkgdir/usr/share/licenses/$pkgname" \
+    LICENSE-MIT LICENSE-APACHE THIRD-PARTY-LICENSES.txt
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

@@ -47,6 +47,8 @@ fn main() {
         icon_rgba: window_icon(),
         maximized: w.maximized,
         position: w.position,
+        // packaging/linux/gitkwaken.desktop
+        app_id: Some("gitkwaken".into()),
     };
     let initial_paths: Vec<std::path::PathBuf> = std::env::args_os()
         .skip(1)
@@ -57,6 +59,8 @@ fn main() {
     if let Err(e) = gk_dx11::run(options, move |ctx| {
         Box::new(app::GkApp::new(ctx, settings, initial_paths, staged_app))
     }) {
+        // Visible when started from a terminal (Linux, macOS, debug builds on Windows).
+        eprintln!("GitKwaken: failed to start: {e:#}");
         let _ = rfd::MessageDialog::new()
             .set_title("GitKwaken")
             .set_description(format!("Failed to start: {e:#}"))
