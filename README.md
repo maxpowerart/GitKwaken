@@ -34,6 +34,9 @@ SourceTree parity, roughly grouped the way SourceTree does it:
 - **Advanced**: submodules, worktrees, git-flow, LFS, bisect, sparse checkout, clean, repository
   optimization, archive export, built-in git console with a log of every executed command,
   command palette.
+- **Layout**: SourceTree's window: menu bar (File, Edit, View, Repository, Actions, Tools, Help),
+  repository tabs, large-icon toolbar, sidebar with WORKSPACE (File Status, History, Search)
+  above branches, tags, remotes, stashes and submodules.
 - **App**: dark / light themes, persistent window and per-repository layout, self-updater with
   SHA-256-verified downloads, per-user installer or portable zip.
 
