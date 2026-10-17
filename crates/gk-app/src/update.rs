@@ -163,7 +163,7 @@ impl Updater {
                 false,
                 UpdateAction::Check,
             ),
-            State::Idle | State::UpToDate | State::Failed(_) => {
+            State::Idle | State::UpToDate | State::Unsupported | State::Failed(_) => {
                 ("Check for updates".into(), true, UpdateAction::Check)
             }
         }
