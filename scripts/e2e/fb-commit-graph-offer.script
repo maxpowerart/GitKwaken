@@ -1,0 +1,7 @@
+# A 20k+ commit history without a commit-graph: the banner under the toolbar
+# offers to write it -> Write (background operation).
+wait 6000
+shot $OUT/fb-commit-graph-offer.png
+click 464.8 88
+wait 8000
+exit

@@ -48,6 +48,9 @@ pub(crate) trait TabDialog {
 /// A dialog of the application (no repository).
 pub(crate) trait AppDialog {
     fn show(&mut self, ctx: &egui::Context, shared: &mut Shared) -> bool;
+    /// The repository of the active tab when the dialog opens (Settings uses
+    /// it for repository-level git config).
+    fn set_repo(&mut self, _repo: Option<PathBuf>) {}
 }
 
 pub struct Dialog(Box<dyn TabDialog>);
@@ -196,6 +199,11 @@ impl Dialog {
     }
     pub fn optimize(s: &Snapshot) -> Self {
         Self::new(repo_tools::Optimize::new(s))
+    }
+    /// Authentication diagnostics: credential helper / GCM, ssh and agent,
+    /// connection test.
+    pub fn authentication(s: &Snapshot) -> Self {
+        Self::new(diagnostics::Authentication::new(s))
     }
     pub fn submodule_add() -> Self {
         Self::new(repo_tools::SubmoduleAdd::default())
@@ -378,6 +386,7 @@ pub fn debug_open(spec: &str, snap: &Snapshot) -> Option<Dialog> {
         "sparse" => Dialog::sparse_checkout(snap),
         "clean" => Dialog::clean(),
         "optimize" => Dialog::optimize(snap),
+        "authentication" => Dialog::authentication(snap),
         "submodule-add" => Dialog::submodule_add(),
         "gitignore" => Dialog::edit_gitignore(),
         "repo-config" => Dialog::edit_repo_config(),
@@ -436,6 +445,11 @@ impl GlobalDialog {
         Self::new(config_edit::ConfigEditor::new(
             config_edit::ConfigKind::GlobalConfig,
         ))
+    }
+
+    /// See [`AppDialog::set_repo`].
+    pub fn set_repo(&mut self, repo: Option<PathBuf>) {
+        self.0.set_repo(repo);
     }
 
     pub fn show(&mut self, ctx: &egui::Context, shared: &mut Shared) -> bool {

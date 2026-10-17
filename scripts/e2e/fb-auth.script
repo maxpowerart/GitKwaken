@@ -1,0 +1,14 @@
+# GITKWAKEN_DIALOG=authentication via Ctrl+Shift+F. "Use Git Credential
+# Manager for all repositories…" -> Add (global credential.helper), then
+# Test connection on origin (a local bare repository: git ls-remote).
+wait 2500
+key F ctrl shift
+wait 3000
+click 512 312
+wait 800
+click 393.6 332
+wait 3000
+click 902.4 610.4
+wait 3000
+shot $OUT/fb-auth.png
+exit

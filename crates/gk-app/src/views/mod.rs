@@ -1,6 +1,7 @@
 //! Views of a repository tab. Each `show` renders into the given `Ui`.
 
 pub mod blame;
+pub mod commit_graph_offer;
 pub mod details;
 pub mod diff;
 pub mod file_status;

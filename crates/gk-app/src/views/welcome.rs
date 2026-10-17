@@ -341,14 +341,65 @@ fn prompt_ui(ui: &mut Ui, shared: &mut Shared) {
     set_prompt(&ctx, if ok || cancel { Prompt::None } else { p });
 }
 
-/// "Repositories ▾": bookmarks by group, recents, open and scan; for the tab
-/// bar while repositories are open.
-// Called from the tab bar in app.rs (`views::welcome::repositories_menu(ui, &mut shared)`).
-pub fn repositories_menu(ui: &mut Ui, shared: &mut Shared) {
+/// What the "Repositories ▾" menu offers for the open repository.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CurrentBookmark {
+    /// No repository tab is active.
+    None,
+    /// "Bookmark this repository…".
+    Add,
+    /// "Remove bookmark".
+    Remove,
+}
+
+pub fn current_bookmark(s: &gk_settings::Settings, current: Option<&Path>) -> CurrentBookmark {
+    match current {
+        None => CurrentBookmark::None,
+        Some(p) if s.find_bookmark(p).is_some() => CurrentBookmark::Remove,
+        Some(_) => CurrentBookmark::Add,
+    }
+}
+
+/// "Repositories ▾": bookmark / unbookmark the open repository, bookmarks by
+/// group, recents, open and scan; for the tab bar while repositories are open.
+// Called from the tab bar in app.rs
+// (`views::welcome::repositories_menu(ui, &mut shared, current)`).
+pub fn repositories_menu(ui: &mut Ui, shared: &mut Shared, current: Option<&Path>) {
     let mut open: Option<PathBuf> = None;
     let mut action: Option<Action> = None;
+    let mut unbookmark: Option<PathBuf> = None;
     ui.menu_button("Repositories ▾", |ui| {
         let s = &*shared.settings;
+        if let Some(cur) = current {
+            match current_bookmark(s, current) {
+                CurrentBookmark::Add => {
+                    if ui
+                        .button("Bookmark this repository…")
+                        .on_hover_text(cur.display().to_string())
+                        .clicked()
+                    {
+                        action = Some(Action::Global(GlobalDialog::bookmark(cur.to_path_buf())));
+                        ui.close();
+                    }
+                }
+                CurrentBookmark::Remove => {
+                    let name = s
+                        .find_bookmark(cur)
+                        .map(|b| b.name.clone())
+                        .unwrap_or_default();
+                    if ui
+                        .button("Remove bookmark")
+                        .on_hover_text(format!("Remove the bookmark \"{name}\" of this repository"))
+                        .clicked()
+                    {
+                        unbookmark = Some(cur.to_path_buf());
+                        ui.close();
+                    }
+                }
+                CurrentBookmark::None => {}
+            }
+            ui.separator();
+        }
         let pick = |ui: &mut Ui, name: &str, path: &Path, open: &mut Option<PathBuf>| {
             if ui
                 .button(name)
@@ -406,6 +457,9 @@ pub fn repositories_menu(ui: &mut Ui, shared: &mut Shared) {
     }
     if let Some(a) = action {
         shared.actions.push(a);
+    }
+    if let Some(p) = unbookmark {
+        shared.settings.remove_bookmark(&p);
     }
 }
 
@@ -467,4 +521,21 @@ fn repo_item(ui: &mut Ui, name: &str, path: &Path, muted: egui::Color32) -> egui
         p.galley(pos2(x, top + name_h + 1.0), path_g, muted);
     }
     resp.on_hover_text(path.display().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn current_repository_bookmark_entry() {
+        let mut s = gk_settings::Settings::default();
+        let repo = Path::new("C:/work/repo");
+        assert_eq!(current_bookmark(&s, None), CurrentBookmark::None);
+        assert_eq!(current_bookmark(&s, Some(repo)), CurrentBookmark::Add);
+        s.add_bookmark("repo", repo, Some("Work".into()));
+        assert_eq!(current_bookmark(&s, Some(repo)), CurrentBookmark::Remove);
+        s.remove_bookmark(repo);
+        assert_eq!(current_bookmark(&s, Some(repo)), CurrentBookmark::Add);
+    }
 }

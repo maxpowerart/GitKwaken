@@ -450,6 +450,7 @@ impl TabDialog for Optimize {
             self.load(ctx, tab);
         }
         let busy = self.pending.is_some();
+        let mut open_auth = false;
         let (out, ()) = modal(
             ctx,
             "optimize",
@@ -507,7 +508,7 @@ impl TabDialog for Optimize {
                     Some(Err(e)) => error(ui, e.clone()),
                     None => {}
                 }
-                if diagnostics_ui(ui, &self.diag, &self.diag_result, &workdir) {
+                if diagnostics_ui(ui, &self.diag, &self.diag_result, &workdir, &mut open_auth) {
                     let (w, g, log) = (workdir.clone(), git_dir.clone(), log.clone());
                     self.diag_result = None;
                     self.diag = Some(Task::spawn(ctx, move || {
@@ -516,6 +517,10 @@ impl TabDialog for Optimize {
                 }
             },
         );
+        if open_auth {
+            tab.dialog = Some(super::Dialog::authentication(snap));
+            return false;
+        }
         match out {
             Outcome::None => true,
             Outcome::Cancel => false,
@@ -538,6 +543,7 @@ fn diagnostics_ui(
     running: &Option<Task<Result<super::diagnostics::WriteSpeed, String>>>,
     result: &Option<Result<super::diagnostics::WriteSpeed, String>>,
     workdir: &std::path::Path,
+    open_auth: &mut bool,
 ) -> bool {
     use super::diagnostics as diag;
     let mut start = false;
@@ -560,6 +566,16 @@ fn diagnostics_ui(
         if running.is_some() {
             ui.spinner();
             ui.label(RichText::new("Measuring…").weak());
+        }
+        // Same row: the dialog keeps its height (E2E clicks rely on it).
+        if ui
+            .button("Authentication…")
+            .on_hover_text(
+                "Credential helper, Git Credential Manager, ssh agent and keys, connection test",
+            )
+            .clicked()
+        {
+            *open_auth = true;
         }
     });
     match result {
@@ -604,7 +620,7 @@ fn diagnostics_ui(
 }
 
 /// Read-only monospace command text with a copy button.
-fn command_box(ui: &mut egui::Ui, text: &str) {
+pub(super) fn command_box(ui: &mut egui::Ui, text: &str) {
     ui.horizontal_top(|ui| {
         egui::Frame::new()
             .fill(ui.visuals().extreme_bg_color)

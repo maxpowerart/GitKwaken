@@ -3,7 +3,9 @@
 # ignore patterns, commit options (template, author override, hook output),
 # external diff tool, config editors (.gitignore, .git/config, global),
 # keymap editor + rebound shortcut, background sparse clone, stage/unstage
-# all shortcuts, Optimize diagnostics, large-file / LFS / image overlay views.
+# all shortcuts, Optimize diagnostics, Authentication diagnostics (GCM setup,
+# connection test), bookmarking the open repository from "Repositories ▾",
+# the large-history commit-graph banner, large-file / LFS / image overlay views.
 # Drives the real app through scripted input (GK_DX11_INPUT_SCRIPT) and
 # checks repositories and settings files afterwards.
 # Usage: scripts/run-e2e-features-b.sh <path to gitkwaken.exe> [scenario filter]
@@ -177,6 +179,63 @@ if want diagnostics; then
   left=$(ls -a "$WORK" "$r/.git" | grep -c 'gitkwaken-diag')
   [ -s "$OUT/fb-optimize-diag.png" ] && [ "$left" = 0 ] \
     && ok optimize-diagnostics || bad optimize-diagnostics "scratch left=$left"
+fi
+
+if want auth; then
+  r=$(demo auth)
+  git clone -q --bare "$r" "$WORK/auth-remote.git"; g "$r" remote add origin "$(cygpath -m "$WORK/auth-remote.git")"
+  # Without the system config, Git for Windows' "credential.helper = manager"
+  # is gone: the dialog offers to configure GCM (when GCM is installed).
+  run fb-auth "$r" status GITKWAKEN_DIALOG=authentication GIT_CONFIG_NOSYSTEM=1
+  root=$(cygpath -u "$(git --exec-path)"); root="${root%/mingw64/libexec/git-core}"
+  helper=$(git config -f "$GIT_CONFIG_GLOBAL" --get-all credential.helper)
+  if [ -f "$root/mingw64/bin/git-credential-manager.exe" ]; then
+    [ "$helper" = manager ] && [ -s "$OUT/fb-auth.png" ] \
+      && ok auth-gcm-setup || bad auth-gcm-setup "credential.helper='$helper'"
+  else
+    [ -z "$helper" ] && [ -s "$OUT/fb-auth.png" ] \
+      && ok auth-diagnostics-no-gcm || bad auth-diagnostics-no-gcm "credential.helper='$helper'"
+  fi
+  git config -f "$GIT_CONFIG_GLOBAL" --unset-all credential.helper
+fi
+
+# ---------------------------------------------------------------- bookmarks
+if want bookmark-current; then
+  r=$(demo bmcur)
+  cfg="$WORK/cfg-fb-bookmark-current"
+  CFG="$cfg" run fb-bookmark-current "$r" status
+  n=$(grep -c '^\[\[bookmarks\]\]' "$cfg/settings.toml" 2>/dev/null)
+  paths=$(grep '^path' "$cfg/settings.toml" | tr '\\' '/' | tr -s '/')
+  [ "$n" = 1 ] && [[ "$paths" == *"/bmcur"[\'\"]* ]] \
+    && ok bookmark-open-repo || bad bookmark-open-repo "bookmarks=$n: $paths"
+  CFG="$cfg" run fb-bookmark-remove "$r" status
+  n=$(grep -c '^\[\[bookmarks\]\]' "$cfg/settings.toml" 2>/dev/null)
+  [ "$n" = 0 ] && ok bookmark-remove-open-repo || bad bookmark-remove-open-repo "bookmarks=$n"
+fi
+
+# ---------------------------------------------------------------- commit-graph offer
+# A history above the 20k-commit threshold (fast-import, no commit-graph).
+bigrepo() { # dir commits
+  local d="$1" n="$2" i
+  git init -q -b main "$d"; g "$d" config user.name E2E; g "$d" config user.email e2e@example.com
+  for ((i = 1; i <= n; i++)); do
+    printf 'commit refs/heads/main\ncommitter E2E <e2e@example.com> %d +0000\ndata 3\nc%d\nM 644 inline f.txt\ndata <<E\n%d\nE\n\n' \
+      $((1700000000 + i)) $((i % 10)) "$i"
+  done | g "$d" fast-import --quiet
+  g "$d" reset -q --hard main
+}
+if want commit-graph-offer; then
+  r="$WORK/cgbig"; bigrepo "$r" 20500
+  [ ! -e "$r/.git/objects/info/commit-graph" ] || bad commit-graph-offer "fixture already has a commit-graph"
+  run fb-commit-graph-offer "$r" history
+  [ -e "$r/.git/objects/info/commit-graph" ] || [ -e "$r/.git/objects/info/commit-graphs" ] \
+    && ok commit-graph-offer-write || bad commit-graph-offer-write "no commit-graph written"
+  # "Don't ask for this repository" is remembered in the per-repository state.
+  rm -rf "$r/.git/objects/info/commit-graph" "$r/.git/objects/info/commit-graphs"
+  run fb-commit-graph-never "$r" history
+  st=$(cat "$WORK"/cfg-fb-commit-graph-never/repos/*.toml 2>/dev/null)
+  [[ "$st" == *"commit_graph_offer_dismissed = true"* ]] && [ ! -e "$r/.git/objects/info/commit-graph" ] \
+    && ok commit-graph-offer-never || bad commit-graph-offer-never "state: $(echo "$st" | grep commit_graph)"
 fi
 
 # ---------------------------------------------------------------- diff views

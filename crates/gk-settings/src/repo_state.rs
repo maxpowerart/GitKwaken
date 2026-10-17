@@ -23,6 +23,8 @@ pub struct RepoState {
     pub layout: Layout,
     pub last_view: String,
     pub file_view_tree: bool,
+    /// "Don't ask for this repository" on the large-history commit-graph offer.
+    pub commit_graph_offer_dismissed: bool,
 }
 
 impl Default for RepoState {
@@ -35,6 +37,7 @@ impl Default for RepoState {
             layout: Layout::default(),
             last_view: "history".into(),
             file_view_tree: false,
+            commit_graph_offer_dismissed: false,
         }
     }
 }

@@ -6,6 +6,7 @@ use crate::app::{Action, Shared};
 use crate::keymap::{self, Act, Keymap, Shortcut};
 use egui::{Context, RichText, Ui};
 use gk_settings::{ExternalTool, Settings, StatusEngine, Theme};
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Section {
@@ -17,9 +18,10 @@ enum Section {
     Confirmations,
     Identity,
     Keyboard,
+    Ssh,
 }
 
-const SECTIONS: [(Section, &str); 8] = [
+const SECTIONS: [(Section, &str); 9] = [
     (Section::General, "General"),
     (Section::Commit, "Commit"),
     (Section::Diff, "Diff"),
@@ -28,6 +30,8 @@ const SECTIONS: [(Section, &str); 8] = [
     (Section::Confirmations, "Confirmations"),
     (Section::Identity, "Git identity"),
     (Section::Keyboard, "Keyboard"),
+    // Last, so the other entries keep their positions.
+    (Section::Ssh, "SSH"),
 ];
 
 /// Monospace families offered in the font combo (any installed name can be typed).
@@ -47,6 +51,73 @@ struct Identity {
     email: String,
 }
 
+/// `core.sshCommand` in the global config and in the open repository.
+#[derive(Clone, Default, PartialEq, Eq, Debug)]
+struct SshCommands {
+    global: String,
+    repo: String,
+}
+
+/// One git config value to write (`repo`: `--local` there, else `--global`);
+/// an empty value unsets the key.
+#[derive(Debug, PartialEq, Eq)]
+struct ConfigChange {
+    repo: Option<PathBuf>,
+    key: &'static str,
+    value: String,
+}
+
+/// The git config writes a Save needs: (loaded, edited) pairs of the
+/// identity and the ssh commands; unloaded ones are skipped.
+fn config_changes(
+    identity: Option<(&Identity, &Identity)>,
+    ssh: Option<(&SshCommands, &SshCommands)>,
+    repo: Option<&Path>,
+) -> Vec<ConfigChange> {
+    let mut out = Vec::new();
+    let mut add = |repo: Option<&Path>, key: &'static str, old: &str, new: &str| {
+        if old.trim() != new.trim() {
+            out.push(ConfigChange {
+                repo: repo.map(Path::to_path_buf),
+                key,
+                value: new.trim().to_string(),
+            });
+        }
+    };
+    if let Some((old, new)) = identity {
+        add(None, "user.name", &old.name, &new.name);
+        add(None, "user.email", &old.email, &new.email);
+    }
+    if let Some((old, new)) = ssh {
+        add(None, "core.sshCommand", &old.global, &new.global);
+        if let Some(r) = repo {
+            add(Some(r), "core.sshCommand", &old.repo, &new.repo);
+        }
+    }
+    out
+}
+
+/// A `core.sshCommand` text field with presets.
+fn ssh_field(ui: &mut Ui, value: &mut String) {
+    ui.horizontal(|ui| {
+        ui.add(
+            egui::TextEdit::singleline(value)
+                .desired_width(300.0)
+                .hint_text("default (Git's ssh)"),
+        );
+        if ui
+            .small_button("Windows OpenSSH")
+            .on_hover_text(super::diagnostics::WINDOWS_SSH)
+            .clicked()
+        {
+            *value = super::diagnostics::WINDOWS_SSH.to_string();
+        }
+        if ui.small_button("Default").clicked() {
+            value.clear();
+        }
+    });
+}
+
 pub struct SettingsDialog {
     section: Section,
     draft: Option<Settings>,
@@ -64,6 +135,11 @@ pub struct SettingsDialog {
     /// Action waiting for a key press.
     recording: Option<Act>,
     record_error: Option<String>,
+    /// Repository of the active tab (repository-level `core.sshCommand`).
+    repo: Option<PathBuf>,
+    ssh_task: Option<Task<SshCommands>>,
+    ssh_loaded: Option<SshCommands>,
+    ssh: SshCommands,
 }
 
 impl SettingsDialog {
@@ -83,6 +159,10 @@ impl SettingsDialog {
             keys: Vec::new(),
             recording: None,
             record_error: None,
+            repo: None,
+            ssh_task: None,
+            ssh_loaded: None,
+            ssh: SshCommands::default(),
         }
     }
 
@@ -124,6 +204,22 @@ impl SettingsDialog {
             Identity {
                 name: get("user.name"),
                 email: get("user.email"),
+            }
+        }));
+        let log = shared.log.clone();
+        let repo = self.repo.clone();
+        self.ssh_task = Some(Task::spawn(ctx, move || {
+            let get = |cwd: PathBuf, scope: &str| {
+                gk_cli::Git::new(cwd, log.clone())
+                    .run_raw(&["config", scope, "--get", "core.sshCommand"], None)
+                    .ok()
+                    .filter(|o| o.success())
+                    .map(|o| o.stdout_str().trim().to_string())
+                    .unwrap_or_default()
+            };
+            SshCommands {
+                global: get(std::env::temp_dir(), "--global"),
+                repo: repo.map(|r| get(r, "--local")).unwrap_or_default(),
             }
         }));
     }
@@ -314,6 +410,10 @@ fn tool_editor(ui: &mut Ui, id: &str, t: &mut ExternalTool, help: &str) {
 }
 
 impl AppDialog for SettingsDialog {
+    fn set_repo(&mut self, repo: Option<PathBuf>) {
+        self.repo = repo;
+    }
+
     fn show(&mut self, ctx: &Context, shared: &mut Shared) -> bool {
         if self.draft.is_none() {
             self.init(ctx, shared);
@@ -324,6 +424,13 @@ impl AppDialog for SettingsDialog {
             self.identity = id.clone();
             self.identity_loaded = Some(id);
             self.identity_task = None;
+        }
+        if let Some(t) = &mut self.ssh_task
+            && let Some(s) = t.take()
+        {
+            self.ssh = s.clone();
+            self.ssh_loaded = Some(s);
+            self.ssh_task = None;
         }
         if let Some(t) = &mut self.saving {
             match t.take() {
@@ -540,12 +647,39 @@ impl AppDialog for SettingsDialog {
                                 }
                             }
                             Section::Keyboard => keyboard_section(ui, &mut self.keys, &mut self.recording, &self.record_error, ctl),
+                            Section::Ssh => {
+                                ui.label("The ssh program git runs for ssh remotes (core.sshCommand):");
+                                if self.ssh_task.is_some() {
+                                    ui.horizontal(|ui| {
+                                        ui.spinner();
+                                        ui.label("Reading git config…");
+                                    });
+                                } else {
+                                    grid(ui, "set-ssh", |ui| {
+                                        ui.label("Global (~/.gitconfig):");
+                                        ssh_field(ui, &mut self.ssh.global);
+                                        ui.end_row();
+                                        if self.repo.is_some() {
+                                            ui.label("This repository:");
+                                            ssh_field(ui, &mut self.ssh.repo);
+                                            ui.end_row();
+                                        }
+                                    });
+                                    if let Some(r) = &self.repo {
+                                        hint(ui, format!("The repository value ({}) overrides the global one.", r.display()));
+                                    } else {
+                                        hint(ui, "Open a repository to set a value for it only.");
+                                    }
+                                    hint(ui, "Empty uses git's default: on Windows, the OpenSSH bundled with Git (agent through SSH_AUTH_SOCK). Windows OpenSSH uses the Windows ssh-agent service. Written to git config only when you click Save.");
+                                    hint(ui, "Agent, keys and a connection test: More ▸ Authentication… in a repository.");
+                                }
+                            }
                         }
                     });
                 });
             });
             if let Some(e) = &self.save_error {
-                error(ui, format!("Saving the git identity failed: {e}"));
+                error(ui, format!("Saving git config failed: {e}"));
             }
             if saving {
                 ui.horizontal(|ui| {
@@ -561,38 +695,85 @@ impl AppDialog for SettingsDialog {
             Outcome::Ok => {
                 self.apply(shared.settings);
                 shared.actions.push(Action::ApplySettings);
-                let changed = self
-                    .identity_loaded
-                    .as_ref()
-                    .is_some_and(|l| *l != self.identity);
-                if !changed {
+                let changes = config_changes(
+                    self.identity_loaded.as_ref().map(|l| (l, &self.identity)),
+                    self.ssh_loaded.as_ref().map(|l| (l, &self.ssh)),
+                    self.repo.as_deref(),
+                );
+                if changes.is_empty() {
                     return false;
                 }
-                let loaded = self.identity_loaded.clone().unwrap_or_default();
-                let new = self.identity.clone();
                 let log = shared.log.clone();
                 self.save_error = None;
                 self.saving = Some(Task::spawn(ctx, move || {
-                    let git = gk_cli::Git::new(std::env::temp_dir(), log);
-                    for (key, old, v) in [
-                        ("user.name", &loaded.name, &new.name),
-                        ("user.email", &loaded.email, &new.email),
-                    ] {
-                        let v = v.trim();
-                        if v == old.trim() {
-                            continue;
-                        }
-                        let r = if v.is_empty() {
-                            git.run(&["config", "--global", "--unset", key]).map(|_| ())
-                        } else {
-                            git.run(&["config", "--global", key, v]).map(|_| ())
+                    for c in changes {
+                        let (cwd, scope) = match &c.repo {
+                            Some(r) => (r.clone(), "--local"),
+                            None => (std::env::temp_dir(), "--global"),
                         };
-                        r.map_err(|e| format!("{e:#}"))?;
+                        let git = gk_cli::Git::new(cwd, log.clone());
+                        let r = if c.value.is_empty() {
+                            git.run(&["config", scope, "--unset", c.key])
+                        } else {
+                            git.run(&["config", scope, c.key, &c.value])
+                        };
+                        r.map_err(|e| format!("{}: {e:#}", c.key))?;
                     }
                     Ok(())
                 }));
                 true
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_changes_only_for_edited_values() {
+        let id = Identity {
+            name: "A".into(),
+            email: "a@x".into(),
+        };
+        let ssh = SshCommands {
+            global: String::new(),
+            repo: "ssh -v".into(),
+        };
+        let repo = Path::new("C:/r");
+        assert!(config_changes(Some((&id, &id)), Some((&ssh, &ssh)), Some(repo)).is_empty());
+        assert!(config_changes(None, None, Some(repo)).is_empty());
+        let id2 = Identity {
+            name: " A ".into(),
+            email: "b@x".into(),
+        };
+        let ssh2 = SshCommands {
+            global: "C:/Windows/System32/OpenSSH/ssh.exe".into(),
+            repo: String::new(),
+        };
+        let c = config_changes(Some((&id, &id2)), Some((&ssh, &ssh2)), Some(repo));
+        assert_eq!(
+            c,
+            [
+                ConfigChange {
+                    repo: None,
+                    key: "user.email",
+                    value: "b@x".into()
+                },
+                ConfigChange {
+                    repo: None,
+                    key: "core.sshCommand",
+                    value: "C:/Windows/System32/OpenSSH/ssh.exe".into()
+                },
+                ConfigChange {
+                    repo: Some(repo.to_path_buf()),
+                    key: "core.sshCommand",
+                    value: String::new()
+                },
+            ]
+        );
+        // Without an open repository, the repository value is never written.
+        assert_eq!(config_changes(None, Some((&ssh, &ssh2)), None).len(), 1);
     }
 }

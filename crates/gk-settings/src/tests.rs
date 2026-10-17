@@ -275,6 +275,7 @@ fn repo_state_roundtrip_and_path() {
     st.history_scope = "current".into();
     st.layout.sidebar_width = 300.0;
     st.last_view = "changes".into();
+    st.commit_graph_offer_dismissed = true;
     st.file_view_tree = true;
     st.save(&wd).unwrap();
     assert_eq!(RepoState::load(&wd), st);
