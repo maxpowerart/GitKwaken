@@ -38,7 +38,7 @@ gk-bench ──► gk-core / gk-status / gk-graph   (measurements on real repos)
 - **Status engine.** The default full scan is `git status --porcelain=v2` (faster on Windows
   with `core.fscache`, and it talks to the fsmonitor daemon); the gitoxide engine is an
   option. The watcher fast path always works in process on the gix index.
-- **UI toolkit.** egui on a custom Direct3D 11 host (`gk-dx11`) instead of GPUI.
+- **UI toolkit.** egui on a custom Direct3D 11 host (`gk-dx11`) instead of GPUI — decided after the M0 spike and recorded in the design doc (no longer a deviation from the approved plan).
 - **Packaging.** Inno Setup installer, zip and winget manifests instead of cargo-dist / MSI.
 - **Highlighting.** Diffs up to 20k lines are highlighted whole on a background thread
   rather than only the visible lines; larger diffs are not highlighted.

@@ -11,7 +11,7 @@ Status legend:
 
 Evidence uses `impl:` for the code, `UI:` for the entry point, `test:` for unit/integration tests (`crate/path.rs::fn`), `E2E:` for UI scenarios (`scripts/e2e/*.script`, run by `scripts/run-e2e*.sh`; `fa-*` by `run-e2e-features-a.sh`, `fb-*` by `run-e2e-features-b.sh`; all six suites run in CI through `scripts/ci-e2e.sh` / `.github/workflows/e2e.yml`). Paths are relative to the repo root. `it/` = `crates/gk-core/tests/it/`.
 
-Summary: 167 requirements. **162 Done, 1 Partial, 0 Missing, 4 Deviation.** The open items are under Gaps.
+Summary: 167 requirements. **163 Done, 1 Partial, 0 Missing, 3 Deviation.** The open items are under Gaps.
 
 Measurements (Windows 11, release builds, 2026-10-17; details and commands are in `docs/BENCHMARKS.md`):
 
@@ -255,7 +255,7 @@ Measurements (Windows 11, release builds, 2026-10-17; details and commands are i
 | Requirement | Status | Evidence | Note |
 |---|---|---|---|
 | Rust | Done | `Cargo.toml:7` (edition 2024) | |
-| UI: egui + DX11 instead of GPUI | Deviation | `crates/gk-dx11`, `docs/ARCHITECTURE.md` (Rendering) | Documented. |
+| UI: egui on a Direct3D 11 host (design doc, "Решения по итогам M0": egui 0.35 instead of GPUI after the spike; DX11 agreed with the user) | Done | `crates/gk-dx11` (winit + egui-directx11, WARP fallback, device-lost recovery), eframe host off Windows; `docs/ARCHITECTURE.md` (Rendering); spike numbers in the design doc: egui 120 FPS / 21 ms worst frame vs GPUI 113 FPS / 46 ms on 1M rows | The original stack table named GPUI; the M0 decision replaced it. |
 | gix | Done | `Cargo.toml:11` (gix 0.89) | |
 | git CLI | Done | `crates/gk-cli` | |
 | imara-diff | Done | `crates/gk-diff/Cargo.toml:8` | |
