@@ -126,6 +126,56 @@ pub fn paint_row(p: &Painter, g: &RowGraph) {
     }
 }
 
+/// When row `row` needs more lanes than fit in the (capped) graph column
+/// `cell`, fades its right edge into the row background: `bg` is the panel,
+/// `row_fill` the translucent stripe/selection fill painted over it.
+pub fn fade_overflow(
+    p: &Painter,
+    layout: &Layout,
+    row: usize,
+    cell: Rect,
+    lane_w: f32,
+    bg: Color32,
+    row_fill: Option<Color32>,
+) {
+    let Some(r) = layout.rows.get(row) else {
+        return;
+    };
+    let needed = r.width.clamp(1, MAX_LANES) as f32 * lane_w + PAD * 2.0;
+    if needed <= cell.width() + 0.5 {
+        return;
+    }
+    let w = (lane_w * 2.0).min(cell.width() / 3.0);
+    let fade = Rect::from_min_max(pos2(cell.right() - w, cell.top()), cell.max);
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(fade.left_top(), Color32::TRANSPARENT);
+    mesh.colored_vertex(fade.right_top(), bg);
+    mesh.colored_vertex(fade.right_bottom(), bg);
+    mesh.colored_vertex(fade.left_bottom(), Color32::TRANSPARENT);
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    p.add(mesh);
+    if let Some(c) = row_fill {
+        p.rect_filled(fade, 0.0, c);
+    }
+    // The commit's own node is cut off: point at it from the edge.
+    if lane_x(cell.left(), r.lane, lane_w) > cell.right() - w {
+        let color = crate::theme::lane_color(r.color);
+        let cy = cell.center().y;
+        let s = (cell.height() * 0.2).clamp(3.0, 5.0);
+        let tip = cell.right() - 2.0;
+        p.add(Shape::convex_polygon(
+            vec![
+                pos2(tip - s * 1.4, cy - s),
+                pos2(tip, cy),
+                pos2(tip - s * 1.4, cy + s),
+            ],
+            color,
+            Stroke::NONE,
+        ));
+    }
+}
+
 /// The synthetic "uncommitted changes" node, connected by a dashed line to
 /// the HEAD commit's node. `from_row_rect` is the synthetic row, `head_center`
 /// the HEAD node (possibly far outside the viewport), `visible` the

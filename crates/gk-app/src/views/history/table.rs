@@ -19,6 +19,9 @@ pub struct Columns {
     pub date: f32,
     pub author: f32,
     pub commit: f32,
+    /// User-set maximum width of the graph column (dragging the
+    /// graph/description separator); `None`: [`DEFAULT_GRAPH_LANES`] lanes.
+    pub graph_max: Option<f32>,
 }
 
 impl Default for Columns {
@@ -26,9 +29,35 @@ impl Default for Columns {
         Self {
             date: 130.0,
             author: 150.0,
-            commit: 72.0,
+            commit: 80.0,
+            graph_max: None,
         }
     }
+}
+
+/// Lanes visible in the graph column before it is capped (and faded), unless
+/// the user widens it.
+pub const DEFAULT_GRAPH_LANES: f32 = 12.0;
+
+impl Columns {
+    /// Maximum graph column width for lanes `lane_w` wide.
+    pub fn graph_cap(&self, lane_w: f32) -> f32 {
+        self.graph_max
+            .unwrap_or(DEFAULT_GRAPH_LANES * lane_w + 8.0)
+            .max(lane_w + 8.0)
+    }
+}
+
+/// A scroll request for [`virtual_list`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ScrollTo {
+    /// Bring the row into view with minimal scrolling (keyboard stepping).
+    Reveal(usize),
+    /// Jump to a row: unless already in the upper half of the view, place it
+    /// about a quarter down so its context (newer commits) stays visible.
+    Jump(usize),
+    /// Scroll by this many points (positive: down).
+    By(f32),
 }
 
 /// Absolute x ranges of the columns for one frame.
@@ -42,6 +71,9 @@ pub struct ColRects {
 }
 
 const MIN_COL: f32 = 40.0;
+/// Bounds of a user-dragged graph column width.
+const MIN_GRAPH: f32 = 24.0;
+const MAX_GRAPH: f32 = 600.0;
 const MIN_DESC: f32 = 120.0;
 const CELL_PAD: f32 = 6.0;
 
@@ -106,13 +138,17 @@ pub fn header(ui: &mut Ui, id: Id, cols: &mut Columns, rects: &ColRects, with_gr
     title(rects.author, "Author");
     title(rects.commit, "Commit");
 
-    // Draggable separators: (x, which).
+    // Draggable separators: (x, which); 3 is the graph/description edge.
     let seps = [
         (rects.date.min, 0),
         (rects.author.min, 1),
         (rects.commit.min, 2),
+        (rects.graph.max, 3),
     ];
     for (x, which) in seps {
+        if which == 3 && !with_graph {
+            continue;
+        }
         let r = Rect::from_x_y_ranges(Rangef::new(x - 3.0, x + 3.0), rect.y_range());
         let resp = ui.interact(r, id.with(("colsep", which)), Sense::drag());
         let active = resp.hovered() || resp.dragged();
@@ -137,6 +173,10 @@ pub fn header(ui: &mut Ui, id: Id, cols: &mut Columns, rects: &ColRects, with_gr
                     let na = (cols.author - (nd - cols.date)).max(MIN_COL);
                     cols.date = nd;
                     cols.author = na;
+                }
+                3 => {
+                    // From the shown width: the column may be narrower than its cap.
+                    cols.graph_max = Some((rects.graph.span() + dx).clamp(MIN_GRAPH, MAX_GRAPH));
                 }
                 _ => {
                     let na = (cols.author + dx).max(MIN_COL);
@@ -194,14 +234,14 @@ pub fn visible_rows(y0: f32, y1: f32, row_h: f32, n: usize) -> Range<usize> {
 }
 
 /// A virtualized list of `n` equally tall rows. Only the visible range is
-/// passed to `paint`. `scroll_to` brings a row into view. The returned
+/// passed to `paint`. `scroll_to` scrolls (see [`ScrollTo`]). The returned
 /// response is focusable (click it to focus) and carries the context menu.
 pub fn virtual_list(
     ui: &mut Ui,
     id: Id,
     n: usize,
     row_h: f32,
-    scroll_to: Option<usize>,
+    scroll_to: Option<ScrollTo>,
     paint: impl FnOnce(&ListFrame, Range<usize>),
 ) -> ListOutput {
     egui::ScrollArea::vertical()
@@ -246,15 +286,37 @@ pub fn virtual_list(
             if response.clicked() || response.secondary_clicked() {
                 response.request_focus();
             }
-            if let Some(r) = scroll_to.filter(|r| *r < n) {
-                let rr = Rect::from_x_y_ranges(
+            let row_rect = |r: usize| {
+                Rect::from_x_y_ranges(
                     screen.x_range(),
                     Rangef::new(top + r as f32 * row_h, top + (r + 1) as f32 * row_h),
-                );
-                // Only scroll when needed, keeping a little context.
-                if rr.top() < screen.top() || rr.bottom() > screen.bottom() {
-                    ui.scroll_to_rect(rr, None);
+                )
+            };
+            match scroll_to {
+                Some(ScrollTo::Reveal(r)) if r < n => {
+                    let rr = row_rect(r);
+                    // Only scroll when needed.
+                    if rr.top() < screen.top() || rr.bottom() > screen.bottom() {
+                        ui.scroll_to_rect(rr, None);
+                    }
                 }
+                Some(ScrollTo::Jump(r)) if r < n => {
+                    let rr = row_rect(r);
+                    let upper_half = screen.top() + screen.height() * 0.5;
+                    if rr.top() < screen.top() || rr.bottom() > upper_half {
+                        let above = (screen.height() * 0.25).min(rr.top() - top);
+                        let target = Rect::from_x_y_ranges(
+                            rr.x_range(),
+                            Rangef::new(rr.top() - above, rr.bottom()),
+                        );
+                        ui.scroll_to_rect(target, Some(egui::Align::Min));
+                    }
+                }
+                Some(ScrollTo::By(dy)) => ui.scroll_with_delta_animation(
+                    vec2(0.0, -dy),
+                    egui::style::ScrollAnimation::none(),
+                ),
+                _ => {}
             }
             let painter = ui.painter().clone();
             let frame = ListFrame {
@@ -328,21 +390,32 @@ pub fn paint_row_bg(
     palette: &Palette,
     v: &egui::Visuals,
 ) {
+    if let Some(c) = row_bg(f, row, selected, focused, palette, v) {
+        f.painter.rect_filled(rect, 0.0, c);
+    }
+}
+
+/// The fill [`paint_row_bg`] paints over the panel for a row, if any.
+pub fn row_bg(
+    f: &ListFrame,
+    row: usize,
+    selected: bool,
+    focused: bool,
+    palette: &Palette,
+    v: &egui::Visuals,
+) -> Option<Color32> {
     if selected {
-        let c = if focused {
+        Some(if focused {
             palette.selection
         } else {
             palette.selection.gamma_multiply(0.6)
-        };
-        f.painter.rect_filled(rect, 0.0, c);
+        })
     } else if f.hovered == Some(row) {
-        f.painter.rect_filled(
-            rect,
-            0.0,
-            v.widgets.hovered.weak_bg_fill.gamma_multiply(0.5),
-        );
+        Some(v.widgets.hovered.weak_bg_fill.gamma_multiply(0.5))
     } else if row % 2 == 1 {
-        f.painter.rect_filled(rect, 0.0, v.faint_bg_color);
+        Some(v.faint_bg_color)
+    } else {
+        None
     }
 }
 
@@ -366,10 +439,51 @@ pub fn cell_text(p: &Painter, cell: Rect, text: String, font: &FontId, color: Co
         return;
     }
     let g = text_trunc(p, text, font.clone(), color, w);
-    let pos = pos2(cell.left() + CELL_PAD, cell.center().y - g.size().y / 2.0);
+    let pos = pos2(cell.left() + CELL_PAD, text_top(&g, font, cell.center().y));
     p.with_clip_rect(cell.intersect(p.clip_rect()))
         .galley(pos, g, color);
 }
+
+/// Paints single-line `text` starting at `x`, vertically centered on `cy`
+/// like [`cell_text`] (baseline-aligned across fonts).
+pub fn text_at(p: &Painter, x: f32, cy: f32, text: String, font: &FontId, color: Color32) {
+    let g = p.layout_no_wrap(text, font.clone(), color);
+    let top = text_top(&g, font, cy);
+    p.galley(pos2(x, top), g, color);
+}
+
+/// Like [`text_at`], but right-aligned to `right`.
+pub fn text_right_at(
+    p: &Painter,
+    right: f32,
+    cy: f32,
+    text: String,
+    font: &FontId,
+    color: Color32,
+) {
+    let g = p.layout_no_wrap(text, font.clone(), color);
+    let top = text_top(&g, font, cy);
+    p.galley(pos2(right - g.size().x, top), g, color);
+}
+
+/// Top y for a single-line galley so its baseline sits where proportional
+/// text centered on `cy` would have it. Fonts differ in ascent/line gap
+/// (Consolas vs Segoe UI), so centering the galley box puts monospace text
+/// visibly higher than its neighbours.
+pub fn text_top(g: &egui::Galley, font: &FontId, cy: f32) -> f32 {
+    let baseline = g
+        .rows
+        .first()
+        .and_then(|r| r.glyphs.first().map(|gl| r.pos.y + gl.pos.y));
+    match baseline {
+        Some(b) => (cy + font.size * BASELINE_BELOW_CENTER - b).round(),
+        None => cy - g.size().y / 2.0,
+    }
+}
+
+/// Baseline offset below a cell's center, in ems (cap height ≈ 0.7 em, so
+/// capitals and digits end up centered).
+const BASELINE_BELOW_CENTER: f32 = 0.36;
 
 /// Display text and color of a ref label, `None` when hidden by settings.
 pub fn label_style(
@@ -411,7 +525,8 @@ pub fn paint_chip(
     if room < 16.0 {
         return x;
     }
-    let g = text_trunc(p, text, font.clone(), Color32::WHITE, room.min(220.0));
+    let fg = chip_text_color(color);
+    let g = text_trunc(p, text, font.clone(), fg, room.min(220.0));
     let size = g.size();
     let rect = Rect::from_min_size(
         pos2(x, cy - size.y / 2.0 - 1.0),
@@ -422,17 +537,35 @@ pub fn paint_chip(
         p.rect_stroke(
             rect,
             CornerRadius::same(3),
-            Stroke::new(1.0, Color32::WHITE),
+            Stroke::new(1.0, fg),
             egui::StrokeKind::Inside,
         );
-        p.galley(
-            pos2(rect.left() + 4.5, rect.top() + 1.0),
-            g.clone(),
-            Color32::WHITE,
-        );
+        p.galley(pos2(rect.left() + 4.5, rect.top() + 1.0), g.clone(), fg);
     }
-    p.galley(pos2(rect.left() + 4.0, rect.top() + 1.0), g, Color32::WHITE);
+    p.galley(pos2(rect.left() + 4.0, rect.top() + 1.0), g, fg);
     rect.right() + 4.0
+}
+
+/// White or near-black, whichever contrasts more with the chip `bg`
+/// (WCAG relative luminance).
+pub fn chip_text_color(bg: Color32) -> Color32 {
+    let lin = |c: u8| {
+        let c = c as f32 / 255.0;
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let l = 0.2126 * lin(bg.r()) + 0.7152 * lin(bg.g()) + 0.0722 * lin(bg.b());
+    let on_white = 1.05 / (l + 0.05);
+    let on_black = (l + 0.05) / 0.05;
+    // Prefer white unless dark text is clearly more readable.
+    if on_white >= 4.0 || on_white * 1.6 >= on_black {
+        Color32::WHITE
+    } else {
+        Color32::from_gray(20)
+    }
 }
 
 /// Style shared by all cells of a frame.
@@ -545,6 +678,7 @@ mod tests {
             date: 100.0,
             author: 100.0,
             commit: 50.0,
+            graph_max: None,
         };
         let r = layout_columns(0.0, 1000.0, 60.0, &c);
         assert_eq!(r.graph, Rangef::new(0.0, 60.0));
@@ -558,5 +692,34 @@ mod tests {
         // Too narrow for anything: ranges stay ordered.
         let r = layout_columns(0.0, 50.0, 30.0, &c);
         assert!(r.desc.min <= r.desc.max && r.graph.min <= r.graph.max);
+    }
+
+    #[test]
+    fn graph_cap_defaults_and_overrides() {
+        let mut c = Columns::default();
+        assert_eq!(c.graph_cap(14.0), DEFAULT_GRAPH_LANES * 14.0 + 8.0);
+        c.graph_max = Some(100.0);
+        assert_eq!(c.graph_cap(14.0), 100.0);
+        // Never narrower than one lane.
+        c.graph_max = Some(1.0);
+        assert_eq!(c.graph_cap(14.0), 22.0);
+    }
+
+    #[test]
+    fn chip_text_contrast() {
+        // Dark chips get white text, bright ones dark text.
+        assert_eq!(
+            chip_text_color(Color32::from_rgb(0x1A, 0x7F, 0x37)),
+            Color32::WHITE
+        );
+        assert_eq!(
+            chip_text_color(Color32::from_rgb(0x6A, 0x43, 0xB2)),
+            Color32::WHITE
+        );
+        assert_ne!(
+            chip_text_color(Color32::from_rgb(0xE8, 0xC1, 0x3D)),
+            Color32::WHITE
+        );
+        assert_ne!(chip_text_color(Color32::WHITE), Color32::WHITE);
     }
 }

@@ -18,6 +18,11 @@ use model::{Layout, LineKey, NONE, Row, Selection};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ops::Range;
+
+/// Below this width the diff header puts the path on its own row.
+const NARROW_TOOLBAR: f32 = 560.0;
+/// Below this width the header toggles use short labels.
+const SHORT_LABELS: f32 = 470.0;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -254,6 +259,7 @@ impl DiffView {
         }
     }
 
+    /// Diff header: file path, change counts and view controls.
     #[allow(clippy::too_many_arguments)]
     fn toolbar(
         &mut self,
@@ -266,30 +272,26 @@ impl DiffView {
         shared: &mut Shared,
     ) {
         let p = shared.palette;
+        let path_labels = |ui: &mut Ui| {
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                let path = target.path();
+                let (dir, name) = split_path(path);
+                ui.add(egui::Label::new(RichText::new(name).strong()).truncate())
+                    .on_hover_text(path);
+                if !dir.is_empty() {
+                    ui.add(egui::Label::new(RichText::new(dir).color(p.muted)).truncate());
+                }
+            });
+        };
+        // Narrow panes: the path gets its own row above the controls.
+        let narrow = ui.available_width() < NARROW_TOOLBAR;
+        let short = ui.available_width() < SHORT_LABELS;
+        if narrow {
+            ui.horizontal(|ui| path_labels(ui));
+        }
+        // Controls are laid out first (right to left) so the path label only
+        // gets the space left over and truncates instead of overlapping them.
         ui.horizontal(|ui| {
-            let path = target.path();
-            let (dir, name) = split_path(path);
-            ui.label(RichText::new(name).strong()).on_hover_text(path);
-            if !dir.is_empty() {
-                ui.add(egui::Label::new(RichText::new(dir).color(p.muted)).truncate());
-            }
-            if let Some(s) = self.shown.as_ref().filter(|_| current)
-                && !s.diff.binary
-            {
-                ui.label(
-                    RichText::new(format!("+{}", s.diff.additions))
-                        .color(p.added_fg)
-                        .monospace(),
-                );
-                ui.label(
-                    RichText::new(format!("−{}", s.diff.deletions))
-                        .color(p.removed_fg)
-                        .monospace(),
-                );
-            }
-            if spinner {
-                ui.spinner();
-            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let has_diff = current
                     && self
@@ -319,14 +321,17 @@ impl DiffView {
                     s.word_diff = self.word_diff;
                 }
                 if ui
-                    .toggle_value(&mut self.ignore_ws, "Ignore WS")
+                    .toggle_value(&mut self.ignore_ws, if short { "WS" } else { "Ignore WS" })
                     .on_hover_text("Ignore whitespace (disables hunk and line staging)")
                     .changed()
                 {
                     s.ignore_whitespace = self.ignore_ws;
                 }
-                ui.toggle_value(&mut self.whole_file, "Whole file")
-                    .on_hover_text("Show the whole file");
+                ui.toggle_value(
+                    &mut self.whole_file,
+                    if short { "Whole" } else { "Whole file" },
+                )
+                .on_hover_text("Show the whole file");
                 ui.add_enabled_ui(!self.whole_file, |ui| {
                     ui.add(
                         egui::DragValue::new(&mut s.context_lines)
@@ -355,6 +360,19 @@ impl DiffView {
                     .clicked()
                 {
                     self.jump_hunk(false);
+                }
+                if let Some(s) = self.shown.as_ref().filter(|_| current)
+                    && !s.diff.binary
+                {
+                    // Right to left: deletions first so the order reads "+a −d".
+                    ui.label(RichText::new(format!("−{}", s.diff.deletions)).color(p.removed_fg));
+                    ui.label(RichText::new(format!("+{}", s.diff.additions)).color(p.added_fg));
+                }
+                if spinner {
+                    ui.spinner();
+                }
+                if !narrow {
+                    path_labels(ui);
                 }
             });
         });

@@ -105,6 +105,24 @@ impl RepoTab {
                 _ => {}
             }
         }
+        // Debug/screenshot aid: `GITKWAKEN_SELECT=<repo-relative path>` focuses
+        // that file in File Status (and in commit details when it is changed).
+        if let Ok(p) = std::env::var("GITKWAKEN_SELECT")
+            && !p.is_empty()
+        {
+            tab.status.preselect(p.clone());
+            tab.details.preselect(p);
+        }
+        // Debug/screenshot aid: `GITKWAKEN_SEARCH=<text>` runs a commit search
+        // on startup (and shows the Search view).
+        if let Ok(q) = std::env::var("GITKWAKEN_SEARCH")
+            && !q.is_empty()
+        {
+            tab.search.start_query(q);
+            tab.view = View::Search;
+        }
+        // Other dev aids: `GITKWAKEN_AUTOSCROLL` (views/history.rs),
+        // `GITKWAKEN_PALETTE` (views/palette.rs).
         Ok(tab)
     }
 
@@ -186,7 +204,14 @@ impl RepoTab {
         views::statusbar::show(ui, self, &snap, shared);
         let side = egui::Panel::left(egui::Id::new(("sidebar", &self.path)))
             .resizable(true)
-            .default_size(self.state.layout.sidebar_width.max(160.0))
+            // Small windows: keep the default sidebar to a fifth of the width.
+            .default_size(
+                self.state
+                    .layout
+                    .sidebar_width
+                    .min(ui.available_width() * 0.2)
+                    .max(160.0),
+            )
             .size_range(140.0..=480.0)
             .show(ui, |ui| views::sidebar::show(ui, self, &snap, shared));
         self.state.layout.sidebar_width = side.response.rect.width();

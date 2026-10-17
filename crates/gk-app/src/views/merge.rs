@@ -444,7 +444,7 @@ fn header(ui: &mut Ui, st: &mut MergeState, act: &mut Option<Act>, p: crate::the
     ui.add_space(2.0);
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("Merge").strong());
-        ui.label(egui::RichText::new(&st.path).monospace());
+        ui.label(egui::RichText::new(&st.path).strong());
         ui.separator();
         let total = st.data.as_ref().map_or(0, |d| d.conflicts.len());
         let mergeable = st.data.as_ref().is_some_and(|d| d.unmergeable.is_none());
@@ -774,6 +774,8 @@ fn result_editor(ui: &mut Ui, st: &mut MergeState, d: &Loaded, p: crate::theme::
         ours: p.hunk_bg,
         theirs: Color32::from_rgba_unmultiplied(p.conflict.r(), p.conflict.g(), p.conflict.b(), 30),
     };
+    let fill_h = (ui.available_height() - 12.0).max(0.0);
+    let fill_rows = ((fill_h / st.result_row_h.max(1.0)).floor() as usize).max(8);
     sa.show(ui, |ui| {
         let mut layouter = |ui: &Ui, buf: &dyn egui::TextBuffer, wrap: f32| {
             let mut job = if buf.as_str().len() <= HIGHLIGHT_LIMIT {
@@ -793,7 +795,9 @@ fn result_editor(ui: &mut Ui, st: &mut MergeState, d: &Loaded, p: crate::theme::
             egui::TextEdit::multiline(&mut st.result)
                 .code_editor()
                 .desired_width(f32::INFINITY)
-                .desired_rows(8)
+                // Fill the pane (clicks below the text still focus it); TextEdit
+                // ignores a minimum height, so ask for enough rows.
+                .desired_rows(fill_rows)
                 .id_salt("gk-merge-result-text")
                 .layouter(&mut layouter),
         );

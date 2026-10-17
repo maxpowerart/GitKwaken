@@ -436,11 +436,12 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
                         dim(p.head),
                     );
                     x += 18.0;
-                    painter.text(
-                        pos2(x, cy),
-                        Align2::LEFT_CENTER,
-                        e.kind.code(),
-                        mono.clone(),
+                    crate::views::history::table::text_at(
+                        &painter,
+                        x,
+                        cy,
+                        e.kind.code().to_string(),
+                        &mono,
                         dim(crate::util::status_color(&p, e.kind)),
                     );
                     x += 14.0;

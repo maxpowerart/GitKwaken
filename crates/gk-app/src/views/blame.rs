@@ -3,6 +3,7 @@
 
 use crate::app::Shared;
 use crate::tab::{RepoTab, View};
+use crate::views::history::table;
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Color32, Pos2, Rect, Sense, Ui, vec2};
 use gk_core::Snapshot;
@@ -231,7 +232,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, _snap: &Snapshot, shared: &mut Share
                 act = Some(Act::Back);
             }
             ui.label(egui::RichText::new("Blame").strong());
-            ui.label(egui::RichText::new(&st.path).monospace());
+            ui.label(egui::RichText::new(&st.path).strong());
             let rev = st.rev.as_deref().map(|r| {
                 if r.len() == 40 {
                     crate::util::short_id(r)
@@ -445,17 +446,15 @@ fn body(
                 };
                 let job = highlight_job(&shown, &query, &font, text_color, bg);
                 let galley = ui.ctx().fonts_mut(|f| f.layout_job(job));
-                painter.galley(
-                    Pos2::new(code_pos.x - vp.min.x, y + (row_h - galley.size().y) / 2.0),
-                    galley,
-                    text_color,
-                );
+                let top = table::text_top(&galley, &font, code_pos.y);
+                painter.galley(Pos2::new(code_pos.x - vp.min.x, top), galley, text_color);
             } else {
-                painter.text(
-                    Pos2::new(code_pos.x - vp.min.x, code_pos.y),
-                    egui::Align2::LEFT_CENTER,
-                    shown,
-                    font.clone(),
+                table::text_at(
+                    &painter,
+                    code_pos.x - vp.min.x,
+                    code_pos.y,
+                    shown.into_owned(),
+                    &font,
                     text_color,
                 );
             }
@@ -484,28 +483,21 @@ fn body(
                 } else {
                     (crate::util::short_id(&c.id).to_string(), p.branch)
                 };
-                clip.text(
-                    Pos2::new(gx + 10.0, mid),
-                    egui::Align2::LEFT_CENTER,
-                    id_text,
-                    font.clone(),
-                    id_color,
-                );
+                table::text_at(&clip, gx + 10.0, mid, id_text, &font, id_color);
                 let author = if uncommitted {
                     "Not committed yet"
                 } else {
                     c.author.as_str()
                 };
                 let ar = Rect::from_min_size(Pos2::new(gx + 10.0 + id_w, y), vec2(author_w, row_h));
-                painter
-                    .with_clip_rect(ar.intersect(painter.clip_rect()))
-                    .text(
-                        ar.left_center(),
-                        egui::Align2::LEFT_CENTER,
-                        author,
-                        small.clone(),
-                        text_color,
-                    );
+                table::text_at(
+                    &painter.with_clip_rect(ar.intersect(painter.clip_rect())),
+                    ar.left(),
+                    mid,
+                    author.to_string(),
+                    &small,
+                    text_color,
+                );
                 if !uncommitted {
                     let date = crate::util::format_time(c.author_time, 0, relative);
                     let date = if relative {
@@ -513,21 +505,23 @@ fn body(
                     } else {
                         date.chars().take(10).collect()
                     };
-                    clip.text(
-                        Pos2::new(gx + 10.0 + id_w + author_w + 8.0, mid),
-                        egui::Align2::LEFT_CENTER,
+                    table::text_at(
+                        &clip,
+                        gx + 10.0 + id_w + author_w + 8.0,
+                        mid,
                         date,
-                        small.clone(),
+                        &small,
                         p.muted,
                     );
                 }
             }
             // Line number.
-            painter.text(
-                Pos2::new(gx + gutter_w + num_w - 8.0, y + row_h / 2.0),
-                egui::Align2::RIGHT_CENTER,
+            table::text_right_at(
+                &painter,
+                gx + gutter_w + num_w - 8.0,
+                y + row_h / 2.0,
                 (i + 1).to_string(),
-                font.clone(),
+                &font,
                 p.muted,
             );
 

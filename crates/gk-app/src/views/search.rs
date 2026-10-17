@@ -352,7 +352,12 @@ fn results_table(
             );
         }
     }
-    let scroll_row = tab.search.scroll_to.take().and_then(|k| row_of(&k));
+    let scroll_row = tab
+        .search
+        .scroll_to
+        .take()
+        .and_then(|k| row_of(&k))
+        .map(table::ScrollTo::Reveal);
 
     let left = ui.max_rect().left();
     let right = left + ui.available_width();

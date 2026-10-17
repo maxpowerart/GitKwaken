@@ -14,8 +14,29 @@ pub const LANES: [Color32; 8] = [
     Color32::from_rgb(0x9A, 0xB8, 0x4E),
 ];
 
+/// Darker lane colors for the light theme (the dark-theme yellow, cyan and
+/// light green are hard to see on white).
+pub const LANES_LIGHT: [Color32; 8] = [
+    Color32::from_rgb(0x1F, 0x6F, 0xD6),
+    Color32::from_rgb(0xD9, 0x5A, 0x1F),
+    Color32::from_rgb(0x1E, 0x9A, 0x62),
+    Color32::from_rgb(0x9B, 0x4D, 0xCA),
+    Color32::from_rgb(0xB0, 0x86, 0x00),
+    Color32::from_rgb(0x0E, 0x93, 0xA6),
+    Color32::from_rgb(0xD0, 0x3B, 0x6E),
+    Color32::from_rgb(0x6A, 0x8A, 0x1F),
+];
+
+/// Whether [`apply`] last selected the light theme.
+static LIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 pub fn lane_color(i: u16) -> Color32 {
-    LANES[i as usize % LANES.len()]
+    let lanes = if LIGHT.load(std::sync::atomic::Ordering::Relaxed) {
+        &LANES_LIGHT
+    } else {
+        &LANES
+    };
+    lanes[i as usize % lanes.len()]
 }
 
 #[derive(Clone, Copy)]
@@ -134,6 +155,7 @@ pub fn apply(
             .map(|t| t == egui::Theme::Dark)
             .unwrap_or(true),
     };
+    LIGHT.store(!dark, std::sync::atomic::Ordering::Relaxed);
     let mut visuals = if dark {
         Visuals::dark()
     } else {

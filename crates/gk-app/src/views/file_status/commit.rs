@@ -176,9 +176,8 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared
                 p.muted
             };
             ui.label(
-                RichText::new(format!("{subject_len}/{guide}"))
-                    .color(color)
-                    .monospace(),
+                // Proportional: monospace sits higher than the neighbours.
+                RichText::new(format!("{subject_len}/{guide}")).color(color),
             )
             .on_hover_text("Subject line length");
             ui.toggle_value(&mut cb.monospace, RichText::new("Aa").monospace())
@@ -241,7 +240,10 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared
             .color
             .gamma_multiply(0.8);
         let gx = x0 + guide as f32 * char_w;
-        painter.vline(gx, top..=top + row_h, egui::Stroke::new(1.0, faint));
+        // Not over the hint text of an empty message.
+        if !cb.message.is_empty() {
+            painter.vline(gx, top..=top + row_h, egui::Stroke::new(1.0, faint));
+        }
         if body_col > 0 && cb.monospace {
             let bx = x0 + body_col as f32 * char_w;
             painter.vline(

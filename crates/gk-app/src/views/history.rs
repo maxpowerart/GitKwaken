@@ -28,6 +28,8 @@ pub struct HistoryState {
     pub sel: Selection<ObjectId>,
     /// Pending "scroll this commit into view".
     pub scroll_to: Option<ObjectId>,
+    /// `scroll_to` is a jump (placed near the top) rather than a keyboard step.
+    scroll_jump: bool,
     pub cols: Columns,
     /// Commits the open context menu applies to, in display order.
     menu_ids: Vec<ObjectId>,
@@ -48,6 +50,7 @@ impl Default for HistoryState {
         Self {
             sel: Selection::default(),
             scroll_to: None,
+            scroll_jump: false,
             cols: Columns::default(),
             menu_ids: Vec::new(),
             page_rows: 20,
@@ -61,11 +64,26 @@ impl Default for HistoryState {
 }
 
 impl HistoryState {
-    /// Selects only `id` and scrolls it into view.
+    /// Selects only `id` and scrolls it into view, about a quarter down the
+    /// list unless it is already in the upper half.
     pub fn select_commit(&mut self, id: ObjectId) {
         self.sel.select_only(id);
         self.scroll_to = Some(id);
+        self.scroll_jump = true;
     }
+}
+
+/// Dev/benchmark aid: `GITKWAKEN_AUTOSCROLL=<rows per frame>` scrolls the
+/// commit table down by that many rows every frame (and keeps repainting),
+/// e.g. to measure scrolling frame times with `GK_DX11_FRAME_STATS=1`.
+fn autoscroll_rows() -> Option<f32> {
+    static ROWS: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+    *ROWS.get_or_init(|| {
+        std::env::var("GITKWAKEN_AUTOSCROLL")
+            .ok()
+            .and_then(|v| v.trim().parse::<f32>().ok())
+            .filter(|r| *r != 0.0 && r.is_finite())
+    })
 }
 
 pub fn head_oid(snap: &Snapshot) -> Option<ObjectId> {
@@ -308,6 +326,7 @@ fn commit_table(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Sh
                 let t = t.max(off);
                 st.sel.move_to(t, shift, key_at, row_of);
                 st.scroll_to = key_at(t);
+                st.scroll_jump = false;
             }
         }
         if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::C))
@@ -322,7 +341,23 @@ fn commit_table(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Sh
             );
         }
     }
-    let scroll_row = tab.history.scroll_to.take().and_then(|k| row_of(&k));
+    let jump = std::mem::take(&mut tab.history.scroll_jump);
+    let mut scroll = tab
+        .history
+        .scroll_to
+        .take()
+        .and_then(|k| row_of(&k))
+        .map(|r| {
+            if jump {
+                table::ScrollTo::Jump(r)
+            } else {
+                table::ScrollTo::Reveal(r)
+            }
+        });
+    if let Some(rows) = autoscroll_rows() {
+        scroll = scroll.or(Some(table::ScrollTo::By(rows * row_h)));
+        ui.ctx().request_repaint();
+    }
 
     let left = ui.max_rect().left();
     let right = left + ui.available_width();
@@ -337,7 +372,8 @@ fn commit_table(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Sh
     let visuals = ui.visuals().clone();
     let bg = visuals.panel_fill;
     let mut new_gw = tab.history.graph_w;
-    let out = table::virtual_list(ui, id, n, row_h, scroll_row, |f, range| {
+    let graph_cap = cols.graph_cap(lane_w);
+    let out = table::virtual_list(ui, id, n, row_h, scroll, |f, range| {
         let crange = range.start.saturating_sub(off)..range.end.saturating_sub(off);
         let pre_a = crange.start.saturating_sub(PREFETCH);
         let pre_b = (crange.end + PREFETCH).min(hist.len());
@@ -351,7 +387,8 @@ fn commit_table(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Sh
             .map(|r| r.lane)
             .unwrap_or(0);
         let extra = (dirty && range.start == 0).then_some(head_lane);
-        new_gw = graph::column_width(&hist.layout, crange.start, crange.end, lane_w, extra);
+        new_gw = graph::column_width(&hist.layout, crange.start, crange.end, lane_w, extra)
+            .min(graph_cap);
         let rects = table::layout_columns(f.x.min, f.x.max, new_gw, &cols);
         let graph_clip =
             Rect::from_x_y_ranges(rects.graph, f.clip_y).intersect(f.painter.clip_rect());
@@ -367,15 +404,11 @@ fn commit_table(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Sh
             }
             let cr = r - off;
             let cid = hist.ids[cr];
-            table::paint_row_bg(
-                f,
-                r,
-                rect,
-                sel.contains(&cid),
-                focused,
-                st.palette,
-                &visuals,
-            );
+            let selected = sel.contains(&cid);
+            let row_fill = table::row_bg(f, r, selected, focused, st.palette, &visuals);
+            if let Some(c) = row_fill {
+                f.painter.rect_filled(rect, 0.0, c);
+            }
             let is_head = head == Some(cid);
             graph::paint_row(
                 &gp,
@@ -389,6 +422,15 @@ fn commit_table(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Sh
                     bg,
                     head_color: st.palette.head,
                 },
+            );
+            graph::fade_overflow(
+                &gp,
+                &hist.layout,
+                cr,
+                Rect::from_x_y_ranges(rects.graph, rect.y_range()),
+                lane_w,
+                bg,
+                row_fill,
             );
             let meta = cr
                 .checked_sub(pre_a)

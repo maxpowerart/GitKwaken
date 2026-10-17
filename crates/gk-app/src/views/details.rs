@@ -22,10 +22,19 @@ pub struct DetailsState {
     last_target: Option<(ObjectId, Option<ObjectId>)>,
 }
 
+impl DetailsState {
+    /// Shows `path`'s diff when the selected commit changes it.
+    pub fn preselect(&mut self, path: String) {
+        self.selected_file = Some(path);
+    }
+}
+
 /// Something the user asked for inside the panel, applied after rendering.
 enum Act {
     SelectCommit(ObjectId),
     FileHistory(String),
+    /// Blame `path` at a revision (`None`: the working copy).
+    Blame(String, Option<String>),
 }
 
 pub fn show(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared) {
@@ -62,6 +71,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared
     match act {
         Some(Act::SelectCommit(id)) => select_anywhere(tab, snap, id),
         Some(Act::FileHistory(path)) => crate::views::search::open_file_history(tab, path),
+        Some(Act::Blame(path, rev)) => crate::views::blame::open_blame(tab, path, rev),
         None => {}
     }
 }
@@ -362,6 +372,7 @@ enum FileAct {
     Open(ObjectId, String),
     CopyPath(String),
     History(String),
+    Blame(String, Option<String>),
 }
 
 fn files_and_diff(
@@ -389,6 +400,7 @@ fn files_and_diff(
         st.filtered_key = Some(key);
     }
     let current = pick_file(files, &st.filtered, st.selected_file.as_deref());
+    let workdir = tab.path.clone();
     let mut file_act = None;
     in_rect(ui, left, "details-files", |ui| {
         ui.horizontal(|ui| {
@@ -428,11 +440,12 @@ fn files_and_diff(
                                 .gamma_multiply(0.5),
                         );
                     }
-                    p.text(
-                        pos2(rect.left() + 4.0, rect.center().y),
-                        egui::Align2::LEFT_CENTER,
-                        f.kind.code(),
-                        mono.clone(),
+                    table::text_at(
+                        p,
+                        rect.left() + 4.0,
+                        rect.center().y,
+                        f.kind.code().to_string(),
+                        &mono,
                         kind_color(f.kind, &shared.palette),
                     );
                     let text = match &f.old_path {
@@ -469,6 +482,16 @@ fn files_and_diff(
                             file_act = Some(FileAct::History(f.path.clone()));
                             ui.close();
                         }
+                        if f.new_id.is_some() && ui.button("Blame").clicked() {
+                            file_act = Some(FileAct::Blame(f.path.clone(), Some(rev.to_string())));
+                            ui.close();
+                        }
+                        if workdir.join(&f.path).is_file()
+                            && ui.button("Blame (working copy)").clicked()
+                        {
+                            file_act = Some(FileAct::Blame(f.path.clone(), None));
+                            ui.close();
+                        }
                     });
                 }
             });
@@ -499,6 +522,7 @@ fn files_and_diff(
         Some(FileAct::Open(id, path)) => open_blob(&tab.session, id, path, rev),
         Some(FileAct::CopyPath(p)) => ui.ctx().copy_text(p),
         Some(FileAct::History(p)) => *act = Some(Act::FileHistory(p)),
+        Some(FileAct::Blame(p, r)) => *act = Some(Act::Blame(p, r)),
         None => {}
     }
 }

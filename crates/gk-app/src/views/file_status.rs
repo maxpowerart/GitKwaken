@@ -61,9 +61,35 @@ pub struct StatusState {
     /// Files whose merge tool exited: ask to mark them resolved.
     ask_resolved: Vec<String>,
     confirm_abort: bool,
+    /// File to focus once the status has loaded (see [`Self::preselect`]).
+    preselect: Option<String>,
 }
 
 impl StatusState {
+    /// Focuses `path` (unstaged first, else staged) as soon as it shows up
+    /// in the status. Used by `GITKWAKEN_SELECT` (see `tab.rs`).
+    pub fn preselect(&mut self, path: String) {
+        self.preselect = Some(path);
+    }
+
+    fn apply_preselect(&mut self) {
+        let Some(path) = self.preselect.as_deref() else {
+            return;
+        };
+        for side in [Side::Unstaged, Side::Staged] {
+            let (ls, paths) = match side {
+                Side::Staged => (&mut self.staged, &self.paths.staged),
+                Side::Unstaged => (&mut self.unstaged, &self.paths.unstaged),
+            };
+            if let Some(row) = ls.row_of(path, paths) {
+                ls.select_only(path.to_string(), row);
+                self.active = side;
+                self.preselect = None;
+                return;
+            }
+        }
+    }
+
     fn list(&self, side: Side) -> &ListState {
         match side {
             Side::Staged => &self.staged,
@@ -114,6 +140,9 @@ impl StatusState {
             if done || p.since.elapsed() > Duration::from_secs(20) {
                 self.pending = None;
             }
+        }
+        if self.preselect.is_some() && !snap.status_loading {
+            self.apply_preselect();
         }
     }
 
@@ -176,7 +205,7 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
     let mut events: Vec<(Side, Ev)> = Vec::new();
     egui::Panel::left(Id::new(("fs-lists", &key)))
         .resizable(true)
-        .default_size(400.0)
+        .default_size((ui.available_width() * 0.42).clamp(220.0, 400.0))
         .size_range(220.0..=1200.0)
         .show(ui, |ui| lists(ui, tab, snap, shared, &mut events));
     for (side, ev) in events {
@@ -328,6 +357,11 @@ fn lists(
         .resizable(true)
         .default_size((avail * 0.4).max(90.0))
         .size_range(70.0..=(avail - 90.0).max(90.0))
+        // No inner margin: keep the staged list aligned with the unstaged one.
+        .frame(egui::Frame::new().inner_margin(egui::Margin {
+            bottom: 4,
+            ..Default::default()
+        }))
         .show(ui, |ui| one(ui, &mut tab.status, Side::Staged, events));
     egui::CentralPanel::no_frame().show(ui, |ui| {
         ui.add_space(4.0);
