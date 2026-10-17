@@ -10,8 +10,9 @@ remotes, tabs) but starts instantly and stays smooth on huge repositories. The U
 background threads, so the UI never blocks on the repository.
 
 > **AI-generated code.** Everything in this repository — source code, tests, scripts,
-> installers, CI workflows, documentation and the logo — was written by an AI model
-> (Anthropic's Claude, through Claude Code), directed and reviewed by a human. No code was
+> installers, CI workflows and documentation — was written by an AI model (Anthropic's
+> Claude, through Claude Code), directed and reviewed by a human. The logo
+> (`assets/logo.png`) was supplied by the project owner. No code was
 > copied from other projects; third-party code is used only as normal dependencies under their
 > own licenses (see [Third-party software](#third-party-software)).
 
@@ -117,8 +118,11 @@ powershell -ExecutionPolicy Bypass -File packaging\build-release.ps1
 `dist build --artifacts=local` (output in `target/distrib`). The release workflow does not use
 it; see `docs/ARCHITECTURE.md` (Packaging).
 
-The app icon is generated from `assets/icon.svg` with
-`cargo run --release --manifest-path packaging/icongen/Cargo.toml`.
+The app icons (`assets/icon.ico`, `icon-256.png`, `icon-1024.png`) are generated from the
+raster logo `assets/logo.png` with
+`cargo run --release --manifest-path packaging/icongen/Cargo.toml`: the logo's tile is fitted
+into a rounded square (8/256 margin, 52/240 corner radius) and everything around it becomes
+transparent.
 
 ## Keyboard shortcuts
 
