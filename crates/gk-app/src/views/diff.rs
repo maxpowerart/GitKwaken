@@ -1133,7 +1133,7 @@ impl DiffView {
             ui.add_space(4.0);
             ui.label(format!("Discard {} in {}?", c.what, c.path));
             ui.label(
-                RichText::new("The working copy file is modified; this cannot be undone.")
+                RichText::new("The working copy file is modified (a copy is saved: \"Discarded changes…\" restores it).")
                     .color(shared.palette.removed_fg),
             );
             ui.add_space(8.0);

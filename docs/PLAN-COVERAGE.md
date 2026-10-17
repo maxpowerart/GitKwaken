@@ -240,7 +240,7 @@ Measurements made for this audit with `target/lead/release/gk-bench.exe` and the
 | Long-lived `cat-file --batch` | Deviation | impl: objects are read in-process through gix (`content.rs:72`) | Reasonable substitute, but not recorded as a deviation in the docs. |
 | GIT_ASKPASS / SSH_ASKPASS / GIT_EDITOR / GIT_SEQUENCE_EDITOR | Done | impl: `gk-askpass/src/server.rs:92-98`, `ops.rs:367,419-420,439`; test: `askpass.rs::*`, `it/rebase.rs::interactive_*` | |
 | Confirmations before reset --hard / discard / force-push | Done | impl: `crates/gk-settings/src/lib.rs:249`, `settings.rs:355-359`, `remote.rs:373-387`, Reset dialog `rewrite.rs:717`; E2E: `h-reset-hard.script`, `r-force-push.script`, `r-discard-file.script` | |
-| Discarded changes saved to a hidden stash object (`git stash create`) | Missing | `crates/gk-core/src/ops.rs:74` (checkout plus delete, no backup) | |
+| Discarded changes saved to a hidden stash object (`git stash create`) | Deviation | impl: `crates/gk-core/src/backup.rs` (`backup_discard`, `discard_backups`, `restore_discarded`), called by `ops.rs` `discard_changes` / `discard_lines` before anything is changed; UI: palette "Discarded changes… (restore)", Reflog view "Discarded changes…" (`dialogs/discarded.rs`); test: `it/discard.rs::*` | Not `git stash create` (it skips untracked files and runs clean filters): a parentless commit with the exact worktree bytes of the discarded paths (`files/`), the staged entries "discard all" unstages (`index/`) and deleted paths, recorded in the reflog of `refs/gitkwaken/discarded` (forced reflog, kept until `gc.reflogExpireUnreachable`, 30 days). Restore rewrites the worktree only and refuses to overwrite files changed since, unless asked (then those are saved first). Overhead: 0.5 ms per single-file discard on a 100k-file repo (`gk-bench discard`). An untracked folder holding a nested repository is no longer deleted. |
 | Output panel with all commands | Done | See Tools (log of commands). | |
 
 ## Stack
@@ -282,7 +282,7 @@ Measurements made for this audit with `target/lead/release/gk-bench.exe` and the
 | Full status warm < 1.5 s at 1M files | Done | gk-bench on r1m: gix 898 ms, CLI 396 ms (given: 415 ms) | |
 | Status after save < 50 ms | Partial | fast path 0.2 ms (given: 0.2 ms) | Watcher debounce is 60 ms (`watch.rs:18`), so end-to-end is at least 60 ms. End-to-end is not measured. |
 | 1M-row scroll at 120 fps, no frame > 16 ms | Partial | 117 fps (vsync) and > 900 fps unlocked on a 1M-row list; 120 fps scrolling git.git history (given) | Not measured on 1M-commit history. Frame-time spikes were not recorded. |
-| Stage 100k files < 2 s | Partial | `ops.rs:16` (one `git add --pathspec-from-file`) | Not measured. |
+| Stage 100k files < 2 s | Done | impl: `crates/gk-core/src/stage.rs` (above 1,000 paths: files read, converted with gitoxide's filter pipeline and hashed in parallel, new blobs written as one pack by `packwrite.rs`, index rewritten once under `index.lock` with real stat data), git `update-index` for what it cannot do like `git add`; test: `it/stage.rs::bulk_stage_equals_git_add*` (`ls-files -s`, status and commit tree equal to `git add -A`, autocrlf on/off, eol/text/binary attributes, filter driver, ident, exec bit, deletions, file-to-folder); gk-bench `stage` on a 100k-file repo: 0.55-0.62 s (1,000 distinct contents), 0.66-0.69 s (100k new blobs), `git diff` right after 40-60 ms (entries are clean) | Paths with a `filter`, `ident` or `working-tree-encoding` attribute, symlinks, submodules, conflicted / intent-to-add / skip-worktree / assume-unchanged entries, file-to-folder clashes, case clashes and files over 64 MB go through git; split or sparse indexes and pending resolve-undo data send everything to git. The untracked-cache and fsmonitor index extensions are dropped (git rebuilds them). `GITKWAKEN_GIT_STAGE=1` forces git. |
 | Filter 1M paths < 50 ms per keystroke | Partial | `file_status.rs` sync and filter | Not measured. |
 | Open a 50k-line diff < 100 ms | Partial | | Not measured. Highlighting is skipped above 20k lines. |
 | File history < 1 s for the first 50 | Partial | `views/search.rs:220` | Not measured. It waits for the whole `git log --follow` before showing anything. |
@@ -380,7 +380,6 @@ One line per Missing or Partial item: what to add, and where.
 
 - git version check: call `Git::version()` on a background thread at startup and show a banner when it is below `MIN_VERSION` or missing (`app.rs::GkApp::new`).
 - MinGit: optionally ship MinGit under `<install>/git/` and prefer it in `find_git` when the system git is missing or too old (`gk-cli/src/lib.rs:355`, `packaging/build-release.ps1`, `packaging/gitkwaken.iss`).
-- Discard backup: before discarding, run `git stash create` (plus copies of untracked files) and record the commit (for example under `refs/gitkwaken/discarded`), with a "Restore discarded changes" action (`gk-core/src/ops.rs:74`, `dialogs/worktree.rs`).
 
 **Stack**
 
@@ -396,7 +395,8 @@ One line per Missing or Partial item: what to add, and where.
 - History first screen: walk the first screen (about 200 commits) and publish before the full layout. Load refs in parallel with the walk (`session.rs` refresh_loop).
 - Status after save: lower the watcher debounce for small bursts (for example a 10-20 ms first flush) and add an end-to-end save-to-snapshot benchmark (`gk-status/src/watch.rs:18`).
 - 1M-row scroll: add a frame-time histogram (`GK_DX11_*` stats) and a scripted scroll over a 1M-commit synthetic history (`crates/gk-dx11`, `scripts/e2e/`).
-- Stage 100k, filter 1M, 50k-line diff: add gk-bench cases for `Repo::stage` with 100k paths, `StatusState` filter rebuild on 1M entries, and `gk_diff::diff` plus layout on a 50k-line file.
+- Filter 1M, 50k-line diff: add gk-bench cases for `StatusState` filter rebuild on 1M entries and `gk_diff::diff` plus layout on a 50k-line file.
+- Unstage all: `Repo::unstage_all` (`git reset -q`) takes ~7 s after staging 100k files (git re-hashes them serially); restore HEAD entries in-process like `stage.rs`.
 - File history: stream `git log --follow` results and show the first 50 as they arrive (`views/search.rs:220`).
 - Memory: profile the idle working set on small repos (fonts, syntect assets loaded early, D3D buffers) and load syntect lazily (`views/diff/syntax.rs`, `theme.rs::install_fonts`).
 

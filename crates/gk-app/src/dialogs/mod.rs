@@ -6,6 +6,7 @@ mod branch;
 mod common;
 mod config_edit;
 mod diagnostics;
+mod discarded;
 mod flow;
 mod global;
 mod lfs;
@@ -221,6 +222,10 @@ impl Dialog {
     /// Undo the last operation (from the reflog), with a preview.
     pub fn undo() -> Self {
         Self::new(undo::Undo::new())
+    }
+    /// Saved discards, with Restore.
+    pub fn discarded() -> Self {
+        Self::new(discarded::Discarded::new())
     }
     /// Add or edit the `git notes` note of commit `id`.
     pub fn edit_note(id: String) -> Self {

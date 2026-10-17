@@ -182,6 +182,14 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared
         {
             tab.dialog = Some(Dialog::reset(e.id.to_string()));
         }
+        ui.separator();
+        if ui
+            .button("Discarded changes…")
+            .on_hover_text("Restore changes saved before a discard")
+            .clicked()
+        {
+            tab.dialog = Some(Dialog::discarded());
+        }
     });
     if let Some(e) = error {
         ui.colored_label(shared.palette.removed_fg, e);

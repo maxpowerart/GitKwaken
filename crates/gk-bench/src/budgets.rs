@@ -2,6 +2,7 @@
 //!
 //! ```text
 //! gk-bench stage <repo> [files]        stage + unstage N modified files (default 100000)
+//! gk-bench discard <repo>              discard of one file with and without the backup
 //! gk-bench filter [paths]              fuzzy-filter N synthetic paths with nucleo-matcher (default 1M)
 //! gk-bench diff [lines]                gk_diff::diff on an N-line file (default 50000)
 //! gk-bench file-history <repo> <path>… `git log --follow -n 50` per path
@@ -44,8 +45,9 @@ fn once<T>(label: &str, f: impl FnOnce() -> Result<T>) -> Result<T> {
     Ok(r)
 }
 
-/// Modifies `n` tracked files, then times `Repo::stage` (one
-/// `git add --pathspec-from-file`) and `Repo::unstage`; restores everything.
+/// Modifies `n` tracked files, then times `Repo::stage` (in-process blob
+/// writes plus one index write above 1000 paths) and `Repo::unstage`;
+/// restores everything.
 pub fn stage(dir: &Path, n: usize) -> Result<()> {
     crate::regress::own_repo(dir)?;
     let repo = gk_core::Repo::open(dir, CommandLog::default())?;
@@ -66,19 +68,24 @@ pub fn stage(dir: &Path, n: usize) -> Result<()> {
         .par_iter()
         .map(|p| std::fs::read(dir.join(p)))
         .collect::<std::io::Result<_>>()?;
-    let touch = |suffix: &[u8]| -> Result<()> {
+    // `unique`: every file gets distinct content (one new blob per file).
+    let touch = |suffix: &[u8], unique: bool| -> Result<()> {
         paths
             .par_iter()
             .zip(&originals)
             .try_for_each(|(p, o)| {
                 let mut c = o.clone();
                 c.extend_from_slice(suffix);
+                if unique {
+                    c.extend_from_slice(p.as_bytes());
+                    c.push(b'\n');
+                }
                 std::fs::write(dir.join(p), c)
             })
             .map_err(Into::into)
     };
     let result = (|| -> Result<()> {
-        touch(b"bench stage edit\n")?;
+        touch(b"bench stage edit\n", false)?;
         // Prime git's index stat cache so the first run is not penalised.
         git.run(&["status", "--porcelain", "-uno"])?;
         once(
@@ -90,13 +97,24 @@ pub fn stage(dir: &Path, n: usize) -> Result<()> {
             .lines()
             .count();
         anyhow::ensure!(staged == paths.len(), "staged {staged}");
+        // The staged entries must carry valid stat data: otherwise git (and
+        // the status engine) re-hash every file on the next status.
+        let unstaged = once("git diff --name-only after stage", || {
+            Ok(git.read(&["diff", "--name-only"])?.lines().count())
+        })?;
+        anyhow::ensure!(unstaged == 0, "{unstaged} files still unstaged");
         once(&format!("Repo::unstage {} files", paths.len()), || {
             repo.unstage(&paths)
         })?;
-        // Second round with different content (new blobs again).
-        touch(b"bench stage edit 2\n")?;
+        // Second round: distinct content per file, so every blob is new.
+        // A per-run nonce: blobs of earlier runs must not exist already.
+        let nonce = format!(
+            "bench stage edit 2 {:?}\n",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?
+        );
+        touch(nonce.as_bytes(), true)?;
         once(
-            &format!("Repo::stage {} modified files (2nd)", paths.len()),
+            &format!("Repo::stage {} files, all-new blobs", paths.len()),
             || repo.stage(&paths),
         )?;
         once("Repo::unstage_all", || repo.unstage_all())?;
@@ -301,8 +319,43 @@ pub fn file_history(dir: &Path, paths: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// Cost of the discard backup: `Repo::discard` of one modified file (backup
+/// plus checkout) against the checkout alone, and the backup by itself.
+pub fn discard(dir: &Path) -> Result<()> {
+    crate::regress::own_repo(dir)?;
+    let repo = gk_core::Repo::open(dir, CommandLog::default())?;
+    let git = repo.git();
+    let path = git
+        .read(&["ls-files"])?
+        .lines()
+        .next()
+        .context("no tracked files")?
+        .to_string();
+    let original = std::fs::read(dir.join(&path))?;
+    let edit = || std::fs::write(dir.join(&path), b"bench discard edit\n");
+    let p = std::slice::from_ref(&path);
+    let result = (|| -> Result<()> {
+        median("Repo::backup_discard 1 file", 7, || {
+            edit()?;
+            repo.backup_discard(p, &[], &[])
+        })?;
+        median("Repo::discard 1 file (backup + checkout)", 7, || {
+            edit()?;
+            repo.discard(p, &[])
+        })?;
+        median("git checkout 1 file (no backup)", 7, || {
+            edit()?;
+            git.run(&["checkout", "--", &path])
+        })?;
+        Ok(())
+    })();
+    std::fs::write(dir.join(&path), original)?;
+    result
+}
+
 pub fn run(cmd: &str, args: &[String]) -> Result<()> {
     match cmd {
+        "discard" => discard(Path::new(args.first().context("discard <repo>")?)),
         "stage" => {
             let dir = args.first().context("stage <repo> [files]")?;
             let n = args

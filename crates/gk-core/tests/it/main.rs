@@ -3,6 +3,7 @@
 mod advanced;
 mod common;
 mod content;
+mod discard;
 mod history;
 mod ops;
 mod paths;
@@ -11,3 +12,4 @@ mod refs;
 mod remote;
 mod repo;
 mod session;
+mod stage;

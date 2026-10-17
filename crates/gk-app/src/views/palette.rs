@@ -105,6 +105,10 @@ fn items(snap: Option<&Snapshot>) -> Vec<Item> {
         add("View: Reflog", Cmd::View(View::Reflog));
         add("Undo last operation…", Cmd::Dialog(|_| Dialog::undo()));
         add(
+            "Discarded changes… (restore)",
+            Cmd::Dialog(|_| Dialog::discarded()),
+        );
+        add(
             "Checkout selected commit…  (Enter)",
             Cmd::OnCommit(|_, id| Dialog::checkout(id)),
         );
