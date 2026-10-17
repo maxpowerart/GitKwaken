@@ -505,12 +505,7 @@ mod tests {
             std::fs::write(dir.path().join(format!("own{i}.txt")), "x").unwrap();
         }
         std::fs::write(git_dir.join("index"), "x").unwrap();
-        // Let the paused-period events arrive first (FSEvents delivers them late).
-        std::thread::sleep(Duration::from_millis(if cfg!(target_os = "macos") {
-            800
-        } else {
-            100
-        }));
+        std::thread::sleep(Duration::from_millis(100));
         w.resume_discarding(Duration::from_millis(50));
         std::thread::sleep(Duration::from_millis(60));
         assert!(
