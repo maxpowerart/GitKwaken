@@ -166,10 +166,15 @@ fn parse_track(s: &str) -> (u32, u32, bool) {
 pub fn load(repo: &Repo) -> Result<Refs> {
     let git = repo.git();
     let mut refs = Refs::default();
-    let out = git.run(&[
-        "for-each-ref",
-        "--format=%(refname)%00%(objectname)%00%(*objectname)%00%(upstream:short)%00%(upstream:track,nobracket)%00%(HEAD)%00%(symref)%00%(objecttype)",
-    ])?;
+    // Three independent git processes; on Windows each costs ~25 ms to spawn,
+    // so run them concurrently.
+    let (out, stash, remotes) = std::thread::scope(|s| {
+        let stash = s.spawn(|| git.run_raw(&["stash", "list", "--format=%H%x00%gs"], None));
+        let remotes = s.spawn(|| git.run_raw(&["remote", "-v"], None));
+        let out = git.run(&["for-each-ref", "--format=%(refname)%00%(objectname)%00%(*objectname)%00%(upstream:short)%00%(upstream:track,nobracket)%00%(HEAD)%00%(symref)%00%(objecttype)"]);
+        (out, stash.join().expect("stash thread"), remotes.join().expect("remote thread"))
+    });
+    let (out, stash, remotes) = (out?, stash?, remotes?);
     for line in out.stdout_str().lines() {
         let f: Vec<&str> = line.split('\0').collect();
         if f.len() < 8 {
@@ -233,7 +238,7 @@ pub fn load(repo: &Repo) -> Result<Refs> {
     }
     refs.state = repo_state(repo);
 
-    let stash = git.run_raw(&["stash", "list", "--format=%H%x00%gs"], None)?;
+
     if stash.success() {
         for (i, line) in stash.stdout_str().lines().enumerate() {
             if let Some((id, msg)) = line.split_once('\0') {
@@ -242,7 +247,7 @@ pub fn load(repo: &Repo) -> Result<Refs> {
         }
     }
 
-    let remotes = git.run_raw(&["remote", "-v"], None)?;
+
     let mut by_name: BTreeMap<String, Remote> = BTreeMap::new();
     for line in remotes.stdout_str().lines() {
         // "<name>\t<url> (fetch)"; URLs (local paths) may contain spaces.
