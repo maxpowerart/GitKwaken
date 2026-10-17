@@ -1,0 +1,13 @@
+[package]
+name = "gk-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+anyhow = { workspace = true }
+bstr = { workspace = true }
+rayon = { workspace = true }
+gk-cli = { path = "../gk-cli" }
+gk-status = { path = "../gk-status" }

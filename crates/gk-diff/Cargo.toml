@@ -1,0 +1,9 @@
+[package]
+name = "gk-diff"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+imara-diff = "0.2"
+bstr = { workspace = true }

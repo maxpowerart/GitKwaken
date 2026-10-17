@@ -1,0 +1,17 @@
+[package]
+name = "gk-status"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+bstr = { workspace = true }
+gix = { workspace = true }
+parking_lot = { workspace = true }
+crossbeam-channel = { workspace = true }
+notify = "8"
+gk-cli = { path = "../gk-cli" }
+
+[dev-dependencies]
+tempfile = "3"

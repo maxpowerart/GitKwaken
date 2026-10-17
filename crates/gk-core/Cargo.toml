@@ -1,0 +1,21 @@
+[package]
+name = "gk-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+bstr = { workspace = true }
+gix = { workspace = true }
+parking_lot = { workspace = true }
+crossbeam-channel = { workspace = true }
+rayon = { workspace = true }
+lru = "0.18"
+gk-cli = { path = "../gk-cli" }
+gk-status = { path = "../gk-status" }
+gk-graph = { path = "../gk-graph" }
+gk-diff = { path = "../gk-diff" }
+
+[dev-dependencies]
+tempfile = "3"

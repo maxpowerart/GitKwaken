@@ -1,0 +1,6 @@
+[package]
+name = "gk-app"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
