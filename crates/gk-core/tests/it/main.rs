@@ -6,6 +6,7 @@ mod common;
 mod content;
 mod discard;
 mod history;
+mod objects;
 mod ops;
 mod paths;
 mod rebase;

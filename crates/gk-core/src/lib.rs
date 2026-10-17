@@ -8,6 +8,7 @@ pub mod cache;
 pub mod content;
 pub mod history;
 pub mod log_filter;
+pub mod objects;
 pub mod ops;
 mod packwrite;
 pub mod pool;
@@ -19,6 +20,7 @@ mod stage;
 
 pub use backup::{DISCARD_REF, DiscardBackup, RestoreOutcome};
 pub use gix::ObjectId;
+pub use objects::ObjectReader;
 pub use refs::{Head, Label, Refs, RepoState};
 pub use repo::{Repo, init};
 pub use session::{Load, Message, MessageKind, Session, SessionOptions, Snapshot};

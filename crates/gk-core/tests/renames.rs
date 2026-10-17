@@ -49,7 +49,7 @@ fn commit_files(t: &TestRepo, a: &str, b: &str) -> Vec<(String, ChangeKind, Opti
     // Opened afresh so config changes made through the CLI are seen.
     let g = gix::open(t.repo.workdir()).unwrap();
     let tree = |c: &str| g.find_commit(t.oid(c)).unwrap().tree_id().unwrap().detach();
-    content::tree_changes(&g, Some(tree(a)), tree(b))
+    content::tree_changes(&t.repo, &g, Some(tree(a)), tree(b))
         .unwrap()
         .into_iter()
         .map(|f| (f.path, f.kind, f.old_path))

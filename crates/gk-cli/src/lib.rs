@@ -1,9 +1,12 @@
 //! Runs the system `git` executable: blocking calls, streaming calls with
-//! progress, cancellation, and a global log of every executed command.
+//! progress, cancellation, a global log of every executed command, and a
+//! long-lived `git cat-file` object reader ([`CatFile`]).
 
+mod catfile;
 mod job;
 mod log;
 
+pub use catfile::{CatFile, CatFilePool, Object, ObjectInfo, ObjectKind};
 pub use log::{CommandLog, LogEntry};
 
 use anyhow::{Context as _, Result, anyhow};

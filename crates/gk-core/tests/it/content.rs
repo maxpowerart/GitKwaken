@@ -53,11 +53,11 @@ fn unstaged_conflicted_uses_ours() {
     let new = String::from_utf8(new.unwrap()).unwrap();
     assert!(new.contains("<<<<<<<") && new.contains("topic"), "{new}");
     assert_eq!(
-        content::index_blob(&t.repo.gix(), "c.txt", 3).unwrap(),
+        content::index_blob(&t.repo, &t.repo.gix(), "c.txt", 3).unwrap(),
         b("topic\n")
     );
     assert_eq!(
-        content::index_blob(&t.repo.gix(), "c.txt", 1).unwrap(),
+        content::index_blob(&t.repo, &t.repo.gix(), "c.txt", 1).unwrap(),
         b("base\n")
     );
 }
@@ -116,7 +116,7 @@ fn blobs_and_tree_changes() {
 
     let g = t.repo.gix();
     let tree = |c: &str| g.find_commit(t.oid(c)).unwrap().tree_id().unwrap().detach();
-    let files = content::tree_changes(&g, Some(tree(&c1)), tree(&c2)).unwrap();
+    let files = content::tree_changes(&t.repo, &g, Some(tree(&c1)), tree(&c2)).unwrap();
     let summary: Vec<(String, ChangeKind, Option<String>)> = files
         .iter()
         .map(|f| (f.path.clone(), f.kind, f.old_path.clone()))
@@ -149,7 +149,7 @@ fn blobs_and_tree_changes() {
     }
 
     // Root commit: everything added.
-    let root = content::tree_changes(&g, None, tree(&c1)).unwrap();
+    let root = content::tree_changes(&t.repo, &g, None, tree(&c1)).unwrap();
     assert_eq!(root.len(), 4);
     assert!(root.iter().all(|f| f.kind == ChangeKind::Added));
 

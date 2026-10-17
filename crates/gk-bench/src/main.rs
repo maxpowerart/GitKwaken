@@ -5,10 +5,12 @@
 //! `gk-bench status-mem <dir> [n]`  heap held by a status snapshot (scan + synthetic n entries)
 //! `gk-bench regress [opts]`        regression gate against bench/baseline-<os>.json (see regress.rs)
 //! `gk-bench gen-dag <dir> <n>`     synthetic n-commit DAG via git fast-import
+//! `gk-bench objects <dir> [n]`     object reads: gitoxide vs long-lived git cat-file (objects.rs)
 //! `gk-bench stage/discard/filter/diff/file-history …`  budget measurements (see budgets.rs)
 
 mod budgets;
 mod mem;
+mod objects;
 mod regress;
 mod startup;
 
@@ -55,12 +57,13 @@ fn main() -> Result<()> {
         }
         // Startup / latency budgets (see startup.rs).
         Some(cmd @ ("open" | "history-first" | "save-latency")) => startup::run(cmd, &args[2..]),
+        Some("objects") => objects::run(&args[2..]),
         Some("history") => {
             let dir = PathBuf::from(args.get(2).context("dir")?);
             bench_history(&dir)
         }
         _ => bail!(
-            "usage: gk-bench gen <dir> <files> | status <dir> [runs] | status-mem <dir> [entries] | history <dir> | regress [opts] | gen-dag <dir> <n> | stage <repo> [n] | discard <repo> | filter [n] | diff [lines] | diff-open <repo> <path> | file-history <repo> [paths]"
+            "usage: gk-bench gen <dir> <files> | status <dir> [runs] | status-mem <dir> [entries] | history <dir> | objects <dir> [n] | regress [opts] | gen-dag <dir> <n> | stage <repo> [n] | discard <repo> | filter [n] | diff [lines] | diff-open <repo> <path> | file-history <repo> [paths]"
         ),
     }
 }
