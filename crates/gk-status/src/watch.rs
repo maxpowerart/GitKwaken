@@ -485,7 +485,9 @@ mod tests {
             std::thread::sleep(BUSY_WINDOW / 2);
         }
         eprintln!("watcher save-to-event latency (best of 5): {best:?}");
-        assert!(best < Duration::from_millis(100), "{best:?}");
+        // FSEvents (macOS) batches with its own latency; inotify / ReadDirectoryChangesW do not.
+        let limit = Duration::from_millis(if cfg!(target_os = "macos") { 300 } else { 100 });
+        assert!(best < limit, "{best:?}");
     }
 
     #[test]
@@ -501,7 +503,12 @@ mod tests {
             std::fs::write(dir.path().join(format!("own{i}.txt")), "x").unwrap();
         }
         std::fs::write(git_dir.join("index"), "x").unwrap();
-        std::thread::sleep(Duration::from_millis(100));
+        // Let the paused-period events arrive first (FSEvents delivers them late).
+        std::thread::sleep(Duration::from_millis(if cfg!(target_os = "macos") {
+            800
+        } else {
+            100
+        }));
         w.resume_discarding(Duration::from_millis(50));
         std::thread::sleep(Duration::from_millis(60));
         assert!(
