@@ -1,6 +1,8 @@
 # Stage README.md, message, tick "Push to origin/main", click Commit.
 wait 2500
 click 266 255.2
+wait 300
+key Space
 wait 1000
 click 800 800
 type Commit and push

@@ -73,7 +73,8 @@ pub fn status_color(p: &crate::theme::Palette, kind: gk_status::Kind) -> Color32
     match kind {
         Added | IntentToAdd => p.added_fg,
         Deleted => p.removed_fg,
-        Untracked => p.untracked,
+        // New files look the same before and after staging (? → A).
+        Untracked => p.added_fg,
         Conflict(_) => p.conflict,
         _ => p.modified,
     }

@@ -12,6 +12,9 @@ user-facing.
   to the last good version, with the reason. The update dialog can also skip a version.
 - Pinned branches can be reordered by dragging them within PINNED.
 - Settings: choose whether staged or unstaged files are listed on top in File Status.
+- File Status: no check boxes (stage the selection with a double click, Space, the header
+  buttons, drag and drop or the context menu); new untracked files (?) are green like added
+  ones (A).
 - Tabs of repositories with the same folder name show the part of the path that differs.
 - Font size: toolbar, tabs, sidebar icons, file status badges and check boxes, and history
   rows now grow with it; the status letters no longer spill out of their boxes. Code font
