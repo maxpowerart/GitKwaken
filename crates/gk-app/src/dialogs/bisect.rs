@@ -292,20 +292,21 @@ impl Bisect {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.add_enabled_ui(!busy, |ui| {
-                let b = |t: &str, c: Color32| {
-                    egui::Button::new(RichText::new(t).strong().color(Color32::WHITE))
+                let b = |icon: crate::icons::Icon, t: &str, c: Color32| {
+                    crate::icons::IconButton::new(icon)
+                        .text(RichText::new(t).strong())
                         .fill(c)
                         .min_size(egui::vec2(90.0, 28.0))
                 };
                 if ui
-                    .add(b("✔ Good", GOOD))
+                    .add(b(crate::icons::Icon::Ok, "Good", GOOD))
                     .on_hover_text("This commit does not have the bug")
                     .clicked()
                 {
                     clicked = Some(BisectMark::Good);
                 }
                 if ui
-                    .add(b("✖ Bad", DANGER))
+                    .add(b(crate::icons::Icon::Error, "Bad", DANGER))
                     .on_hover_text("This commit has the bug")
                     .clicked()
                 {

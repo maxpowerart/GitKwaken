@@ -99,13 +99,22 @@ jobs:
           export GIT_CEILING_DIRECTORIES="$(cygpath -m "$GITHUB_WORKSPACE/target/bench-regress")"
           if [ -n "${{ steps.base.outputs.sha }}" ]; then
             # Separate data dirs: the base build may generate older data.
-            ./target/bench-base/release/gk-bench.exe regress --runs 5 --record \
-              --data target/bench-regress/base \
-              --baseline target/bench-results/base.json
-            ./target/release/gk-bench.exe regress --runs 5 \
-              --data target/bench-regress/current \
-              --baseline target/bench-results/base.json \
-              --out target/bench-results/current.json
+            # Shared runners vary a lot between minutes, so a regression has to show
+            # up twice: a failed comparison measures base and current again, back
+            # to back, and only a second failure fails the job.
+            gate() {
+              ./target/bench-base/release/gk-bench.exe regress --runs "$1" --record \
+                --data target/bench-regress/base \
+                --baseline target/bench-results/base.json &&
+              ./target/release/gk-bench.exe regress --runs "$1" \
+                --data target/bench-regress/current \
+                --baseline target/bench-results/base.json \
+                --out target/bench-results/current.json
+            }
+            if ! gate 5; then
+              echo "::warning::possible regression; measuring base and current again"
+              gate 7
+            fi
           else
             # No usable base (first commit, or use_committed): committed file,
             # or record one when there is none.

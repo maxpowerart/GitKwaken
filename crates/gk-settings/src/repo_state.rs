@@ -49,6 +49,11 @@ impl Default for RepoState {
 #[serde(default)]
 pub struct Layout {
     pub sidebar_width: f32,
+    /// File Status: width of the file lists, height of the top list and of the commit box
+    /// (0 = default).
+    pub file_list_width: f32,
+    pub file_split_height: f32,
+    pub commit_height: f32,
     /// Fraction of height for the commit list.
     pub list_split: f32,
     /// Fraction of width for the file list in the detail pane.
@@ -59,6 +64,9 @@ impl Default for Layout {
     fn default() -> Self {
         Self {
             sidebar_width: 240.0,
+            file_list_width: 0.0,
+            file_split_height: 0.0,
+            commit_height: 0.0,
             list_split: 0.55,
             detail_split: 0.35,
         }

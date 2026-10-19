@@ -318,7 +318,11 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, _snap: &Snapshot, shared: &mut Share
             } else {
                 "Back to the previous blame"
             };
-            if ui.button("◀ Back").on_hover_text(back_hint).clicked() {
+            if ui
+                .add(crate::icons::IconButton::new(crate::icons::Icon::Back).text("Back"))
+                .on_hover_text(back_hint)
+                .clicked()
+            {
                 act = Some(Act::Back);
             }
             ui.label(egui::RichText::new("Blame").strong());
@@ -349,14 +353,20 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, _snap: &Snapshot, shared: &mut Share
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let total = st.matches.len();
                 if ui
-                    .add_enabled(total > 0, egui::Button::new("▼"))
+                    .add_enabled(
+                        total > 0,
+                        crate::icons::IconButton::new(crate::icons::Icon::Down),
+                    )
                     .on_hover_text("Next match (Enter)")
                     .clicked()
                 {
                     st.step(1);
                 }
                 if ui
-                    .add_enabled(total > 0, egui::Button::new("▲"))
+                    .add_enabled(
+                        total > 0,
+                        crate::icons::IconButton::new(crate::icons::Icon::Up),
+                    )
                     .on_hover_text("Previous match (Shift+Enter)")
                     .clicked()
                 {

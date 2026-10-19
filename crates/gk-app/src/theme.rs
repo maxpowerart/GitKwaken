@@ -1,42 +1,76 @@
-//! Colors and visuals. Dark is the default, tuned to resemble SourceTree.
+//! Colors and visuals from the selected style (see `gk_settings::style`): Kwak by default,
+//! Classic (the original SourceTree-like blue), or a user style file.
 
 use egui::{Color32, Visuals};
+use gk_settings::style::{Rgba, Style, Variant};
+use parking_lot::RwLock;
 
-/// Lane colors of the history graph.
-pub const LANES: [Color32; 8] = [
-    Color32::from_rgb(0x4F, 0x9D, 0xF7),
-    Color32::from_rgb(0xF0, 0x7A, 0x4A),
-    Color32::from_rgb(0x3D, 0xC2, 0x8B),
-    Color32::from_rgb(0xC3, 0x7B, 0xE8),
-    Color32::from_rgb(0xE8, 0xC1, 0x3D),
-    Color32::from_rgb(0x2E, 0xC4, 0xD6),
-    Color32::from_rgb(0xE8, 0x5D, 0x8A),
-    Color32::from_rgb(0x9A, 0xB8, 0x4E),
-];
+/// What the last [`apply_with`] chose, for code that draws without a [`Palette`] at hand
+/// (graph lanes, icons).
+struct Current {
+    lanes: Vec<Color32>,
+    icon: Color32,
+    node: Color32,
+    icon_width: f32,
+    nodes: bool,
+    /// Icons the style replaces with SVG files, by name.
+    custom: std::collections::BTreeMap<String, std::sync::Arc<gk_settings::icon_svg::IconShape>>,
+}
 
-/// Darker lane colors for the light theme (the dark-theme yellow, cyan and
-/// light green are hard to see on white).
-pub const LANES_LIGHT: [Color32; 8] = [
-    Color32::from_rgb(0x1F, 0x6F, 0xD6),
-    Color32::from_rgb(0xD9, 0x5A, 0x1F),
-    Color32::from_rgb(0x1E, 0x9A, 0x62),
-    Color32::from_rgb(0x9B, 0x4D, 0xCA),
-    Color32::from_rgb(0xB0, 0x86, 0x00),
-    Color32::from_rgb(0x0E, 0x93, 0xA6),
-    Color32::from_rgb(0xD0, 0x3B, 0x6E),
-    Color32::from_rgb(0x6A, 0x8A, 0x1F),
-];
+static CURRENT: RwLock<Option<Current>> = RwLock::new(None);
 
-/// Whether [`apply`] last selected the light theme.
-static LIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+fn color(c: Rgba) -> Color32 {
+    let [r, g, b, a] = c.0;
+    Color32::from_rgba_unmultiplied(r, g, b, a)
+}
+
+/// The built-in default style (always valid).
+fn kwak() -> Style {
+    gk_settings::style::load_in(std::path::Path::new(""), gk_settings::style::DEFAULT_STYLE).0
+}
+
+fn with_current<R>(f: impl FnOnce(&Current) -> R) -> R {
+    if let Some(c) = CURRENT.read().as_ref() {
+        return f(c);
+    }
+    let s = kwak();
+    f(&current_of(&s, false))
+}
+
+fn current_of(style: &Style, light: bool) -> Current {
+    let v = if light { &style.light } else { &style.dark };
+    Current {
+        lanes: v.lanes.iter().copied().map(color).collect(),
+        icon: color(v.icon),
+        node: color(v.node),
+        icon_width: style.icons.width,
+        nodes: style.icons.nodes,
+        custom: style
+            .icons
+            .custom
+            .iter()
+            .map(|(k, (_, s))| (k.clone(), s.clone()))
+            .collect(),
+    }
+}
+
+/// Stroke and node colors of the icons ([`crate::icons`]).
+pub fn icon_colors() -> (Color32, Color32) {
+    with_current(|c| (c.icon, if c.nodes { c.node } else { c.icon }))
+}
+
+/// The style's SVG replacement for the icon `name`, if any.
+pub fn custom_icon(name: &str) -> Option<std::sync::Arc<gk_settings::icon_svg::IconShape>> {
+    with_current(|c| c.custom.get(name).cloned())
+}
+
+/// Icon stroke width on the 24-unit design grid.
+pub fn icon_width() -> f32 {
+    with_current(|c| c.icon_width)
+}
 
 pub fn lane_color(i: u16) -> Color32 {
-    let lanes = if LIGHT.load(std::sync::atomic::Ordering::Relaxed) {
-        &LANES_LIGHT
-    } else {
-        &LANES
-    };
-    lanes[i as usize % lanes.len()]
+    with_current(|c| c.lanes[i as usize % c.lanes.len().max(1)])
 }
 
 #[derive(Clone, Copy)]
@@ -59,7 +93,7 @@ pub struct Palette {
     pub modified: Color32,
     pub untracked: Color32,
     pub conflict: Color32,
-    /// Menu bar and repository tab strip (SourceTree's blue title area).
+    /// Menu bar and repository tab strip.
     pub chrome: Color32,
     /// Strong accent: selected sidebar entry, active view.
     pub accent: Color32,
@@ -68,56 +102,42 @@ pub struct Palette {
 }
 
 impl Palette {
-    pub fn dark() -> Self {
+    pub fn of(v: &Variant, dark: bool) -> Self {
         Self {
-            dark: true,
-            added_bg: Color32::from_rgba_unmultiplied(0x2E, 0xA0, 0x43, 40),
-            removed_bg: Color32::from_rgba_unmultiplied(0xF8, 0x51, 0x49, 40),
-            added_word: Color32::from_rgba_unmultiplied(0x2E, 0xA0, 0x43, 110),
-            removed_word: Color32::from_rgba_unmultiplied(0xF8, 0x51, 0x49, 110),
-            added_fg: Color32::from_rgb(0x56, 0xD3, 0x64),
-            removed_fg: Color32::from_rgb(0xF8, 0x51, 0x49),
-            hunk_bg: Color32::from_rgba_unmultiplied(0x58, 0x8B, 0xE8, 30),
-            muted: Color32::from_gray(140),
-            selection: Color32::from_rgba_unmultiplied(0x4F, 0x9D, 0xF7, 60),
-            branch: Color32::from_rgb(0x3D, 0x8B, 0xD8),
-            remote: Color32::from_rgb(0x8A, 0x63, 0xD2),
-            tag: Color32::from_rgb(0xC9, 0x9A, 0x2E),
-            head: Color32::from_rgb(0x3D, 0xA8, 0x5A),
-            stash: Color32::from_rgb(0x80, 0x80, 0x80),
-            modified: Color32::from_rgb(0xE8, 0xA7, 0x3D),
-            untracked: Color32::from_rgb(0x8A, 0x8A, 0x8A),
-            conflict: Color32::from_rgb(0xF8, 0x51, 0x49),
-            chrome: Color32::from_rgb(0x16, 0x33, 0x5E),
-            accent: Color32::from_rgb(0x2A, 0x7F, 0xE0),
-            on_accent: Color32::WHITE,
+            dark,
+            added_bg: color(v.added_bg),
+            removed_bg: color(v.removed_bg),
+            added_word: color(v.added_word),
+            removed_word: color(v.removed_word),
+            added_fg: color(v.added_fg),
+            removed_fg: color(v.removed_fg),
+            hunk_bg: color(v.hunk_bg),
+            muted: color(v.muted),
+            selection: color(v.selection),
+            branch: color(v.branch),
+            remote: color(v.remote),
+            tag: color(v.tag),
+            head: color(v.head),
+            stash: color(v.stash),
+            modified: color(v.modified),
+            untracked: color(v.untracked),
+            conflict: color(v.conflict),
+            chrome: color(v.chrome),
+            accent: color(v.accent),
+            on_accent: color(v.on_accent),
         }
     }
 
+    /// Kwak, dark (tests).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn dark() -> Self {
+        Self::of(&kwak().dark, true)
+    }
+
+    /// Kwak, light.
+    #[allow(dead_code)]
     pub fn light() -> Self {
-        Self {
-            dark: false,
-            added_bg: Color32::from_rgb(0xE6, 0xFF, 0xEC),
-            removed_bg: Color32::from_rgb(0xFF, 0xEB, 0xE9),
-            added_word: Color32::from_rgb(0xAB, 0xF2, 0xBC),
-            removed_word: Color32::from_rgb(0xFF, 0xC0, 0xBA),
-            added_fg: Color32::from_rgb(0x1A, 0x7F, 0x37),
-            removed_fg: Color32::from_rgb(0xCF, 0x22, 0x2E),
-            hunk_bg: Color32::from_rgb(0xDD, 0xF4, 0xFF),
-            muted: Color32::from_gray(110),
-            selection: Color32::from_rgba_unmultiplied(0x2F, 0x6F, 0xD8, 50),
-            branch: Color32::from_rgb(0x1F, 0x6F, 0xC5),
-            remote: Color32::from_rgb(0x6A, 0x43, 0xB2),
-            tag: Color32::from_rgb(0x9A, 0x6A, 0x00),
-            head: Color32::from_rgb(0x1A, 0x7F, 0x37),
-            stash: Color32::from_rgb(0x60, 0x60, 0x60),
-            modified: Color32::from_rgb(0xB0, 0x6F, 0x00),
-            untracked: Color32::from_rgb(0x70, 0x70, 0x70),
-            conflict: Color32::from_rgb(0xCF, 0x22, 0x2E),
-            chrome: Color32::from_rgb(0xD9, 0xE4, 0xF4),
-            accent: Color32::from_rgb(0x2A, 0x7F, 0xE0),
-            on_accent: Color32::WHITE,
-        }
+        Self::of(&kwak().light, false)
     }
 }
 
@@ -125,7 +145,8 @@ impl Palette {
 pub const DEFAULT_MONO_FONT: &str = "Consolas";
 
 /// Uses the platform UI fonts when present (Segoe UI / Consolas on Windows)
-/// and adds Segoe UI Symbol as a fallback so icons like ⑂ ⇄ ⎘ render.
+/// and adds Segoe UI Symbol as a fallback so icons like ⑂ ⇄ ⎘ render; on Linux
+/// DejaVu Sans / Noto Sans Symbols play that role ([`SYMBOL_FALLBACKS`]).
 ///
 /// The monospace family comes from `GITKWAKEN_MONO_FONT`; use
 /// [`install_fonts_with`] to pass `settings.mono_font_family`.
@@ -189,6 +210,11 @@ fn font_definitions(mono: Option<&str>) -> egui::FontDefinitions {
         &both,
         false,
     );
+    // Elsewhere (Linux) there is no Segoe UI Symbol: the common symbol fonts cover the
+    // same icons (⑂ ⇄ ⬇ ⬆ ⟳ ✔ ✖ ▣ ⚙ ☁ …). Absent files are skipped.
+    for (key, file) in SYMBOL_FALLBACKS {
+        add(key, load(system_font(file)), &both, false);
+    }
     if std::env::var_os("GITKWAKEN_EMOJI_FONT").is_some_and(|v| v == "1") {
         add(
             "segoe-emoji",
@@ -200,24 +226,90 @@ fn font_definitions(mono: Option<&str>) -> egui::FontDefinitions {
     fonts
 }
 
+/// Symbol fonts used as fallbacks after Segoe UI Symbol, by file name: DejaVu Sans
+/// (Arch `ttf-dejavu`, Debian `fonts-dejavu-core`), Noto Sans Symbols 1/2 and Noto Sans
+/// Math (`noto-fonts`).
+const SYMBOL_FALLBACKS: [(&str, &str); 4] = [
+    ("dejavu-sans", "DejaVuSans.ttf"),
+    ("noto-symbols2", "NotoSansSymbols2-Regular.ttf"),
+    ("noto-symbols", "NotoSansSymbols-Regular.ttf"),
+    ("noto-math", "NotoSansMath-Regular.ttf"),
+];
+
 /// Font folders: the system one, then the per-user one (fonts installed
-/// without admin rights).
+/// without admin rights). Linux: the XDG font folders.
 fn font_dirs() -> Vec<std::path::PathBuf> {
+    use std::path::PathBuf;
     let mut v = Vec::new();
-    if let Some(w) = std::env::var_os("WINDIR") {
-        v.push(std::path::PathBuf::from(w).join("Fonts"));
+    if cfg!(windows) {
+        if let Some(w) = std::env::var_os("WINDIR") {
+            v.push(PathBuf::from(w).join("Fonts"));
+        }
+        if let Some(l) = std::env::var_os("LOCALAPPDATA") {
+            v.push(PathBuf::from(l).join(r"Microsoft\Windows\Fonts"));
+        }
+        return v;
     }
-    if let Some(l) = std::env::var_os("LOCALAPPDATA") {
-        v.push(std::path::PathBuf::from(l).join(r"Microsoft\Windows\Fonts"));
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    if let Some(d) = std::env::var_os("XDG_DATA_HOME") {
+        v.push(PathBuf::from(d).join("fonts"));
+    } else if let Some(h) = &home {
+        v.push(h.join(".local/share/fonts"));
     }
+    if let Some(h) = &home {
+        v.push(h.join(".fonts"));
+    }
+    let data_dirs = std::env::var("XDG_DATA_DIRS")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "/usr/local/share:/usr/share".into());
+    v.extend(data_dirs.split(':').map(|d| PathBuf::from(d).join("fonts")));
     v
 }
 
+/// Font files under [`font_dirs`] by lower-case file name, first found wins. Linux keeps
+/// fonts in subfolders (`TTF/`, `truetype/dejavu/`, `noto/`), so the folders are walked
+/// once (a few levels deep).
+fn font_index() -> &'static std::collections::HashMap<String, std::path::PathBuf> {
+    use std::sync::OnceLock;
+    static INDEX: OnceLock<std::collections::HashMap<String, std::path::PathBuf>> = OnceLock::new();
+    INDEX.get_or_init(|| {
+        fn walk(
+            dir: &std::path::Path,
+            depth: u32,
+            out: &mut std::collections::HashMap<String, std::path::PathBuf>,
+        ) {
+            let Ok(rd) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    if depth < 4 {
+                        walk(&p, depth + 1, out);
+                    }
+                } else if let Some(n) = p.file_name().and_then(|n| n.to_str()) {
+                    out.entry(n.to_ascii_lowercase()).or_insert(p);
+                }
+            }
+        }
+        let mut out = std::collections::HashMap::new();
+        for d in font_dirs() {
+            walk(&d, 0, &mut out);
+        }
+        out
+    })
+}
+
 fn system_font(file: &str) -> Option<std::path::PathBuf> {
-    font_dirs()
-        .into_iter()
-        .map(|d| d.join(file))
-        .find(|p| p.is_file())
+    if cfg!(windows) {
+        // Flat folders: a direct lookup is cheaper than listing ~1000 files.
+        return font_dirs()
+            .into_iter()
+            .map(|d| d.join(file))
+            .find(|p| p.is_file());
+    }
+    font_index().get(&file.to_ascii_lowercase()).cloned()
 }
 
 /// Maps a family name, file name or path to a font file.
@@ -256,6 +348,7 @@ fn resolve_font(name: &str) -> Option<std::path::PathBuf> {
 pub fn apply_with(
     ctx: &egui::Context,
     theme: gk_settings::Theme,
+    style: &Style,
     ui_scale: f32,
     font_size: f32,
     mono_font_size: f32,
@@ -268,26 +361,40 @@ pub fn apply_with(
             .map(|t| t == egui::Theme::Dark)
             .unwrap_or(true),
     };
-    LIGHT.store(!dark, std::sync::atomic::Ordering::Relaxed);
+    *CURRENT.write() = Some(current_of(style, !dark));
+    let v = if dark { &style.dark } else { &style.light };
     let mut visuals = if dark {
         Visuals::dark()
     } else {
         Visuals::light()
     };
-    if dark {
-        visuals.panel_fill = Color32::from_rgb(0x25, 0x27, 0x2B);
-        visuals.window_fill = Color32::from_rgb(0x2B, 0x2D, 0x31);
-        visuals.extreme_bg_color = Color32::from_rgb(0x1E, 0x1F, 0x22);
-        visuals.faint_bg_color = Color32::from_rgb(0x2A, 0x2C, 0x30);
-        // SourceTree-like blue accent for selected toggles and text selection.
-        visuals.selection.bg_fill = Color32::from_rgb(0x22, 0x6A, 0xC4);
-        visuals.selection.stroke.color = Color32::WHITE;
+    if let Some(c) = v.panel {
+        visuals.panel_fill = color(c);
+    }
+    if let Some(c) = v.window {
+        visuals.window_fill = color(c);
+    }
+    if let Some(c) = v.extreme {
+        visuals.extreme_bg_color = color(c);
+    }
+    if let Some(c) = v.faint {
+        visuals.faint_bg_color = color(c);
+    }
+    // Selected toggles and text selection.
+    if let Some(c) = v.text_selection {
+        visuals.selection.bg_fill = color(c);
+    }
+    if let Some(c) = v.text_selection_fg {
+        visuals.selection.stroke.color = color(c);
+    }
+    // Text fields on light panels need a border.
+    if let Some(c) = v.border {
+        visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, color(c));
+    }
+    if let Some(c) = v.text {
+        visuals.override_text_color = Some(color(c));
     }
     visuals.striped = true;
-    if !dark {
-        // Light text fields otherwise blend into panels.
-        visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, Color32::from_gray(190));
-    }
     let theme = if dark {
         egui::Theme::Dark
     } else {
@@ -311,11 +418,18 @@ pub fn apply_with(
         s.spacing.item_spacing = egui::vec2(6.0, 4.0);
         s.spacing.button_padding = egui::vec2(6.0, 3.0);
     });
-    if dark {
-        Palette::dark()
-    } else {
-        Palette::light()
-    }
+    Palette::of(v, dark)
+}
+
+/// Body text size relative to the default 13 pt. Chrome drawn with fixed sizes (toolbar
+/// buttons, row icons, badges, check boxes) is multiplied by it, so a bigger font never
+/// overflows its box; at the default size it is exactly 1.
+pub fn text_scale(style: &egui::Style) -> f32 {
+    let body = style
+        .text_styles
+        .get(&egui::TextStyle::Body)
+        .map_or(13.0, |f| f.size);
+    (body / 13.0).clamp(0.6, 4.0)
 }
 
 /// UI density (`settings.compact`). Compact, the default, is the look the
@@ -357,8 +471,9 @@ impl Density {
     }
 
     /// History / search / reflog row height from `settings.history.row_height`.
-    pub fn history_row(self, setting: f32) -> f32 {
-        setting.clamp(14.0, 60.0) + self.row_extra()
+    /// `scale` is [`text_scale`]: rows grow with a bigger font (unchanged at the default).
+    pub fn history_row(self, setting: f32, scale: f32) -> f32 {
+        (setting.clamp(14.0, 60.0) * scale.max(1.0)).round() + self.row_extra()
     }
 
     fn spacing(self, s: &mut egui::style::Spacing) {
@@ -384,7 +499,7 @@ mod tests {
     #[test]
     fn compact_density_keeps_the_classic_look() {
         let ctx = egui::Context::default();
-        apply_with(&ctx, gk_settings::Theme::Dark, 1.0, 13.0, 12.5);
+        apply_with(&ctx, gk_settings::Theme::Dark, &kwak(), 1.0, 13.0, 12.5);
         let before = ctx.style_of(egui::Theme::Dark).spacing.clone();
         apply_density(&ctx, Density::Compact);
         let after = ctx.style_of(egui::Theme::Dark).spacing.clone();
@@ -393,7 +508,8 @@ mod tests {
         assert_eq!(before.interact_size, after.interact_size);
         let c = Density::Compact;
         assert_eq!(c.file_row_pad(), 6.0);
-        assert_eq!(c.history_row(22.0), 22.0);
+        assert_eq!(c.history_row(22.0, 1.0), 22.0);
+        assert_eq!(c.history_row(22.0, 1.5), 33.0);
         assert_eq!(c.sidebar_row(13.0), 17.0);
         // Comfortable is roomier everywhere.
         apply_density(&ctx, Density::Comfortable);
@@ -403,7 +519,7 @@ mod tests {
         assert!(roomy.interact_size.y > after.interact_size.y);
         let r = Density::Comfortable;
         assert!(r.file_row_pad() > c.file_row_pad());
-        assert!(r.history_row(22.0) > c.history_row(22.0));
+        assert!(r.history_row(22.0, 1.0) > c.history_row(22.0, 1.0));
         assert!(r.sidebar_row(13.0) > c.sidebar_row(13.0));
         assert_eq!(Density::of(true), c);
     }
@@ -461,7 +577,7 @@ mod tests {
     #[test]
     fn mono_size_is_applied() {
         let ctx = egui::Context::default();
-        apply_with(&ctx, gk_settings::Theme::Dark, 1.0, 13.0, 15.5);
+        apply_with(&ctx, gk_settings::Theme::Dark, &kwak(), 1.0, 13.0, 15.5);
         let size = ctx.style_of(egui::Theme::Dark).text_styles[&egui::TextStyle::Monospace].size;
         assert_eq!(size, 15.5);
     }

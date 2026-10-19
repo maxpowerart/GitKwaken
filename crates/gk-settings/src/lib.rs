@@ -4,8 +4,10 @@
 //! dir elsewhere), overridable with `GITKWAKEN_CONFIG_DIR`.
 
 mod autosave;
+pub mod icon_svg;
 mod io;
 mod repo_state;
+pub mod style;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -32,6 +34,8 @@ pub struct Settings {
     pub window: WindowState,
     pub theme: Theme,
     pub ui_scale: f32,
+    /// Style (Settings › General › Style): a built-in one or a user style file.
+    pub style: String,
     pub font_size: f32,
     pub mono_font_size: f32,
     /// Monospace font family (a system font name, e.g. "Consolas").
@@ -41,12 +45,18 @@ pub struct Settings {
     pub diff: DiffSettings,
     pub status_engine: StatusEngine,
     pub show_untracked: bool,
+    /// File Status: staged list above the unstaged one (SourceTree); false puts the
+    /// unstaged list on top (Fork).
+    pub staged_first: bool,
     /// 0 = off.
     pub auto_fetch_minutes: u32,
     pub git_path: Option<PathBuf>,
     /// Update manifest URL; empty means the built-in release channel.
     pub update_url: String,
     pub check_updates: bool,
+    /// A release the user chose not to be offered (update dialog › Skip this version, or
+    /// going back to an older version); a newer one is offered again.
+    pub skipped_version: String,
     pub external_diff_tool: Option<ExternalTool>,
     pub external_merge_tool: Option<ExternalTool>,
     pub terminal: Option<ExternalTool>,
@@ -70,6 +80,7 @@ impl Default for Settings {
             window: WindowState::default(),
             theme: Theme::default(),
             ui_scale: 1.0,
+            style: style::DEFAULT_STYLE.to_string(),
             font_size: 13.0,
             mono_font_size: 12.5,
             mono_font_family: "Consolas".into(),
@@ -77,10 +88,12 @@ impl Default for Settings {
             diff: DiffSettings::default(),
             status_engine: StatusEngine::default(),
             show_untracked: true,
+            staged_first: true,
             auto_fetch_minutes: 10,
             git_path: None,
             update_url: String::new(),
             check_updates: true,
+            skipped_version: String::new(),
             external_diff_tool: None,
             external_merge_tool: None,
             terminal: None,

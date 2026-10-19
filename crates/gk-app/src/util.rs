@@ -73,15 +73,99 @@ pub fn status_color(p: &crate::theme::Palette, kind: gk_status::Kind) -> Color32
     match kind {
         Added | IntentToAdd => p.added_fg,
         Deleted => p.removed_fg,
-        Untracked => p.untracked,
+        // New files look the same before and after staging (? → A).
+        Untracked => p.added_fg,
         Conflict(_) => p.conflict,
         _ => p.modified,
     }
 }
 
+/// Tab captions: the repository folder name, plus, for names open more than once, the shortest
+/// tail of the parent path that tells them apart (`repo — work/a` / `repo — work/b`).
+pub fn tab_labels(paths: &[&std::path::Path]) -> Vec<String> {
+    let name = |p: &std::path::Path| {
+        p.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| p.display().to_string())
+    };
+    // Parent folders, innermost first.
+    let parents = |p: &std::path::Path| -> Vec<String> {
+        p.parent()
+            .map(|d| {
+                d.components()
+                    .rev()
+                    .filter_map(|c| match c {
+                        std::path::Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+                        std::path::Component::Prefix(s) => {
+                            Some(s.as_os_str().to_string_lossy().into_owned())
+                        }
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let names: Vec<String> = paths.iter().map(|p| name(p)).collect();
+    let mut labels = names.clone();
+    for (i, n) in names.iter().enumerate() {
+        let same: Vec<usize> = (0..paths.len())
+            .filter(|&j| names[j].eq_ignore_ascii_case(n))
+            .collect();
+        if same.len() < 2 {
+            continue;
+        }
+        let tails: Vec<Vec<String>> = same.iter().map(|&j| parents(paths[j])).collect();
+        let longest = tails.iter().map(Vec::len).max().unwrap_or(0);
+        let tail = |t: &[String], k: usize| -> String {
+            let mut v: Vec<&str> = t.iter().take(k).map(String::as_str).collect();
+            v.reverse();
+            v.join("/")
+        };
+        let me = same.iter().position(|&j| j == i).unwrap_or(0);
+        // Fewest parent folders that make every caption of this name unique.
+        let k = (1..=longest.max(1))
+            .find(|&k| {
+                let all: Vec<String> = tails.iter().map(|t| tail(t, k).to_lowercase()).collect();
+                all.iter()
+                    .enumerate()
+                    .all(|(a, x)| all.iter().skip(a + 1).all(|y| x != y))
+            })
+            .unwrap_or(longest.max(1));
+        let suffix = tail(&tails[me], k);
+        if !suffix.is_empty() {
+            labels[i] = format!("{n} — {suffix}");
+        }
+    }
+    labels
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn duplicate_tab_names_get_the_differing_part_of_the_path() {
+        use std::path::Path;
+        let labels = |ps: &[&str]| {
+            let v: Vec<&Path> = ps.iter().map(Path::new).collect();
+            tab_labels(&v)
+        };
+        assert_eq!(labels(&["/w/a/repo", "/w/b/other"]), ["repo", "other"]);
+        assert_eq!(
+            labels(&["/w/a/repo", "/w/b/repo", "/w/c/x"]),
+            ["repo — a", "repo — b", "x"]
+        );
+        // Same direct parent: one more level.
+        assert_eq!(
+            labels(&["/one/src/repo", "/two/src/repo"]),
+            ["repo — one/src", "repo — two/src"]
+        );
+        // Different depths.
+        assert_eq!(
+            labels(&["/x/repo", "/y/x/repo"]),
+            ["repo — x", "repo — y/x"]
+        );
+    }
 
     #[test]
     fn dates() {

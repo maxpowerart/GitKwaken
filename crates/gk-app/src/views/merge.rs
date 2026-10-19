@@ -463,13 +463,19 @@ fn header(ui: &mut Ui, st: &mut MergeState, act: &mut Option<Act>, p: crate::the
                     .strong(),
             );
             if ui
-                .add_enabled(st.current > 0, egui::Button::new("◀ Previous"))
+                .add_enabled(
+                    st.current > 0,
+                    crate::icons::IconButton::new(crate::icons::Icon::Back).text("Previous"),
+                )
                 .clicked()
             {
                 st.goto(st.current - 1);
             }
             if ui
-                .add_enabled(st.current + 1 < total, egui::Button::new("Next ▶"))
+                .add_enabled(
+                    st.current + 1 < total,
+                    crate::icons::IconButton::new(crate::icons::Icon::Forward).text("Next"),
+                )
                 .clicked()
             {
                 st.goto(st.current + 1);

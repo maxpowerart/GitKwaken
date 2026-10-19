@@ -16,9 +16,16 @@ background threads, so the UI never blocks on the repository.
 > copied from other projects; third-party code is used only as normal dependencies under their
 > own licenses (see [Third-party software](#third-party-software)).
 
-> Status: 1.0.3. Windows is the primary target. Linux x86_64 releases use an `eframe`/wgpu
+> Status: 1.0.4. Windows is the primary target. Linux x86_64 releases use an `eframe`/wgpu
 > renderer instead of Direct3D (launch-tested in CI under Xvfb on Ubuntu and Arch; see
 > [Linux](#linux-x86_64)). macOS builds through the same fallback but is only compile-checked.
+
+![History](docs/screenshots/history-dark.png)
+
+<p>
+  <img src="docs/screenshots/file-status-dark.png" width="49%" alt="File Status">
+  <img src="docs/screenshots/history-light.png" width="49%" alt="History, light theme">
+</p>
 
 ## Features
 
@@ -140,6 +147,82 @@ Limits on Linux:
   with Mesa software rendering on Ubuntu 22.04 and on Arch Linux (installed through the
   PKGBUILD). It has not had the hands-on testing the Windows build has had; please report
   problems with your desktop (GNOME/KDE, X11/Wayland) and GPU driver.
+
+## Styles
+
+Settings › General › Style picks the look: colors (dark and light variant), icons and history
+graph lanes.
+
+- **Kwak** (default): after the logo, a frog whose tentacles form a git graph. Teal line icons
+  with orange commit nodes, the logo's navy title bar, teal selection.
+- **Classic**: the original SourceTree-like blue, with single-color icons.
+
+<p>
+  <img src="docs/screenshots/style-classic.png" width="49%" alt="Classic style">
+  <img src="docs/screenshots/style-user.png" width="49%" alt="A user style">
+</p>
+
+**Your own style** is a TOML file in the `styles` folder of the config directory
+(`%APPDATA%\GitKwaken\styles` on Windows, `~/.config/gitkwaken/styles` on Linux). It only
+needs the keys it changes; the rest comes from Kwak, or from the style named in `inherits`:
+
+```toml
+name = "Midnight"
+inherits = "Kwak"     # optional
+
+[icons]
+width = 1.8           # stroke width on the 24-unit icon grid
+nodes = true          # orange commit nodes (false: one color)
+
+[icons.files]         # replace single icons with your own SVGs (paths next to this file)
+commit = "lines/commit.svg"
+branch = "lines/branch.svg"
+
+[dark]
+chrome = "#2A1F3D"    # title bar
+accent = "#7C5CD6"    # selected sidebar row
+icon = "#B49BFF"
+node = "#FFD166"
+lanes = ["#B49BFF", "#FFD166", "#5EE6C8", "#FF8FAB"]
+
+[light]
+accent = "#5E45B0"
+```
+
+*New style from this one* (next to the Style list) writes the selected style to that folder as a
+complete file with every key, opens it and selects it; [`assets/styles/kwak.toml`](assets/styles/kwak.toml)
+documents each key. While a style of yours is selected, saving its file applies it right away.
+Mistakes (an unknown key, a malformed color) are shown in the Style list and the app keeps using
+Kwak. `GITKWAKEN_ICON_SHEET=1` starts GitKwaken on a sheet of every icon in the selected style.
+
+**Icons** can be replaced one by one with SVG files. *Export icons* (next to the Style list)
+writes every icon of the selected style as `<name>.svg` into `styles/<style> icons/`, plus an
+`icons.toml` with the matching `[icons.files]` lines: edit the SVGs you want to change in any
+vector editor and paste those lines into your style. Icons are line art in the style's icon
+color, like [Lucide](https://lucide.dev) / Feather icons (24×24 `viewBox`,
+`stroke="currentColor"`), which work as they are. Supported: `path`, `line`, `polyline`,
+`polygon`, `circle`, `ellipse`, `rect` and `g`, with `stroke`, `fill` and `stroke-width`;
+parts with `class="node"` take the style's node color. Not supported: `transform`, gradients,
+text and images (the Style list then reports the file as an error).
+
+## Updates and going back
+
+GitKwaken checks the latest GitHub release at startup and every 6 hours. A newer one shows a
+button in the tab bar (and Help › Install update): it opens the release's changelog with
+*Install update*, *Not now* and *Skip this version*.
+
+- **Install another version** (Help): lists every release with its changelog; any of them can
+  be installed, older ones included, e.g. to go back after an update that went wrong. Going
+  back can also skip the newer release so it is not offered again.
+- **Withdrawing a bad release** (maintainers): run the *Withdraw release* workflow
+  (Actions › Withdraw release) with the version and a reason. The release is marked
+  "(withdrawn)" and as a pre-release, and the update channel goes back to the newest good
+  release, so nobody is offered the bad one any more. Installations already running it
+  (1.0.4 and later) show *⚠ Roll back to &lt;good version&gt;* with the reason. Running the
+  workflow with *restore* undoes it.
+
+Release notes come from [CHANGELOG.md](CHANGELOG.md): the release workflow copies the
+`## <version>` section into the update channel and the GitHub release.
 
 ## Building
 

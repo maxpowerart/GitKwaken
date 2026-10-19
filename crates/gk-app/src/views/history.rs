@@ -488,7 +488,10 @@ fn toolbar(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot) {
         ui.separator();
         let head = head_oid(snap);
         if ui
-            .add_enabled(head.is_some(), egui::Button::new("↶ Undo…"))
+            .add_enabled(
+                head.is_some(),
+                crate::icons::IconButton::new(crate::icons::Icon::Undo).text("Undo…"),
+            )
             .on_hover_text("Undo the last operation (commit, merge, rebase, reset, pull, checkout)")
             .clicked()
         {
@@ -543,7 +546,7 @@ fn toolbar(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot) {
             }
             if f.edit.is_active()
                 && ui
-                    .small_button("✖")
+                    .add(crate::icons::IconButton::new(crate::icons::Icon::Close).small())
                     .on_hover_text("Clear filters")
                     .clicked()
             {
@@ -641,8 +644,10 @@ fn filtered_table(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
         });
         return;
     }
-    let row_h = crate::theme::Density::of(shared.settings.compact)
-        .history_row(shared.settings.history.row_height);
+    let row_h = crate::theme::Density::of(shared.settings.compact).history_row(
+        shared.settings.history.row_height,
+        crate::theme::text_scale(ui.style()),
+    );
     let id = Id::new(("history-filtered-list", &tab.path));
     let fs = &tab.history.filter;
     let key_at = |r: usize| rows.get(r).copied();
@@ -794,7 +799,8 @@ pub(crate) fn cell_style<'a>(ui: &Ui, shared: &'a Shared) -> CellStyle<'a> {
 fn commit_table(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared) {
     let hist = snap.history.clone();
     let hs = &shared.settings.history;
-    let row_h = crate::theme::Density::of(shared.settings.compact).history_row(hs.row_height);
+    let row_h = crate::theme::Density::of(shared.settings.compact)
+        .history_row(hs.row_height, crate::theme::text_scale(ui.style()));
     let lane_w = hs.graph_lane_width.clamp(6.0, 40.0);
     let dirty = !snap.status.is_clean();
     let changes = snap.status.staged.len() + snap.status.unstaged.len();

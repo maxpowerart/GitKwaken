@@ -6,6 +6,7 @@
 
 mod app;
 mod dialogs;
+mod icons;
 mod keymap;
 #[cfg(windows)]
 mod shell_integration;

@@ -149,7 +149,11 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared
         } else {
             ui.label(RichText::new(format!("{} entries", entries.len())).weak());
         }
-        if ui.small_button("⟳").on_hover_text("Refresh").clicked() {
+        if ui
+            .add(crate::icons::IconButton::new(crate::icons::Icon::Refresh).small())
+            .on_hover_text("Refresh")
+            .clicked()
+        {
             tab.reflog.run += 1;
         }
         ui.separator();
@@ -241,8 +245,10 @@ fn list(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared, en
         }
     }
     let k = ListKeys::read(ui, focused);
-    let row_h = crate::theme::Density::of(shared.settings.compact)
-        .history_row(shared.settings.history.row_height);
+    let row_h = crate::theme::Density::of(shared.settings.compact).history_row(
+        shared.settings.history.row_height,
+        crate::theme::text_scale(ui.style()),
+    );
     let scroll = tab.reflog.scroll_to.take().map(table::ScrollTo::Reveal);
     let st = crate::views::history::cell_style(ui, shared);
     let visuals = ui.visuals().clone();

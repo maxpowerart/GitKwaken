@@ -337,8 +337,10 @@ impl Running {
 
     fn redraw(&mut self, el: &ActiveEventLoop, ctx: &egui::Context) -> Result<()> {
         let size = self.window.inner_size();
-        if size.width == 0 || size.height == 0 {
-            // Minimized: no frame, no CPU. A restore brings a Resized event.
+        if size.width == 0 || size.height == 0 || self.window.is_minimized().unwrap_or(false) {
+            // Minimized: no frame, no CPU. A restore brings a Resized event. (A frameless
+            // window can report a small non-zero size while minimized; a frame laid out at
+            // that size would squeeze every panel.)
             self.next_repaint = None;
             return Ok(());
         }

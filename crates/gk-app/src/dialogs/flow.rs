@@ -378,7 +378,15 @@ impl TabDialog for GitFlow {
                     } else {
                         "Initialize".into()
                     };
-                    if c.is_some() && ui.small_button("◀ Back").clicked() {
+                    if c.is_some()
+                        && ui
+                            .add(
+                                crate::icons::IconButton::new(crate::icons::Icon::Back)
+                                    .text("Back")
+                                    .small(),
+                            )
+                            .clicked()
+                    {
                         cancel_settings = true;
                     }
                 }

@@ -391,7 +391,7 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
     let p = c.palette;
     let list_id = ui.make_persistent_id(("gk-file-list", c.side));
     let body_font = egui::TextStyle::Body.resolve(ui.style());
-    let mono = egui::TextStyle::Monospace.resolve(ui.style());
+    let k = crate::theme::text_scale(ui.style());
     let row_h = (ui.ctx().fonts_mut(|f| f.row_height(&body_font)) + c.row_pad).round();
     let n = ls.model.rows.len();
 
@@ -432,7 +432,6 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
         .hovered
         .weak_bg_fill
         .gamma_multiply(0.5);
-    let stroke_color = ui.visuals().widgets.inactive.fg_stroke.color;
 
     // Where a keyboard-opened context menu appears: below the cursor row
     // when it is on screen, else at the top of the list.
@@ -500,27 +499,20 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
                     };
                     let mut x = rect.left()
                         + 4.0
-                        + *depth as f32 * INDENT
-                        + if c.tree { INDENT } else { 0.0 };
+                        + *depth as f32 * INDENT * k
+                        + if c.tree { INDENT * k } else { 0.0 };
                     let cy = rect.center().y;
-                    let cb = checkbox(
-                        ui,
-                        &painter,
-                        id.with("cb"),
-                        pos2(x, cy),
-                        c.side == Side::Staged,
-                        dim(stroke_color),
-                        dim(p.head),
-                    );
-                    x += 18.0;
-                    status_badge(
+                    // No check boxes: staging works on the selection (double click, Space,
+                    // the header buttons, drag and drop, the context menu).
+                    super::badge::paint(
                         &painter,
                         pos2(x, cy),
-                        e.kind.code(),
-                        &mono,
+                        e.kind,
                         dim(crate::util::status_color(&p, e.kind)),
+                        p.dark,
+                        k,
                     );
-                    x += 20.0;
+                    x += 20.0 * k;
                     let (dir, name) = crate::views::diff::split_path(path);
                     let clip = painter.with_clip_rect(rect.intersect(vis));
                     let g = clip.layout_no_wrap(name.to_string(), body_font.clone(), dim(strong));
@@ -546,7 +538,7 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
                     if resp.double_clicked() && matches!(e.kind, Kind::Conflict(_)) {
                         // Staging a conflicted file would commit its markers: open the editor.
                         out.push(Ev::MergeEditor(path.clone()));
-                    } else if cb.clicked() || resp.double_clicked() {
+                    } else if resp.double_clicked() {
                         out.push(Ev::Toggle(vec![path.clone()]));
                     } else if resp.clicked() {
                         let mods = ui.input(|i| i.modifiers);
@@ -596,7 +588,7 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
                         painter.rect_filled(rect, 0.0, hover_fill);
                     }
                     let cy = rect.center().y;
-                    let mut x = rect.left() + 4.0 + *depth as f32 * INDENT;
+                    let mut x = rect.left() + 4.0 + *depth as f32 * INDENT * k;
                     painter.text(
                         pos2(x + 5.0, cy),
                         Align2::CENTER_CENTER,
@@ -604,19 +596,20 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
                         body_font.clone(),
                         p.muted,
                     );
-                    x += INDENT;
-                    let cb = checkbox(
-                        ui,
-                        &painter,
-                        id.with("cb"),
-                        pos2(x, cy),
-                        c.side == Side::Staged,
-                        stroke_color,
-                        p.head,
-                    );
-                    x += 18.0;
+                    x += INDENT * k;
                     let clip = painter.with_clip_rect(rect.intersect(vis));
-                    let g = clip.layout_no_wrap(format!("📁 {name}"), body_font.clone(), strong);
+                    let icon_side = (body_font.size * 1.1).round();
+                    crate::icons::paint(
+                        &clip,
+                        crate::icons::Icon::Folder,
+                        Rect::from_center_size(
+                            pos2(x + icon_side / 2.0, cy),
+                            vec2(icon_side, icon_side),
+                        ),
+                        crate::icons::Colors::theme(),
+                    );
+                    x += icon_side + 4.0;
+                    let g = clip.layout_no_wrap(name.to_string(), body_font.clone(), strong);
                     let w = g.size().x;
                     clip.galley(pos2(x, cy - g.size().y / 2.0), g, strong);
                     let count = ls
@@ -633,7 +626,8 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
                         body_font.clone(),
                         p.muted,
                     );
-                    if cb.clicked() {
+                    if resp.double_clicked() {
+                        // The two clicks folded and unfolded it again: stage / unstage it all.
                         out.push(Ev::Toggle(ls.dir_files(*node, c.paths)));
                     } else if resp.clicked() {
                         click = Some(Click::Dir { node: *node });
@@ -840,58 +834,6 @@ fn ignore_suggestion(targets: &[String]) -> String {
         (None, [one]) => format!("/{one}"),
         _ => String::new(),
     }
-}
-
-/// SourceTree-style status icon: the status code on a colored square.
-fn status_badge(
-    painter: &egui::Painter,
-    left_center: Pos2,
-    code: impl ToString,
-    font: &egui::FontId,
-    color: Color32,
-) {
-    let r = Rect::from_center_size(left_center + vec2(7.0, 0.0), vec2(14.0, 14.0));
-    painter.rect_filled(r, 3.0, color);
-    let font = egui::FontId::new((font.size - 1.0).max(9.0), font.family.clone());
-    painter.text(
-        r.center() + vec2(0.0, 0.5),
-        Align2::CENTER_CENTER,
-        code.to_string(),
-        font,
-        Color32::from_gray(20),
-    );
-}
-
-/// Small stage toggle; `checked` in the staged list.
-fn checkbox(
-    ui: &mut Ui,
-    painter: &egui::Painter,
-    id: Id,
-    left_center: Pos2,
-    checked: bool,
-    stroke: Color32,
-    fill: Color32,
-) -> egui::Response {
-    let r = Rect::from_center_size(left_center + vec2(6.5, 0.0), vec2(13.0, 13.0));
-    let resp = ui.interact(r.expand(2.0), id, Sense::click());
-    let stroke = if resp.hovered() {
-        ui.visuals().widgets.hovered.fg_stroke.color
-    } else {
-        stroke
-    };
-    if checked {
-        painter.rect_filled(r, 2.0, fill);
-        let pts = [
-            r.left_center() + vec2(3.0, 0.0),
-            r.center_bottom() + vec2(-1.0, -3.0),
-            r.right_top() + vec2(-3.0, 3.0),
-        ];
-        painter.line_segment([pts[0], pts[1]], (1.6, Color32::WHITE));
-        painter.line_segment([pts[1], pts[2]], (1.6, Color32::WHITE));
-    } else {
-        painter.rect_stroke(r, 2.0, (1.0, stroke), egui::StrokeKind::Inside);
-    }
-    resp.on_hover_text(if checked { "Unstage" } else { "Stage" })
 }
 
 fn kind_of<'a>(c: &'a ListCtx, path: &str) -> Option<&'a Entry> {

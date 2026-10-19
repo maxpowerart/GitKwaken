@@ -214,7 +214,11 @@ fn top_bar(ui: &mut Ui, tab: &mut RepoTab) -> Option<Source> {
         if let Some(fm) = &mut s.file {
             ui.label(egui::RichText::new("File history:").strong());
             ui.label(egui::RichText::new(&fm.path).monospace());
-            if ui.small_button("⟳").on_hover_text("Refresh").clicked() {
+            if ui
+                .add(crate::icons::IconButton::new(crate::icons::Icon::Refresh).small())
+                .on_hover_text("Refresh")
+                .clicked()
+            {
                 fm.run += 1;
             }
             let all = tab.state.history_scope != "current";
@@ -291,7 +295,12 @@ fn top_bar(ui: &mut Ui, tab: &mut RepoTab) -> Option<Source> {
             Some(t) => ctx.request_repaint_after(DEBOUNCE.saturating_sub(t.elapsed())),
             None => {}
         }
-        if !s.text.is_empty() && ui.small_button("✖").on_hover_text("Clear").clicked() {
+        if !s.text.is_empty()
+            && ui
+                .add(crate::icons::IconButton::new(crate::icons::Icon::Close).small())
+                .on_hover_text("Clear")
+                .clicked()
+        {
             s.text.clear();
             s.applied.clear();
             s.edited_at = None;
@@ -336,8 +345,10 @@ fn results_table(
     src: &Source,
 ) {
     let hist = snap.history.clone();
-    let row_h = crate::theme::Density::of(shared.settings.compact)
-        .history_row(shared.settings.history.row_height);
+    let row_h = crate::theme::Density::of(shared.settings.compact).history_row(
+        shared.settings.history.row_height,
+        crate::theme::text_scale(ui.style()),
+    );
     let n = match src {
         Source::Rows(r) => r.len(),
         Source::File(f) => f.entries.len(),

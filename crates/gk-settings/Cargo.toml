@@ -9,6 +9,9 @@ anyhow = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 toml = "1"
 directories = "6"
+# Custom icons in styles: SVG files (stroke icons such as Lucide, Tabler, Feather).
+roxmltree = "0.20"
+svgtypes = "0.15"
 
 [dev-dependencies]
 tempfile = "3"

@@ -5,6 +5,7 @@
 
 use crate::app::Shared;
 use crate::dialogs::{Dialog, GlobalDialog};
+use crate::icons::{self, Icon};
 use crate::tab::{RepoTab, View};
 use egui::{Color32, Rect, Sense, Ui, pos2, vec2};
 use gk_core::{RepoState, Snapshot};
@@ -21,7 +22,7 @@ const ICON_SIZE_COMPACT: f32 = 18.0;
 const BISECT_FILL: Color32 = Color32::from_rgb(0xE0, 0x9A, 0x2A);
 
 struct Tool<'a> {
-    icon: &'a str,
+    icon: Icon,
     label: &'a str,
     hint: &'a str,
     /// Small count badge on the icon (Commit: pending changes).
@@ -30,7 +31,7 @@ struct Tool<'a> {
 }
 
 impl<'a> Tool<'a> {
-    fn new(icon: &'a str, label: &'a str, hint: &'a str) -> Self {
+    fn new(icon: Icon, label: &'a str, hint: &'a str) -> Self {
         Self {
             icon,
             label,
@@ -43,13 +44,15 @@ impl<'a> Tool<'a> {
 
 /// Paints a toolbar button (icon over label, or icon only when `compact`).
 fn paint_tool(ui: &mut Ui, compact: bool, t: &Tool, sense: Sense) -> egui::Response {
-    let size = if compact { BUTTON_COMPACT } else { BUTTON };
+    // Everything follows the font size (1.0 at the default 13 pt).
+    let k = crate::theme::text_scale(ui.style());
+    let size = if compact { BUTTON_COMPACT } else { BUTTON } * k;
     let (rect, resp) = ui.allocate_exact_size(size, sense);
     let v = ui.visuals();
-    let icon_color = if t.fill.is_some() {
-        Color32::BLACK
+    let colors = if t.fill.is_some() {
+        icons::Colors::mono(Color32::BLACK)
     } else {
-        crate::theme::lane_color(0)
+        icons::Colors::theme()
     };
     let text = v.text_color();
     let p = ui.painter();
@@ -60,30 +63,23 @@ fn paint_tool(ui: &mut Ui, compact: bool, t: &Tool, sense: Sense) -> egui::Respo
     } else if resp.hovered() {
         p.rect_filled(rect, 4.0, v.widgets.hovered.weak_bg_fill);
     }
-    // Some glyphs come from fallback fonts with smaller or larger designs.
-    let scale = match t.icon {
-        "⑂" => 1.5,
-        "▣" => 0.85,
-        _ => 1.0,
-    };
     let (icon_size, icon_center) = if compact {
-        (ICON_SIZE_COMPACT, rect.center())
+        (ICON_SIZE_COMPACT * k, rect.center())
     } else {
-        (ICON_SIZE, pos2(rect.center().x, rect.top() + 17.0))
+        (ICON_SIZE * k, pos2(rect.center().x, rect.top() + 17.0 * k))
     };
-    p.text(
-        icon_center,
-        egui::Align2::CENTER_CENTER,
+    icons::paint(
+        p,
         t.icon,
-        egui::FontId::proportional(icon_size * scale),
-        icon_color,
+        Rect::from_center_size(icon_center, egui::Vec2::splat(icon_size)),
+        colors,
     );
     if !compact {
         p.text(
-            pos2(rect.center().x, rect.bottom() - 9.0),
+            pos2(rect.center().x, rect.bottom() - 9.0 * k),
             egui::Align2::CENTER_CENTER,
             t.label,
-            egui::FontId::proportional(12.0),
+            egui::FontId::proportional(12.0 * k),
             if t.fill.is_some() {
                 Color32::BLACK
             } else {
@@ -97,15 +93,15 @@ fn paint_tool(ui: &mut Ui, compact: bool, t: &Tool, sense: Sense) -> egui::Respo
         } else {
             t.badge.to_string()
         };
-        let font = egui::FontId::proportional(10.0);
+        let font = egui::FontId::proportional(10.0 * k);
         let g = p.layout_no_wrap(s, font, Color32::WHITE);
-        let w = (g.size().x + 6.0).max(14.0);
+        let w = (g.size().x + 6.0 * k).max(14.0 * k);
         let c = pos2(
             icon_center.x + icon_size * 0.5,
             icon_center.y - icon_size * 0.4,
         );
-        let r = Rect::from_center_size(c, vec2(w, 14.0));
-        p.rect_filled(r, 7.0, crate::theme::lane_color(0));
+        let r = Rect::from_center_size(c, vec2(w, 14.0 * k));
+        p.rect_filled(r, 7.0 * k, icons::Colors::theme().node);
         p.galley(r.center() - g.size() / 2.0, g, Color32::WHITE);
     }
     let hint = if compact {
@@ -139,11 +135,19 @@ fn group_gap(ui: &mut Ui) {
 
 pub fn show(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared) {
     egui::Panel::top(egui::Id::new(("toolbar", &tab.path)))
-        .frame(egui::Frame::side_top_panel(ui.style()).inner_margin(egui::Margin::symmetric(8, 4)))
+        .frame(
+            egui::Frame::side_top_panel(ui.style()).inner_margin(egui::Margin {
+                left: 8,
+                right: 8,
+                top: 1,
+                bottom: 1,
+            }),
+        )
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
-                let compact = ui.available_width() < COMPACT_BELOW;
+                let compact =
+                    ui.available_width() < COMPACT_BELOW * crate::theme::text_scale(ui.style());
                 let changes = snap.status.staged.len() + snap.status.unstaged.len();
                 left_groups(ui, compact, changes, tab, snap);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -156,22 +160,26 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared
 fn left_groups(ui: &mut Ui, compact: bool, changes: usize, tab: &mut RepoTab, snap: &Snapshot) {
     let commit = Tool {
         badge: changes,
-        ..Tool::new("✔", "Commit", "Commit staged changes")
+        ..Tool::new(Icon::Commit, "Commit", "Commit staged changes")
     };
     if tool(ui, compact, commit) {
         tab.view = View::FileStatus;
         tab.status.commit.request_focus();
     }
-    if tool(ui, compact, Tool::new("⬇", "Pull", "Pull from remote")) {
+    if tool(
+        ui,
+        compact,
+        Tool::new(Icon::Pull, "Pull", "Pull from remote"),
+    ) {
         tab.dialog = Some(Dialog::pull(snap));
     }
-    if tool(ui, compact, Tool::new("⬆", "Push", "Push to remote")) {
+    if tool(ui, compact, Tool::new(Icon::Push, "Push", "Push to remote")) {
         tab.dialog = Some(Dialog::push(snap));
     }
     if tool(
         ui,
         compact,
-        Tool::new("⟳", "Fetch", "Fetch from all remotes"),
+        Tool::new(Icon::Fetch, "Fetch", "Fetch from all remotes"),
     ) {
         tab.dialog = Some(Dialog::fetch(snap));
     }
@@ -179,14 +187,14 @@ fn left_groups(ui: &mut Ui, compact: bool, changes: usize, tab: &mut RepoTab, sn
     if tool(
         ui,
         compact,
-        Tool::new("⑂", "Branch", "Create or delete branches"),
+        Tool::new(Icon::Branch, "Branch", "Create or delete branches"),
     ) {
         tab.dialog = Some(Dialog::branch(snap, None));
     }
     if tool(
         ui,
         compact,
-        Tool::new("⇄", "Merge", "Merge into the current branch"),
+        Tool::new(Icon::Merge, "Merge", "Merge into the current branch"),
     ) {
         tab.dialog = Some(Dialog::merge(snap, None));
     }
@@ -194,19 +202,19 @@ fn left_groups(ui: &mut Ui, compact: bool, changes: usize, tab: &mut RepoTab, sn
     if tool(
         ui,
         compact,
-        Tool::new("▣", "Stash", "Stash working copy changes"),
+        Tool::new(Icon::Stash, "Stash", "Stash working copy changes"),
     ) {
         tab.dialog = Some(Dialog::stash());
     }
     if tool(
         ui,
         compact,
-        Tool::new("✖", "Discard", "Discard working copy changes"),
+        Tool::new(Icon::Discard, "Discard", "Discard working copy changes"),
     ) && changes > 0
     {
         tab.dialog = Some(Dialog::discard_all());
     }
-    if tool(ui, compact, Tool::new("🏷", "Tag", "Create a tag")) {
+    if tool(ui, compact, Tool::new(Icon::Tag, "Tag", "Create a tag")) {
         tab.dialog = Some(Dialog::tag(None));
     }
     if snap.refs.state == RepoState::Bisecting {
@@ -214,7 +222,7 @@ fn left_groups(ui: &mut Ui, compact: bool, changes: usize, tab: &mut RepoTab, sn
         let t = Tool {
             fill: Some(BISECT_FILL),
             ..Tool::new(
-                "🔍",
+                Icon::Bisect,
                 "Bisect",
                 "A bisect is in progress: mark commits good or bad",
             )
@@ -237,7 +245,7 @@ fn right_group(
     let settings = tool_menu(
         ui,
         compact,
-        Tool::new("⚙", "Settings", "Repository settings"),
+        Tool::new(Icon::Settings, "Settings", "Repository settings"),
         |ui| {
             let mut d = None;
             if ui.button("Edit repository config…").clicked() {
@@ -261,20 +269,28 @@ fn right_group(
         Some(Err(g)) => shared.actions.push(crate::app::Action::Global(g)),
         None => {}
     }
-    if tool(ui, compact, Tool::new("📂", "Explorer", "Show in Explorer")) {
+    if tool(
+        ui,
+        compact,
+        Tool::new(Icon::Explorer, "Explorer", "Show in Explorer"),
+    ) {
         let _ = open::that(&tab.path);
     }
     if tool(
         ui,
         compact,
-        Tool::new(">_", "Terminal", "Open a terminal in the repository"),
+        Tool::new(
+            Icon::Terminal,
+            "Terminal",
+            "Open a terminal in the repository",
+        ),
     ) {
         open_terminal(&tab.path, shared);
     }
     let remote = tool_menu(
         ui,
         compact,
-        Tool::new("☁", "Remote", "Add or edit remotes"),
+        Tool::new(Icon::Remote, "Remote", "Add or edit remotes"),
         |ui| {
             let mut d = None;
             for r in &snap.refs.remotes {
@@ -298,7 +314,7 @@ fn right_group(
         ui,
         compact,
         Tool::new(
-            "⚑",
+            Icon::Flow,
             "Git Flow",
             "Git Flow: start or finish features, releases and hotfixes",
         ),

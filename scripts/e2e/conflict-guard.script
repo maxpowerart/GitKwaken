@@ -1,6 +1,8 @@
-# Tick the checkbox of a conflicted file that still has markers.
+# Stage (select, Space) a conflicted file that still has markers.
 wait 3000
 click 266 290.4
+wait 300
+key Space
 wait 1500
 shot $OUT/conflict-guard.png
 exit

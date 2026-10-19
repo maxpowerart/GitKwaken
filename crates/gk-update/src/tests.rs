@@ -513,3 +513,65 @@ fn local_path_forms() {
         PathBuf::from(r"D:\rel\update.json")
     );
 }
+
+// ---------------------------------------------------------------- older versions
+
+#[test]
+fn release_list_from_the_github_api() {
+    assert_eq!(
+        releases_api_url("https://github.com/o/r/releases/latest/download/update.json").as_deref(),
+        Some("https://api.github.com/repos/o/r/releases?per_page=50")
+    );
+    assert_eq!(releases_api_url("file:///D:/rel/update.json"), None);
+    assert_eq!(releases_api_url("https://example.com/update.json"), None);
+    let json = r#"[
+      {"tag_name":"v1.0.2","draft":false,"prerelease":false,"published_at":"2026-10-17T22:00:00Z",
+       "assets":[{"name":"update.json","browser_download_url":"https://x/v1.0.2/update.json"}]},
+      {"tag_name":"v1.0.10","draft":false,"prerelease":true,"published_at":"2026-11-01T00:00:00Z",
+       "assets":[{"name":"update.json","browser_download_url":"https://x/v1.0.10/update.json"}]},
+      {"tag_name":"v1.0.9","draft":true,"prerelease":false,"published_at":null,
+       "assets":[{"name":"update.json","browser_download_url":"https://x/v1.0.9/update.json"}]},
+      {"tag_name":"v0.9.0","draft":false,"prerelease":false,"published_at":"2026-01-01T00:00:00Z",
+       "assets":[{"name":"GitKwaken.zip","browser_download_url":"https://x/z.zip"}]},
+      {"tag_name":"nightly","draft":false,"prerelease":false,"published_at":"2026-01-01T00:00:00Z",
+       "assets":[{"name":"update.json","browser_download_url":"https://x/n/update.json"}]}
+    ]"#;
+    let list = parse_release_list(json).unwrap();
+    let versions: Vec<&str> = list.iter().map(|l| l.version.as_str()).collect();
+    // Newest first (1.0.10 > 1.0.2); drafts, releases without update.json and
+    // non-version tags are left out.
+    assert_eq!(versions, ["1.0.10", "1.0.2"]);
+    assert!(list[0].prerelease);
+    assert_eq!(list[1].published, "2026-10-17");
+    assert_eq!(list[1].manifest_url, "https://x/v1.0.2/update.json");
+    assert!(parse_release_list("{}").is_err());
+}
+
+#[test]
+fn fetch_manifest_of_any_version() {
+    let base = serve(HashMap::from([(
+        "/v/update.json",
+        manifest_json("0.9.0", "GitKwaken-0.9.0-x64.zip", SHA0).into_bytes(),
+    )]));
+    let r = fetch_manifest(&format!("{base}/v/update.json")).unwrap();
+    assert_eq!(r.version, "0.9.0");
+    assert_eq!(r.url, format!("{base}/v/GitKwaken-0.9.0-x64.zip"));
+}
+
+#[test]
+fn withdrawn_releases_are_marked() {
+    let json = r#"[
+      {"tag_name":"v1.0.5","name":"GitKwaken 1.0.5 (withdrawn)","draft":false,"prerelease":true,
+       "published_at":"2026-11-02T00:00:00Z",
+       "body":"**Withdrawn:** crashes on start with some fonts\n\n- feature A",
+       "assets":[{"name":"update.json","browser_download_url":"https://x/v1.0.5/update.json"}]},
+      {"tag_name":"v1.0.4","name":"GitKwaken 1.0.4","draft":false,"prerelease":false,
+       "published_at":"2026-11-01T00:00:00Z","body":"- feature B",
+       "assets":[{"name":"update.json","browser_download_url":"https://x/v1.0.4/update.json"}]}
+    ]"#;
+    let list = parse_release_list(json).unwrap();
+    assert!(list[0].withdrawn);
+    assert_eq!(list[0].reason, "crashes on start with some fonts");
+    assert!(!list[1].withdrawn);
+    assert_eq!(list[1].reason, "");
+}

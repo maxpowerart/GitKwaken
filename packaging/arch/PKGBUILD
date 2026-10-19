@@ -10,7 +10,7 @@
 # This template keeps 'SKIP' as the checksum; the release copy pins it.
 
 pkgname=gitkwaken-bin
-_ver=1.0.3
+_ver=1.0.4
 pkgver=${_ver//-/_}
 pkgrel=1
 pkgdesc='Fast, lightweight git client'
@@ -32,9 +32,11 @@ depends=(
   'libxrandr'
   'libxkbcommon'
   'libxkbcommon-x11'
+  'ttf-dejavu'
   'wayland'
 )
 optdepends=(
+  'noto-fonts: more symbol glyphs (icons fall back to DejaVu Sans otherwise)'
   'vulkan-icd-loader: Vulkan renderer (otherwise OpenGL via EGL)'
   'xdg-desktop-portal: open/save dialogs (with a backend such as xdg-desktop-portal-gtk or -kde)'
   'zenity: message boxes, and open/save dialogs when no portal is running'

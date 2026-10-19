@@ -1059,7 +1059,7 @@ fn status_line(ui: &mut egui::Ui, good: Option<bool>, text: impl Into<String>) {
     let text = text.into();
     match good {
         Some(true) => {
-            ui.label(RichText::new(format!("✔ {text}")).color(GOOD));
+            crate::icons::label(ui, crate::icons::Icon::Ok, text, GOOD);
         }
         Some(false) => warning(ui, text),
         None => {
@@ -1182,7 +1182,12 @@ impl TabDialog for Authentication {
                 }
                 match &self.gcm_result {
                     Some(Ok(())) => {
-                        ui.label(RichText::new("✔ Git Credential Manager configured.").color(GOOD));
+                        crate::icons::label(
+                            ui,
+                            crate::icons::Icon::Ok,
+                            "Git Credential Manager configured.",
+                            GOOD,
+                        );
                     }
                     Some(Err(e)) => error(ui, e.clone()),
                     None => {}
@@ -1359,7 +1364,7 @@ impl TabDialog for Authentication {
                 );
                 match &self.test_result {
                     Some(Ok(m)) => {
-                        ui.label(RichText::new(format!("✔ {m}")).color(GOOD));
+                        crate::icons::label(ui, crate::icons::Icon::Ok, m.to_string(), GOOD);
                     }
                     Some(Err(e)) => {
                         error(ui, e.clone());

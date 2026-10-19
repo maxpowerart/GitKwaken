@@ -106,7 +106,10 @@ impl DaemonPanel {
                 run = Some(false);
             }
             if ui
-                .add_enabled(!busy, egui::Button::new("⟳"))
+                .add_enabled(
+                    !busy,
+                    crate::icons::IconButton::new(crate::icons::Icon::Refresh),
+                )
                 .on_hover_text("Check again")
                 .clicked()
             {

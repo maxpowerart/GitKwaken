@@ -140,6 +140,9 @@ pub struct SettingsDialog {
     ssh_task: Option<Task<SshCommands>>,
     ssh_loaded: Option<SshCommands>,
     ssh: SshCommands,
+    /// Styles offered under General › Style (re-read when the dialog opens).
+    styles: Vec<gk_settings::style::Listed>,
+    style_error: Option<String>,
 }
 
 impl SettingsDialog {
@@ -163,6 +166,8 @@ impl SettingsDialog {
             ssh_task: None,
             ssh_loaded: None,
             ssh: SshCommands::default(),
+            styles: Vec::new(),
+            style_error: None,
         }
     }
 
@@ -190,6 +195,7 @@ impl SettingsDialog {
             .map(|p| p.display().to_string())
             .unwrap_or_default();
         self.keys = Keymap::from_overrides(&s.keymap).bindings().to_vec();
+        self.styles = gk_settings::style::list();
         self.draft = Some(s);
         let log = shared.log.clone();
         self.identity_task = Some(Task::spawn(ctx, move || {
@@ -228,6 +234,7 @@ impl SettingsDialog {
     fn apply(&self, dst: &mut Settings) {
         let Some(src) = &self.draft else { return };
         dst.theme = src.theme;
+        dst.style = src.style.clone();
         dst.ui_scale = src.ui_scale;
         dst.font_size = src.font_size;
         dst.mono_font_size = src.mono_font_size;
@@ -239,6 +246,7 @@ impl SettingsDialog {
         dst.update_url = src.update_url.trim().to_string();
         dst.check_updates = src.check_updates;
         dst.show_untracked = src.show_untracked;
+        dst.staged_first = src.staged_first;
         dst.status_engine = src.status_engine;
         dst.commit = src.commit.clone();
         dst.diff = src.diff.clone();
@@ -481,14 +489,73 @@ impl AppDialog for SettingsDialog {
                                         ui.radio_value(&mut d.theme, Theme::System, "System");
                                     });
                                     ui.end_row();
+                                    ui.label("Style:");
+                                    ui.horizontal(|ui| {
+                                        egui::ComboBox::from_id_salt("set-style").selected_text(d.style.as_str()).show_ui(ui, |ui| {
+                                            for s in &self.styles {
+                                                let label = if s.path.is_some() { format!("{}  (your style)", s.name) } else { s.name.clone() };
+                                                match &s.error {
+                                                    None => {
+                                                        ui.selectable_value(&mut d.style, s.name.clone(), label);
+                                                    }
+                                                    Some(e) => {
+                                                        ui.add_enabled(false, egui::Button::selectable(false, format!("{label}  (error)"))).on_disabled_hover_text(e.as_str());
+                                                    }
+                                                }
+                                            }
+                                        });
+                                        if ui.add(crate::icons::IconButton::new(crate::icons::Icon::Add).text("New style from this one")).on_hover_text("Copies the selected style into your styles folder as a file to edit, and selects it").clicked() {
+                                            let (style, _) = gk_settings::style::load(&d.style);
+                                            match gk_settings::style::create_copy(&style) {
+                                                Ok((path, name)) => {
+                                                    d.style = name;
+                                                    self.styles = gk_settings::style::list();
+                                                    self.style_error = None;
+                                                    let _ = open::that(&path);
+                                                }
+                                                Err(e) => self.style_error = Some(format!("{e:#}")),
+                                            }
+                                        }
+                                        if ui.add(crate::icons::IconButton::new(crate::icons::Icon::Copy).text("Export icons")).on_hover_text("Writes every icon of this style as an SVG file to edit (and icons.toml with the [icons.files] lines that use them) into the styles folder").clicked() {
+                                            let (style, _) = gk_settings::style::load(&d.style);
+                                            let dir = gk_settings::style::styles_dir().join(format!("{} icons", d.style));
+                                            match crate::icons::export(&style, &dir) {
+                                                Ok(_) => {
+                                                    self.style_error = None;
+                                                    let _ = open::that(&dir);
+                                                }
+                                                Err(e) => self.style_error = Some(format!("{e:#}")),
+                                            }
+                                        }
+                                        if ui.add(crate::icons::IconButton::new(crate::icons::Icon::Folder)).on_hover_text("Open the styles folder").clicked() {
+                                            let dir = gk_settings::style::styles_dir();
+                                            let _ = std::fs::create_dir_all(&dir);
+                                            let _ = open::that(&dir);
+                                        }
+                                        if ui.add(crate::icons::IconButton::new(crate::icons::Icon::Refresh)).on_hover_text("Reload the style files (Save applies the changes)").clicked() {
+                                            self.styles = gk_settings::style::list();
+                                        }
+                                    });
+                                    ui.end_row();
+                                    if let Some(e) = &self.style_error {
+                                        ui.label("");
+                                        ui.colored_label(ui.visuals().error_fg_color, e);
+                                        ui.end_row();
+                                    }
                                     ui.label("UI scale:");
                                     ui.add(egui::Slider::new(&mut d.ui_scale, 0.75..=2.5).step_by(0.05));
                                     ui.end_row();
                                     ui.label("Font size:");
-                                    ui.add(egui::DragValue::new(&mut d.font_size).range(8.0..=32.0).speed(0.25));
+                                    ui.horizontal(|ui| {
+                                        ui.add(egui::DragValue::new(&mut d.font_size).range(8.0..=32.0).speed(0.25));
+                                        hint(ui, "menus, lists, toolbar, dialogs");
+                                    });
                                     ui.end_row();
-                                    ui.label("Monospace font size:");
-                                    ui.add(egui::DragValue::new(&mut d.mono_font_size).range(8.0..=32.0).speed(0.25));
+                                    ui.label("Code font size:");
+                                    ui.horizontal(|ui| {
+                                        ui.add(egui::DragValue::new(&mut d.mono_font_size).range(8.0..=32.0).speed(0.25));
+                                        hint(ui, "diffs, blame, console; also Ctrl+wheel over a diff");
+                                    });
                                     ui.end_row();
                                     ui.label("Language:");
                                     egui::ComboBox::from_id_salt("set-lang").selected_text("English").show_ui(ui, |ui| {
@@ -503,6 +570,12 @@ impl AppDialog for SettingsDialog {
                                     ui.end_row();
                                     ui.label("Untracked files:");
                                     ui.checkbox(&mut d.show_untracked, "Show untracked files");
+                                    ui.end_row();
+                                    ui.label("File Status lists:");
+                                    ui.horizontal(|ui| {
+                                        ui.radio_value(&mut d.staged_first, true, "Staged on top");
+                                        ui.radio_value(&mut d.staged_first, false, "Unstaged on top");
+                                    });
                                     ui.end_row();
                                     ui.label("Status engine:");
                                     ui.horizontal(|ui| {
