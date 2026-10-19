@@ -41,13 +41,14 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
         });
     }
     egui::Panel::bottom(egui::Id::new(("statusbar", &tab.path)))
-        .exact_size(24.0)
+        .exact_size((24.0 * crate::theme::text_scale(ui.style())).round())
         .show(ui, |ui| {
             ui.horizontal_centered(|ui| {
                 let refs = &snap.refs;
                 match &refs.head {
                     Head::Branch(b) => {
-                        ui.label(egui::RichText::new(format!("⑂ {b}")).strong());
+                        crate::theme::branch_icon(ui, ui.visuals().strong_text_color());
+                        ui.label(egui::RichText::new(b.to_string()).strong());
                         if let Some(br) = refs.current_branch()
                             && let Some(u) = &br.upstream
                         {
@@ -69,7 +70,8 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
                         );
                     }
                     Head::Unborn(b) => {
-                        ui.label(format!("⑂ {b} (no commits yet)"));
+                        crate::theme::branch_icon(ui, ui.visuals().text_color());
+                        ui.label(format!("{b} (no commits yet)"));
                     }
                     Head::Unknown => {}
                 }

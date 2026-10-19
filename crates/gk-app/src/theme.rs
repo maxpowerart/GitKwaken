@@ -390,6 +390,43 @@ pub fn apply_with(
     }
 }
 
+/// The git branch icon (one branch forking off another), drawn: the ⑂ glyph used before is
+/// missing from the usual Linux fonts. `size` is the height of the box it fills.
+pub fn paint_branch_icon(p: &egui::Painter, c: egui::Pos2, size: f32, color: Color32) {
+    use egui::{Stroke, epaint::QuadraticBezierShape, pos2};
+    let s = size;
+    let w = (s * 0.09).max(1.0);
+    let stroke = Stroke::new(w, color);
+    let r = s * 0.11;
+    let (left, right) = (c.x - s * 0.18, c.x + s * 0.2);
+    let (top, bottom) = (c.y - s * 0.3, c.y + s * 0.3);
+    // Trunk with a dot at each end.
+    p.line_segment([pos2(left, top + r), pos2(left, bottom - r)], stroke);
+    p.circle_stroke(pos2(left, top), r, stroke);
+    p.circle_stroke(pos2(left, bottom), r, stroke);
+    // The branch: from its own dot, curving into the trunk.
+    let tip = pos2(right, top + s * 0.06);
+    p.circle_stroke(tip, r, stroke);
+    p.add(QuadraticBezierShape::from_points_stroke(
+        [
+            pos2(right, tip.y + r),
+            pos2(right, c.y + s * 0.12),
+            pos2(left + w * 0.5, c.y + s * 0.2),
+        ],
+        false,
+        Color32::TRANSPARENT,
+        stroke,
+    ));
+}
+
+/// [`paint_branch_icon`] as a widget the height of body text (for labels in a row).
+pub fn branch_icon(ui: &mut egui::Ui, color: Color32) -> egui::Response {
+    let h = ui.text_style_height(&egui::TextStyle::Body);
+    let (r, resp) = ui.allocate_exact_size(egui::vec2(h * 0.8, h), egui::Sense::hover());
+    paint_branch_icon(ui.painter(), r.center(), h * 0.95, color);
+    resp
+}
+
 /// Body text size relative to the default 13 pt. Chrome drawn with fixed sizes (toolbar
 /// buttons, row icons, badges, check boxes) is multiplied by it, so a bigger font never
 /// overflows its box; at the default size it is exactly 1.

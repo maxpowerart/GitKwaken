@@ -27,6 +27,8 @@ use std::sync::Arc;
 const INDENT: f32 = 12.0;
 const ARROW_W: f32 = 12.0;
 const ICON_W: f32 = 18.0;
+/// Row icon drawn as a vector branch symbol ([`crate::theme::paint_branch_icon`]).
+const BRANCH_ICON: &str = "branch";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Section {
@@ -984,7 +986,11 @@ fn paint_row(ui: &Ui, cx: &Cx, rect: Rect, depth: u8, hovered: bool, mut look: L
     }
     x += ARROW_W * k;
     if let Some((icon, color)) = look.icon {
-        paint_text(&p, x, y, ICON_W * k, icon, &cx.font, color, false);
+        if icon == BRANCH_ICON {
+            crate::theme::paint_branch_icon(&p, pos2(x + ICON_W * k * 0.4, y), cx.font.size, color);
+        } else {
+            paint_text(&p, x, y, ICON_W * k, icon, &cx.font, color, false);
+        }
         x += ICON_W * k;
     }
     // Badges from the right.
@@ -1260,7 +1266,7 @@ fn row_ui(ui: &mut Ui, cx: &Cx, row: &Row, h: f32, cmds: &mut Vec<Cmd>) {
                 over_row,
                 Look {
                     marker: b.is_head.then_some(pal.head),
-                    icon: Some(("⑂", if b.is_head { pal.head } else { pal.branch })),
+                    icon: Some((BRANCH_ICON, if b.is_head { pal.head } else { pal.branch })),
                     // Pinned rows have no folders around them: full name.
                     text: if in_pins {
                         &b.name
@@ -1383,7 +1389,7 @@ fn row_ui(ui: &mut Ui, cx: &Cx, row: &Row, h: f32, cmds: &mut Vec<Cmd>) {
                 row.depth,
                 hovered || ui.rect_contains_pointer(rect),
                 Look {
-                    icon: Some(("⑂", pal.remote)),
+                    icon: Some((BRANCH_ICON, pal.remote)),
                     text: model::leaf_name(&rb.name),
                     selected: sel(&key),
                     reserve: REF_BUTTONS_W * cx.k,
@@ -2232,13 +2238,14 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
     {
         let layer = egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("branch-drag"));
         let painter = ui.ctx().layer_painter(layer);
-        let text = format!("⑂ {name}");
         let g = painter.layout_no_wrap(
-            text,
+            name,
             egui::TextStyle::Body.resolve(ui.style()),
             shared.palette.head,
         );
-        let r = Rect::from_min_size(pos + vec2(14.0, 6.0), g.size()).expand(4.0);
+        let icon_w = g.size().y;
+        let r =
+            Rect::from_min_size(pos + vec2(14.0, 6.0), g.size() + vec2(icon_w, 0.0)).expand(4.0);
         painter.rect_filled(r, 3.0, ui.visuals().window_fill);
         painter.rect_stroke(
             r,
@@ -2246,7 +2253,14 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
             Stroke::new(1.0, shared.palette.head),
             egui::StrokeKind::Inside,
         );
-        painter.galley(r.min + vec2(4.0, 4.0), g, shared.palette.head);
+        let text_h = g.size().y;
+        crate::theme::paint_branch_icon(
+            &painter,
+            r.min + vec2(4.0 + icon_w * 0.4, 4.0 + text_h / 2.0),
+            text_h,
+            shared.palette.head,
+        );
+        painter.galley(r.min + vec2(4.0 + icon_w, 4.0), g, shared.palette.head);
     }
 
     // Rows, SourceTree style: WORKSPACE on top, then the filter box, then

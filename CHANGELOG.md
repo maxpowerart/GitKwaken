@@ -16,12 +16,13 @@ user-facing.
   buttons, drag and drop or the context menu); new untracked files (?) are green like added
   ones (A).
 - Tabs of repositories with the same folder name show the part of the path that differs.
-- Font size: toolbar, tabs, sidebar icons, file status badges and check boxes, and history
+- Font size: toolbar, tabs, sidebar icons, file status badges and history
   rows now grow with it; the status letters no longer spill out of their boxes. Code font
   size (diffs) is in Settings and follows Ctrl+mouse wheel over a diff.
 - Panel sizes (file list, commit box, sidebar, output log) survive minimizing and smaller
   windows.
 - The sidebar scroll bar no longer covers the pin / filter buttons.
+- The branch icon is drawn instead of taken from a font, so it looks the same everywhere.
 - Linux: toolbar and branch icons render again (symbol fonts DejaVu Sans / Noto Sans Symbols;
   the Arch package now depends on `ttf-dejavu`).
 - Window: the menu bar and tabs are one band without a dividing line.

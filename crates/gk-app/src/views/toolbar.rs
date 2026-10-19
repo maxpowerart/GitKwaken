@@ -64,7 +64,6 @@ fn paint_tool(ui: &mut Ui, compact: bool, t: &Tool, sense: Sense) -> egui::Respo
     }
     // Some glyphs come from fallback fonts with smaller or larger designs.
     let scale = match t.icon {
-        "⑂" => 1.5,
         "▣" => 0.85,
         _ => 1.0,
     };
@@ -73,13 +72,17 @@ fn paint_tool(ui: &mut Ui, compact: bool, t: &Tool, sense: Sense) -> egui::Respo
     } else {
         (ICON_SIZE * k, pos2(rect.center().x, rect.top() + 17.0 * k))
     };
-    p.text(
-        icon_center,
-        egui::Align2::CENTER_CENTER,
-        t.icon,
-        egui::FontId::proportional(icon_size * scale),
-        icon_color,
-    );
+    if t.icon == "branch" {
+        crate::theme::paint_branch_icon(p, icon_center, icon_size, icon_color);
+    } else {
+        p.text(
+            icon_center,
+            egui::Align2::CENTER_CENTER,
+            t.icon,
+            egui::FontId::proportional(icon_size * scale),
+            icon_color,
+        );
+    }
     if !compact {
         p.text(
             pos2(rect.center().x, rect.bottom() - 9.0 * k),
@@ -189,7 +192,7 @@ fn left_groups(ui: &mut Ui, compact: bool, changes: usize, tab: &mut RepoTab, sn
     if tool(
         ui,
         compact,
-        Tool::new("⑂", "Branch", "Create or delete branches"),
+        Tool::new("branch", "Branch", "Create or delete branches"),
     ) {
         tab.dialog = Some(Dialog::branch(snap, None));
     }
