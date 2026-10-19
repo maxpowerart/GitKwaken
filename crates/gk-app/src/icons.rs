@@ -6,7 +6,7 @@
 //! designed on a 24 × 24 grid and drawn at any size, so it is sharp at every font size and
 //! looks the same on every platform (no font has to provide a glyph).
 
-use egui::epaint::{CubicBezierShape, PathShape, QuadraticBezierShape};
+use egui::epaint::PathShape;
 use egui::{Color32, Painter, Pos2, Rect, Response, Sense, Stroke, Ui, Vec2, pos2, vec2};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -55,6 +55,57 @@ pub enum Icon {
     Bisect,
 }
 
+impl Icon {
+    /// Name in style files (`[icons.files]`), see `gk_settings::style::ICON_NAMES`.
+    pub fn name(self) -> &'static str {
+        use Icon::*;
+        match self {
+            Commit => "commit",
+            Pull => "pull",
+            Push => "push",
+            Fetch => "fetch",
+            Branch => "branch",
+            Merge => "merge",
+            Stash => "stash",
+            Discard => "discard",
+            Tag => "tag",
+            Flow => "flow",
+            Remote => "remote",
+            Terminal => "terminal",
+            Explorer => "explorer",
+            Folder => "folder",
+            Settings => "settings",
+            FileStatus => "file_status",
+            History => "history",
+            Search => "search",
+            Reflog => "reflog",
+            Blame => "blame",
+            Submodule => "submodule",
+            Worktree => "worktree",
+            Add => "add",
+            Close => "close",
+            Undo => "undo",
+            Up => "up",
+            Down => "down",
+            Back => "back",
+            Forward => "forward",
+            Refresh => "refresh",
+            Copy => "copy",
+            Update => "update",
+            Warning => "warning",
+            Ok => "ok",
+            Error => "error",
+            List => "list",
+            Tree => "tree",
+            Pin => "pin",
+            PinOff => "pin_off",
+            Filter => "filter",
+            FilterOff => "filter_off",
+            Bisect => "bisect",
+        }
+    }
+}
+
 /// Stroke and node colors of one icon.
 #[derive(Debug, Clone, Copy)]
 pub struct Colors {
@@ -83,8 +134,20 @@ impl Colors {
     }
 }
 
-/// Maps the 24-unit design grid onto a square and draws with round caps and joins.
-struct Pen<'a> {
+/// Where an icon is drawn: the screen, or an SVG document (export). Coordinates are on the
+/// 24-unit design grid; `accent` parts use the node color.
+trait Sink {
+    /// A polyline with round caps and joins.
+    fn stroke_path(&self, pts: &[(f32, f32)], closed: bool, accent: bool);
+    fn stroke_circle(&self, c: (f32, f32), r: f32);
+    fn fill_circle(&self, c: (f32, f32), r: f32, accent: bool);
+    /// A filled convex polygon.
+    fn fill_convex(&self, pts: &[(f32, f32)]);
+    fn stroke_rrect(&self, min: (f32, f32), max: (f32, f32), r: f32);
+}
+
+/// Draws on screen: the grid mapped onto a square at `origin`.
+struct Screen<'a> {
     p: &'a Painter,
     origin: Pos2,
     unit: f32,
@@ -92,34 +155,144 @@ struct Pen<'a> {
     node: Color32,
 }
 
-impl Pen<'_> {
-    fn at(&self, x: f32, y: f32) -> Pos2 {
+impl Screen<'_> {
+    fn at(&self, (x, y): (f32, f32)) -> Pos2 {
         self.origin + vec2(x, y) * self.unit
     }
+}
 
-    fn cap(&self, q: Pos2) {
-        self.p
-            .circle_filled(q, self.stroke.width * 0.5, self.stroke.color);
+impl Sink for Screen<'_> {
+    fn stroke_path(&self, pts: &[(f32, f32)], closed: bool, accent: bool) {
+        let stroke = if accent {
+            Stroke::new(self.stroke.width, self.node)
+        } else {
+            self.stroke
+        };
+        let pts: Vec<Pos2> = pts.iter().map(|&q| self.at(q)).collect();
+        stroke_screen(self.p, pts, closed, stroke);
     }
 
+    fn stroke_circle(&self, c: (f32, f32), r: f32) {
+        self.p.circle_stroke(self.at(c), r * self.unit, self.stroke);
+    }
+
+    fn fill_circle(&self, c: (f32, f32), r: f32, accent: bool) {
+        let color = if accent { self.node } else { self.stroke.color };
+        self.p.circle_filled(self.at(c), r * self.unit, color);
+    }
+
+    fn fill_convex(&self, pts: &[(f32, f32)]) {
+        let pts = pts.iter().map(|&q| self.at(q)).collect();
+        self.p.add(PathShape::convex_polygon(
+            pts,
+            self.stroke.color,
+            Stroke::NONE,
+        ));
+    }
+
+    fn stroke_rrect(&self, min: (f32, f32), max: (f32, f32), r: f32) {
+        let rect = Rect::from_min_max(self.at(min), self.at(max));
+        self.p
+            .rect_stroke(rect, r * self.unit, self.stroke, egui::StrokeKind::Middle);
+    }
+}
+
+/// A screen polyline with round caps and joins.
+fn stroke_screen(p: &Painter, pts: Vec<Pos2>, closed: bool, stroke: Stroke) {
+    for q in &pts {
+        p.circle_filled(*q, stroke.width * 0.5, stroke.color);
+    }
+    p.add(if closed {
+        PathShape::closed_line(pts, stroke)
+    } else {
+        PathShape::line(pts, stroke)
+    });
+}
+
+/// Writes SVG elements (the export of the built-in icons).
+struct Svg {
+    out: std::cell::RefCell<String>,
+}
+
+impl Svg {
+    fn points(pts: &[(f32, f32)]) -> String {
+        pts.iter()
+            .map(|(x, y)| format!("{} {}", fmt(*x), fmt(*y)))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    fn push(&self, s: String) {
+        let mut o = self.out.borrow_mut();
+        o.push_str("  ");
+        o.push_str(&s);
+        o.push('\n');
+    }
+}
+
+/// A coordinate with at most two decimals.
+fn fmt(v: f32) -> String {
+    let s = format!("{v:.2}");
+    s.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
+impl Sink for Svg {
+    fn stroke_path(&self, pts: &[(f32, f32)], closed: bool, accent: bool) {
+        let tag = if closed { "polygon" } else { "polyline" };
+        let class = if accent { r#" class="node""# } else { "" };
+        self.push(format!(r#"<{tag}{class} points="{}"/>"#, Svg::points(pts)));
+    }
+
+    fn stroke_circle(&self, (x, y): (f32, f32), r: f32) {
+        self.push(format!(
+            r#"<circle cx="{}" cy="{}" r="{}"/>"#,
+            fmt(x),
+            fmt(y),
+            fmt(r)
+        ));
+    }
+
+    fn fill_circle(&self, (x, y): (f32, f32), r: f32, accent: bool) {
+        let class = if accent { r#" class="node""# } else { "" };
+        self.push(format!(
+            r#"<circle{class} cx="{}" cy="{}" r="{}" fill="currentColor" stroke="none"/>"#,
+            fmt(x),
+            fmt(y),
+            fmt(r)
+        ));
+    }
+
+    fn fill_convex(&self, pts: &[(f32, f32)]) {
+        self.push(format!(
+            r#"<polygon points="{}" fill="currentColor" stroke="none"/>"#,
+            Svg::points(pts)
+        ));
+    }
+
+    fn stroke_rrect(&self, min: (f32, f32), max: (f32, f32), r: f32) {
+        self.push(format!(
+            r#"<rect x="{}" y="{}" width="{}" height="{}" rx="{}"/>"#,
+            fmt(min.0),
+            fmt(min.1),
+            fmt(max.0 - min.0),
+            fmt(max.1 - min.1),
+            fmt(r)
+        ));
+    }
+}
+
+/// The drawing vocabulary of the icon set, on the 24-unit grid.
+struct Pen<'a> {
+    sink: &'a dyn Sink,
+}
+
+impl Pen<'_> {
     fn line(&self, a: (f32, f32), b: (f32, f32)) {
-        let (a, b) = (self.at(a.0, a.1), self.at(b.0, b.1));
-        self.p.line_segment([a, b], self.stroke);
-        self.cap(a);
-        self.cap(b);
+        self.sink.stroke_path(&[a, b], false, false);
     }
 
     fn poly(&self, pts: &[(f32, f32)], closed: bool) {
-        let pts: Vec<Pos2> = pts.iter().map(|&(x, y)| self.at(x, y)).collect();
-        for q in &pts {
-            self.cap(*q);
-        }
-        let shape = if closed {
-            PathShape::closed_line(pts, self.stroke)
-        } else {
-            PathShape::line(pts, self.stroke)
-        };
-        self.p.add(shape);
+        self.sink.stroke_path(pts, closed, false);
     }
 
     /// Arc around `c` from `a0` to `a1` degrees (0 = right, 90 = down).
@@ -131,73 +304,57 @@ impl Pen<'_> {
                 (c.0 + r * a.cos(), c.1 + r * a.sin())
             })
             .collect();
-        let first = self.at(pts[0].0, pts[0].1);
-        let last = self.at(pts[n].0, pts[n].1);
-        self.p.add(PathShape::line(
-            pts.iter().map(|&(x, y)| self.at(x, y)).collect(),
-            self.stroke,
-        ));
-        self.cap(first);
-        self.cap(last);
+        self.sink.stroke_path(&pts, false, false);
     }
 
     fn circle(&self, c: (f32, f32), r: f32) {
-        self.p
-            .circle_stroke(self.at(c.0, c.1), r * self.unit, self.stroke);
+        self.sink.stroke_circle(c, r);
     }
 
     fn quad(&self, a: (f32, f32), ctrl: (f32, f32), b: (f32, f32)) {
-        let pts = [
-            self.at(a.0, a.1),
-            self.at(ctrl.0, ctrl.1),
-            self.at(b.0, b.1),
-        ];
-        self.p.add(QuadraticBezierShape::from_points_stroke(
-            pts,
-            false,
-            Color32::TRANSPARENT,
-            self.stroke,
-        ));
-        self.cap(pts[0]);
-        self.cap(pts[2]);
+        let pts: Vec<(f32, f32)> = (0..=16)
+            .map(|i| {
+                let t = i as f32 / 16.0;
+                let u = 1.0 - t;
+                (
+                    u * u * a.0 + 2.0 * u * t * ctrl.0 + t * t * b.0,
+                    u * u * a.1 + 2.0 * u * t * ctrl.1 + t * t * b.1,
+                )
+            })
+            .collect();
+        self.sink.stroke_path(&pts, false, false);
     }
 
     fn cubic(&self, a: (f32, f32), c1: (f32, f32), c2: (f32, f32), b: (f32, f32)) {
-        let pts = [
-            self.at(a.0, a.1),
-            self.at(c1.0, c1.1),
-            self.at(c2.0, c2.1),
-            self.at(b.0, b.1),
-        ];
-        self.p.add(CubicBezierShape::from_points_stroke(
-            pts,
-            false,
-            Color32::TRANSPARENT,
-            self.stroke,
-        ));
-        self.cap(pts[0]);
-        self.cap(pts[3]);
+        let pts: Vec<(f32, f32)> = (0..=20)
+            .map(|i| {
+                let t = i as f32 / 20.0;
+                let u = 1.0 - t;
+                let c = |p0: f32, p1: f32, p2: f32, p3: f32| {
+                    u * u * u * p0 + 3.0 * u * u * t * p1 + 3.0 * u * t * t * p2 + t * t * t * p3
+                };
+                (c(a.0, c1.0, c2.0, b.0), c(a.1, c1.1, c2.1, b.1))
+            })
+            .collect();
+        self.sink.stroke_path(&pts, false, false);
     }
 
     fn rrect(&self, min: (f32, f32), max: (f32, f32), r: f32) {
-        let rect = Rect::from_min_max(self.at(min.0, min.1), self.at(max.0, max.1));
-        self.p
-            .rect_stroke(rect, r * self.unit, self.stroke, egui::StrokeKind::Middle);
+        self.sink.stroke_rrect(min, max, r);
     }
 
     /// The orange commit node.
     fn node(&self, c: (f32, f32), r: f32) {
-        self.p
-            .circle_filled(self.at(c.0, c.1), r * self.unit, self.node);
+        self.sink.fill_circle(c, r, true);
     }
 
     /// A stroke in the node color (terminal cursor, warning mark).
     fn accent_line(&self, a: (f32, f32), b: (f32, f32)) {
-        let s = Stroke::new(self.stroke.width, self.node);
-        let (a, b) = (self.at(a.0, a.1), self.at(b.0, b.1));
-        self.p.line_segment([a, b], s);
-        self.p.circle_filled(a, s.width * 0.5, s.color);
-        self.p.circle_filled(b, s.width * 0.5, s.color);
+        self.sink.stroke_path(&[a, b], false, true);
+    }
+
+    fn fill(&self, pts: &[(f32, f32)]) {
+        self.sink.fill_convex(pts);
     }
 
     /// Arrow head at `tip` pointing along `dir` degrees.
@@ -216,20 +373,69 @@ impl Pen<'_> {
     }
 }
 
-/// Draws `icon` into the square centered in `rect`.
+/// Draws `icon` into the square centered in `rect`: the style's SVG for it when the style
+/// replaces it, else the built-in drawing.
 pub fn paint(p: &Painter, icon: Icon, rect: Rect, colors: Colors) {
     let side = rect.width().min(rect.height());
     let unit = side / 24.0;
     let origin = rect.center() - Vec2::splat(side / 2.0);
+    if let Some(shape) = crate::theme::custom_icon(icon.name()) {
+        paint_svg(p, &shape, rect, colors);
+        return;
+    }
     // Thicker relative to the size when small, so tiny icons stay legible.
     let width = (crate::theme::icon_width() * unit).max(1.25);
-    let pen = Pen {
+    let screen = Screen {
         p,
         origin,
         unit,
         stroke: Stroke::new(width, colors.stroke),
         node: colors.node,
     };
+    draw(&Pen { sink: &screen }, icon);
+}
+
+/// Draws a style's SVG icon into the square centered in `rect`.
+fn paint_svg(p: &Painter, shape: &gk_settings::icon_svg::IconShape, rect: Rect, colors: Colors) {
+    use gk_settings::icon_svg::Part;
+    let [vx, vy, vw, vh] = shape.view_box;
+    let side = rect.width().min(rect.height());
+    let scale = side / vw.max(vh);
+    let origin = rect.center() - vec2(vw, vh) * scale / 2.0;
+    let at = |[x, y]: [f32; 2]| origin + vec2(x - vx, y - vy) * scale;
+    for item in &shape.items {
+        let color = if item.node {
+            colors.node
+        } else {
+            colors.stroke
+        };
+        if item.fill {
+            match &item.part {
+                Part::Circle { center, radius } => {
+                    p.circle_filled(at(*center), radius * scale, color);
+                }
+                Part::Poly { points, .. } => {
+                    let pts = points.iter().map(|q| at(*q)).collect();
+                    p.add(PathShape::convex_polygon(pts, color, Stroke::NONE));
+                }
+            }
+        }
+        if let Some(w) = item.stroke {
+            let stroke = Stroke::new((w * scale).max(1.0), color);
+            match &item.part {
+                Part::Circle { center, radius } => {
+                    p.circle_stroke(at(*center), radius * scale, stroke);
+                }
+                Part::Poly { points, closed } => {
+                    stroke_screen(p, points.iter().map(|q| at(*q)).collect(), *closed, stroke);
+                }
+            }
+        }
+    }
+}
+
+/// The built-in drawing of `icon`.
+fn draw(pen: &Pen, icon: Icon) {
     let n = 2.7; // node radius
     use Icon::*;
     match icon {
@@ -454,8 +660,7 @@ pub fn paint(p: &Painter, icon: Icon, rect: Rect, colors: Colors) {
             // Upright push pin: cap, body, collar, needle.
             pen.line((8.0, 3.5), (16.0, 3.5));
             if icon == Pin {
-                let body = Rect::from_min_max(pen.at(9.5, 3.5), pen.at(14.5, 11.5));
-                p.rect_filled(body, 0.0, colors.stroke);
+                pen.fill(&[(9.5, 3.5), (14.5, 3.5), (14.5, 11.5), (9.5, 11.5)]);
             } else {
                 pen.poly(&[(9.5, 3.5), (9.5, 11.5)], false);
                 pen.poly(&[(14.5, 3.5), (14.5, 11.5)], false);
@@ -473,17 +678,8 @@ pub fn paint(p: &Painter, icon: Icon, rect: Rect, colors: Colors) {
                 (10.0, 12.0),
             ];
             if icon == Filter {
-                let pts: Vec<Pos2> = cup.iter().map(|&(x, y)| pen.at(x, y)).collect();
-                p.add(PathShape::convex_polygon(
-                    pts[..3].iter().chain([&pts[5]]).copied().collect(),
-                    colors.stroke,
-                    Stroke::NONE,
-                ));
-                p.add(PathShape::convex_polygon(
-                    vec![pts[5], pts[2], pts[3], pts[4]],
-                    colors.stroke,
-                    Stroke::NONE,
-                ));
+                pen.fill(&[cup[0], cup[1], cup[2], cup[5]]);
+                pen.fill(&[cup[5], cup[2], cup[3], cup[4]]);
             }
             pen.poly(&cup, true);
         }
@@ -768,5 +964,80 @@ fn on_fill(fill: Color32) -> Color32 {
         Color32::BLACK
     } else {
         Color32::WHITE
+    }
+}
+
+/// The built-in drawing of `icon` as an SVG document (24 × 24, stroke `width`), in the format
+/// style files read: `currentColor` strokes, `class="node"` for the commit nodes.
+pub fn builtin_svg(icon: Icon, width: f32) -> String {
+    let svg = Svg {
+        out: std::cell::RefCell::new(String::new()),
+    };
+    draw(&Pen { sink: &svg }, icon);
+    format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"{}\" stroke-linecap=\"round\" stroke-linejoin=\"round\">\n{}</svg>\n",
+        fmt(width),
+        svg.out.into_inner()
+    )
+}
+
+/// Writes every icon of `style` as an SVG file into `dir` (the style's own SVG where it
+/// replaces one), plus `icons.toml` with the `[icons.files]` section that uses them.
+pub fn export(style: &gk_settings::style::Style, dir: &std::path::Path) -> anyhow::Result<usize> {
+    use anyhow::Context;
+    std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
+    let mut toml = String::from(
+        "# Paste into a style file (Settings > General > Style > New style from this one) and\n\
+         # edit the SVG files; paths are relative to the style file's folder.\n[icons.files]\n",
+    );
+    let folder = dir
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    for icon in ALL {
+        let name = icon.name();
+        let file = dir.join(format!("{name}.svg"));
+        match style.icons.custom.get(name) {
+            Some((src, _)) => {
+                std::fs::copy(src, &file)
+                    .with_context(|| format!("copy {} -> {}", src.display(), file.display()))?;
+            }
+            None => std::fs::write(&file, builtin_svg(icon, style.icons.width))
+                .with_context(|| format!("write {}", file.display()))?,
+        }
+        toml.push_str(&format!("{name} = \"{folder}/{name}.svg\"\n"));
+    }
+    std::fs::write(dir.join("icons.toml"), toml).context("write icons.toml")?;
+    Ok(ALL.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn icon_names_match_the_style_files() {
+        let names: Vec<&str> = ALL.iter().map(|i| i.name()).collect();
+        assert_eq!(names.len(), gk_settings::style::ICON_NAMES.len());
+        for n in gk_settings::style::ICON_NAMES {
+            assert!(names.contains(&n), "{n}");
+        }
+    }
+
+    /// Every built-in icon exported as SVG reads back with the same number of pieces drawn.
+    #[test]
+    fn exported_icons_read_back() {
+        for icon in ALL {
+            let svg = builtin_svg(icon, 2.0);
+            let shape = gk_settings::icon_svg::parse(&svg)
+                .unwrap_or_else(|e| panic!("{icon:?}: {e:#}\n{svg}"));
+            assert!(!shape.items.is_empty(), "{icon:?}");
+            assert_eq!(shape.view_box, [0.0, 0.0, 24.0, 24.0]);
+        }
+        let commit = gk_settings::icon_svg::parse(&builtin_svg(Icon::Commit, 2.0)).unwrap();
+        assert!(
+            commit.items.iter().any(|i| i.node),
+            "the commit node is marked"
+        );
     }
 }

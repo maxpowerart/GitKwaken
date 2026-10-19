@@ -9,6 +9,7 @@
 //! status, filter, tree mode or collapsed folders change, so 100k changed
 //! files cost nothing per frame.
 
+pub mod badge;
 mod commit;
 mod conflict_guard;
 mod dnd;

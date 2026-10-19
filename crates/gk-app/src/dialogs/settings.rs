@@ -516,6 +516,17 @@ impl AppDialog for SettingsDialog {
                                                 Err(e) => self.style_error = Some(format!("{e:#}")),
                                             }
                                         }
+                                        if ui.add(crate::icons::IconButton::new(crate::icons::Icon::Copy).text("Export icons")).on_hover_text("Writes every icon of this style as an SVG file to edit (and icons.toml with the [icons.files] lines that use them) into the styles folder").clicked() {
+                                            let (style, _) = gk_settings::style::load(&d.style);
+                                            let dir = gk_settings::style::styles_dir().join(format!("{} icons", d.style));
+                                            match crate::icons::export(&style, &dir) {
+                                                Ok(_) => {
+                                                    self.style_error = None;
+                                                    let _ = open::that(&dir);
+                                                }
+                                                Err(e) => self.style_error = Some(format!("{e:#}")),
+                                            }
+                                        }
                                         if ui.add(crate::icons::IconButton::new(crate::icons::Icon::Folder)).on_hover_text("Open the styles folder").clicked() {
                                             let dir = gk_settings::style::styles_dir();
                                             let _ = std::fs::create_dir_all(&dir);

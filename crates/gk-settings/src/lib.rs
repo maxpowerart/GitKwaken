@@ -4,6 +4,7 @@
 //! dir elsewhere), overridable with `GITKWAKEN_CONFIG_DIR`.
 
 mod autosave;
+pub mod icon_svg;
 mod io;
 mod repo_state;
 pub mod style;

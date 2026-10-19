@@ -174,6 +174,10 @@ inherits = "Kwak"     # optional
 width = 1.8           # stroke width on the 24-unit icon grid
 nodes = true          # orange commit nodes (false: one color)
 
+[icons.files]         # replace single icons with your own SVGs (paths next to this file)
+commit = "lines/commit.svg"
+branch = "lines/branch.svg"
+
 [dark]
 chrome = "#2A1F3D"    # title bar
 accent = "#7C5CD6"    # selected sidebar row
@@ -190,6 +194,16 @@ complete file with every key, opens it and selects it; [`assets/styles/kwak.toml
 documents each key. While a style of yours is selected, saving its file applies it right away.
 Mistakes (an unknown key, a malformed color) are shown in the Style list and the app keeps using
 Kwak. `GITKWAKEN_ICON_SHEET=1` starts GitKwaken on a sheet of every icon in the selected style.
+
+**Icons** can be replaced one by one with SVG files. *Export icons* (next to the Style list)
+writes every icon of the selected style as `<name>.svg` into `styles/<style> icons/`, plus an
+`icons.toml` with the matching `[icons.files]` lines: edit the SVGs you want to change in any
+vector editor and paste those lines into your style. Icons are line art in the style's icon
+color, like [Lucide](https://lucide.dev) / Feather icons (24×24 `viewBox`,
+`stroke="currentColor"`), which work as they are. Supported: `path`, `line`, `polyline`,
+`polygon`, `circle`, `ellipse`, `rect` and `g`, with `stroke`, `fill` and `stroke-width`;
+parts with `class="node"` take the style's node color. Not supported: `transform`, gradients,
+text and images (the Style list then reports the file as an error).
 
 ## Updates and going back
 

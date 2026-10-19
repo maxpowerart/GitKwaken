@@ -12,6 +12,10 @@ user-facing.
 - Styles: Settings › General › Style switches between Kwak and Classic (the previous blue
   look). Your own styles are small TOML files in the config folder's `styles` directory;
   "New style from this one" starts one, and saving the file applies it immediately.
+- Custom icons: a style can replace any icon with an SVG file (`[icons.files]`); "Export
+  icons" writes all of them as SVGs to start from. Lucide/Feather-style icons work as they are.
+- File status badges redrawn: filled squares in the status color with a centered letter,
+  dark in the dark theme and white in the light one.
 - Install another version (Help menu): pick any release, read its changelog and install it,
   older ones included, to go back after an update that went wrong.
 - Withdrawn releases: when a release is pulled, installations running it offer to roll back

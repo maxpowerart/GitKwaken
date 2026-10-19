@@ -391,7 +391,6 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
     let p = c.palette;
     let list_id = ui.make_persistent_id(("gk-file-list", c.side));
     let body_font = egui::TextStyle::Body.resolve(ui.style());
-    let mono = egui::TextStyle::Monospace.resolve(ui.style());
     let k = crate::theme::text_scale(ui.style());
     let row_h = (ui.ctx().fonts_mut(|f| f.row_height(&body_font)) + c.row_pad).round();
     let n = ls.model.rows.len();
@@ -505,12 +504,12 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
                     let cy = rect.center().y;
                     // No check boxes: staging works on the selection (double click, Space,
                     // the header buttons, drag and drop, the context menu).
-                    status_badge(
+                    super::badge::paint(
                         &painter,
                         pos2(x, cy),
-                        e.kind.code(),
-                        &mono,
+                        e.kind,
                         dim(crate::util::status_color(&p, e.kind)),
+                        p.dark,
                         k,
                     );
                     x += 20.0 * k;
@@ -835,30 +834,6 @@ fn ignore_suggestion(targets: &[String]) -> String {
         (None, [one]) => format!("/{one}"),
         _ => String::new(),
     }
-}
-
-/// SourceTree-style status icon: the status code on a colored square.
-fn status_badge(
-    painter: &egui::Painter,
-    left_center: Pos2,
-    code: impl ToString,
-    font: &egui::FontId,
-    color: Color32,
-    k: f32,
-) {
-    let side = 14.0 * k;
-    let r = Rect::from_center_size(left_center + vec2(side / 2.0, 0.0), vec2(side, side));
-    painter.rect_filled(r, 3.0 * k, color);
-    // The letter always fits its box (a mono size above the body size would spill over).
-    let size = (font.size - 1.0).clamp(9.0, side * 0.82);
-    let font = egui::FontId::new(size, font.family.clone());
-    painter.text(
-        r.center() + vec2(0.0, 0.5 * k),
-        Align2::CENTER_CENTER,
-        code.to_string(),
-        font,
-        Color32::from_gray(20),
-    );
 }
 
 fn kind_of<'a>(c: &'a ListCtx, path: &str) -> Option<&'a Entry> {

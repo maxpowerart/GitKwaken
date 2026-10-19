@@ -10,6 +10,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
+use crate::icon_svg::IconShape;
 
 /// Name of the default style.
 pub const DEFAULT_STYLE: &str = "Kwak";
@@ -123,13 +126,61 @@ variant! {
     }
 }
 
+/// Names of the icons a style can replace (`[icons.files]`), as GitKwaken calls them.
+pub const ICON_NAMES: [&str; 42] = [
+    "commit",
+    "pull",
+    "push",
+    "fetch",
+    "branch",
+    "merge",
+    "stash",
+    "discard",
+    "tag",
+    "flow",
+    "remote",
+    "terminal",
+    "explorer",
+    "folder",
+    "settings",
+    "file_status",
+    "history",
+    "search",
+    "reflog",
+    "blame",
+    "submodule",
+    "worktree",
+    "add",
+    "close",
+    "undo",
+    "up",
+    "down",
+    "back",
+    "forward",
+    "refresh",
+    "copy",
+    "update",
+    "warning",
+    "ok",
+    "error",
+    "list",
+    "tree",
+    "pin",
+    "pin_off",
+    "filter",
+    "filter_off",
+    "bisect",
+];
+
 /// Icon look.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct IconParams {
     /// Stroke width on the 24-unit design grid.
     pub width: f32,
     /// Commit nodes in the node color (else everything in the stroke color).
     pub nodes: bool,
+    /// Icons replaced by SVG files: name (see [`ICON_NAMES`]) to (absolute path, shape).
+    pub custom: BTreeMap<String, (PathBuf, Arc<IconShape>)>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -139,6 +190,9 @@ pub struct IconsDef {
     pub width: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nodes: Option<bool>,
+    /// Icon name to SVG file, relative to the style file's folder.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub files: BTreeMap<String, String>,
 }
 
 /// A style file.
@@ -172,6 +226,12 @@ impl Style {
             icons: IconsDef {
                 width: Some(self.icons.width),
                 nodes: Some(self.icons.nodes),
+                files: self
+                    .icons
+                    .custom
+                    .iter()
+                    .map(|(k, (p, _))| (k.clone(), p.display().to_string()))
+                    .collect(),
             },
             dark: self.dark.to_def(),
             light: self.light.to_def(),
@@ -254,6 +314,29 @@ fn all_defs(dir: &Path) -> BTreeMap<String, (Option<PathBuf>, Result<StyleDef>)>
     map
 }
 
+/// The parent's replaced icons plus the ones `def` lists (paths relative to the folder of
+/// the style file at `path`).
+fn custom_icons(
+    def: &StyleDef,
+    path: Option<&Path>,
+    base: Option<&Style>,
+) -> Result<BTreeMap<String, (PathBuf, Arc<IconShape>)>> {
+    let mut out = base.map(|b| b.icons.custom.clone()).unwrap_or_default();
+    let dir = path.and_then(Path::parent).unwrap_or(Path::new("."));
+    for (name, file) in &def.icons.files {
+        if !ICON_NAMES.contains(&name.as_str()) {
+            bail!(
+                "[icons.files] {name}: no such icon (known: {})",
+                ICON_NAMES.join(", ")
+            );
+        }
+        let p = dir.join(file);
+        let shape = crate::icon_svg::load(&p).with_context(|| format!("[icons.files] {name}"))?;
+        out.insert(name.clone(), (p, Arc::new(shape)));
+    }
+    Ok(out)
+}
+
 /// Resolves `name` with its `inherits` chain (Kwak at the root).
 fn resolve(
     name: &str,
@@ -263,7 +346,7 @@ fn resolve(
     if depth > 8 {
         bail!("`inherits` goes in a circle");
     }
-    let (_, def) = defs
+    let (path, def) = defs
         .get(name)
         .ok_or_else(|| anyhow!("no style named {name:?}"))?;
     let def = def.as_ref().map_err(|e| anyhow!("{e:#}"))?;
@@ -285,6 +368,7 @@ fn resolve(
             .nodes
             .or(base.as_ref().map(|b| b.icons.nodes))
             .unwrap_or(true),
+        custom: custom_icons(def, path.as_deref(), base.as_ref())?,
     };
     Ok(Style {
         name: name.to_string(),
@@ -457,6 +541,55 @@ mod tests {
         assert_eq!(copy.icons, classic.icons);
         let (_, second) = create_copy_in(dir.path(), &classic).unwrap();
         assert_eq!(second, "Classic copy 2");
+    }
+
+    #[test]
+    fn styles_replace_icons_with_svg_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("icons")).unwrap();
+        std::fs::write(
+            dir.path().join("icons/push.svg"),
+            r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("mine.toml"),
+            "name = \"Mine\"
+[icons.files]
+push = \"icons/push.svg\"
+",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("bad.toml"),
+            "name = \"Bad\"
+[icons.files]
+pusj = \"icons/push.svg\"
+",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("missing.toml"),
+            "name = \"Missing\"
+[icons.files]
+pull = \"icons/nope.svg\"
+",
+        )
+        .unwrap();
+        let (mine, err) = load_in(dir.path(), "Mine");
+        assert_eq!(err, None);
+        let (path, shape) = &mine.icons.custom["push"];
+        assert!(path.ends_with("icons/push.svg"));
+        assert_eq!(shape.items.len(), 2);
+        let (_, err) = load_in(dir.path(), "Bad");
+        assert!(err.unwrap().contains("no such icon"));
+        let (_, err) = load_in(dir.path(), "Missing");
+        assert!(err.unwrap().contains("nope.svg"));
+        // A copy keeps the replaced icon (absolute path).
+        let (_, name) = create_copy_in(dir.path(), &mine).unwrap();
+        let (copy, err) = load_in(dir.path(), &name);
+        assert_eq!(err, None);
+        assert_eq!(copy.icons.custom["push"].1, mine.icons.custom["push"].1);
     }
 
     #[test]

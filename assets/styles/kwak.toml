@@ -14,6 +14,13 @@ width = 2.0
 # Orange commit nodes in the icons; false draws every icon in the stroke color only.
 nodes = true
 
+# Replace single icons with SVG files, relative to this style file, for example:
+#   [icons.files]
+#   commit = "my icons/commit.svg"
+# Settings > General > Style > "Export icons" writes every icon as an SVG to start from, with
+# the list of names. Line icons on a 24x24 viewBox with stroke="currentColor" (Lucide /
+# Feather style) work as they are; parts with class="node" take the node color.
+
 [dark]
 # Title bar (menu bar and repository tabs).
 chrome = "#1F2642"

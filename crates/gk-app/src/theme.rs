@@ -13,6 +13,8 @@ struct Current {
     node: Color32,
     icon_width: f32,
     nodes: bool,
+    /// Icons the style replaces with SVG files, by name.
+    custom: std::collections::BTreeMap<String, std::sync::Arc<gk_settings::icon_svg::IconShape>>,
 }
 
 static CURRENT: RwLock<Option<Current>> = RwLock::new(None);
@@ -43,12 +45,23 @@ fn current_of(style: &Style, light: bool) -> Current {
         node: color(v.node),
         icon_width: style.icons.width,
         nodes: style.icons.nodes,
+        custom: style
+            .icons
+            .custom
+            .iter()
+            .map(|(k, (_, s))| (k.clone(), s.clone()))
+            .collect(),
     }
 }
 
 /// Stroke and node colors of the icons ([`crate::icons`]).
 pub fn icon_colors() -> (Color32, Color32) {
     with_current(|c| (c.icon, if c.nodes { c.node } else { c.icon }))
+}
+
+/// The style's SVG replacement for the icon `name`, if any.
+pub fn custom_icon(name: &str) -> Option<std::sync::Arc<gk_settings::icon_svg::IconShape>> {
+    with_current(|c| c.custom.get(name).cloned())
 }
 
 /// Icon stroke width on the 24-unit design grid.
