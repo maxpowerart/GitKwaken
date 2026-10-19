@@ -6,6 +6,7 @@
 mod autosave;
 mod io;
 mod repo_state;
+pub mod style;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -32,6 +33,8 @@ pub struct Settings {
     pub window: WindowState,
     pub theme: Theme,
     pub ui_scale: f32,
+    /// Style (Settings › General › Style): a built-in one or a user style file.
+    pub style: String,
     pub font_size: f32,
     pub mono_font_size: f32,
     /// Monospace font family (a system font name, e.g. "Consolas").
@@ -76,6 +79,7 @@ impl Default for Settings {
             window: WindowState::default(),
             theme: Theme::default(),
             ui_scale: 1.0,
+            style: style::DEFAULT_STYLE.to_string(),
             font_size: 13.0,
             mono_font_size: 12.5,
             mono_font_family: "Consolas".into(),

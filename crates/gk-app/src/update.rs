@@ -6,6 +6,7 @@
 //! the new executable and swap it in on exit; a pacman install (Arch / Manjaro) downloads the
 //! release's package and installs it with `pkexec pacman -U` right away.
 
+use crate::icons::{Icon, IconButton};
 use gk_update::Release;
 use parking_lot::Mutex;
 use std::path::PathBuf;
@@ -610,7 +611,11 @@ impl Updater {
                 ui.label("Checking for updates…");
             }
             State::UpToDate => {
-                if ui.small_button("✖").on_hover_text("Dismiss").clicked() {
+                if ui
+                    .add(IconButton::new(Icon::Close).small())
+                    .on_hover_text("Dismiss")
+                    .clicked()
+                {
                     *self.state.lock() = State::Idle;
                 }
                 ui.label(format!(
@@ -620,16 +625,16 @@ impl Updater {
             }
             State::Available(rel) => {
                 let b = ui
-                    .button(format!("⬆ Update to {}", rel.version))
+                    .add(IconButton::new(Icon::Update).text(format!("Update to {}", rel.version)))
                     .on_hover_text("See what's new and install");
                 if b.clicked() {
                     *self.asking.lock() = true;
                 }
             }
             State::Withdrawn(rel, reason) => {
-                let text = egui::RichText::new(format!("⚠ Roll back to {}", rel.version))
-                    .color(egui::Color32::BLACK);
-                let b = egui::Button::new(text).fill(egui::Color32::from_rgb(0xE8, 0xA7, 0x3D));
+                let b = IconButton::new(Icon::Warning)
+                    .text(format!("Roll back to {}", rel.version))
+                    .fill(egui::Color32::from_rgb(0xE8, 0xA7, 0x3D));
                 let tip = if reason.is_empty() {
                     format!("GitKwaken {} was withdrawn", env!("CARGO_PKG_VERSION"))
                 } else {

@@ -48,6 +48,8 @@ pub struct GkApp {
     show_log: bool,
     /// Output log height the user chose (see `views::panel_size`).
     log_height: f32,
+    /// User style file being watched: last check and its modification time.
+    style_watch: (std::time::Instant, Option<std::time::SystemTime>),
     errors: Vec<String>,
     command_palette: views::palette::PaletteState,
     updater: crate::update::Updater,
@@ -95,9 +97,11 @@ impl GkApp {
     ) -> Self {
         let mono_family = mono_family(&settings);
         install_fonts(ctx, &mono_family);
+        let (style, style_error) = gk_settings::style::load(&settings.style);
         let palette = theme::apply_with(
             ctx,
             settings.theme,
+            &style,
             settings.ui_scale,
             settings.font_size,
             settings.mono_font_size,
@@ -142,7 +146,8 @@ impl GkApp {
             actions: Vec::new(),
             show_log: false,
             log_height: 0.0,
-            errors: Vec::new(),
+            style_watch: (std::time::Instant::now(), None),
+            errors: style_error.into_iter().collect(),
             command_palette: std::env::var("GITKWAKEN_PALETTE")
                 .map(views::palette::PaletteState::run_on_start)
                 .unwrap_or_default(),
@@ -226,9 +231,12 @@ impl GkApp {
                         install_fonts(ctx, &family);
                         self.mono_family = family;
                     }
+                    let (style, style_error) = gk_settings::style::load(&self.settings.style);
+                    self.errors.extend(style_error);
                     self.palette = theme::apply_with(
                         ctx,
                         self.settings.theme,
+                        &style,
                         self.settings.ui_scale,
                         self.settings.font_size,
                         self.settings.mono_font_size,
@@ -359,12 +367,11 @@ impl GkApp {
                         ui.visuals().widgets.hovered.weak_bg_fill,
                     );
                 }
-                ui.painter().text(
-                    close_rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "×",
-                    font.clone(),
-                    if close.hovered() { strong } else { p.muted },
+                crate::icons::paint(
+                    ui.painter(),
+                    crate::icons::Icon::Close,
+                    close_rect.shrink(3.5 * k),
+                    crate::icons::Colors::mono(if close.hovered() { strong } else { p.muted }),
                 );
                 if close.on_hover_text("Close tab").clicked() || r.middle_clicked() {
                     self.actions.push(Action::CloseTab(i));
@@ -384,33 +391,43 @@ impl GkApp {
                 });
             }
             ui.add_space(4.0);
-            let plus = egui::Button::new(egui::RichText::new("+").size(18.0 * k))
-                .frame(false)
-                .min_size(egui::vec2(tab_h, tab_h));
+            let (plus_rect, plus) =
+                ui.allocate_exact_size(egui::vec2(tab_h, tab_h), egui::Sense::click());
+            if plus.hovered() {
+                ui.painter().rect_filled(
+                    plus_rect.shrink(2.0),
+                    3.0,
+                    ui.visuals().widgets.hovered.weak_bg_fill,
+                );
+            }
+            crate::icons::paint(
+                ui.painter(),
+                crate::icons::Icon::Add,
+                plus_rect.shrink(tab_h * 0.22),
+                crate::icons::Colors::theme(),
+            );
             let open_key = self.keymap.text(Act::OpenRepo);
-            egui::containers::menu::MenuButton::from_button(plus)
-                .ui(ui, |ui| {
-                    let mut b = egui::Button::new("Open repository…");
-                    if !open_key.is_empty() {
-                        b = b.shortcut_text(egui::RichText::new(&open_key).weak());
-                    }
-                    if ui.add(b).clicked() {
-                        self.actions.push(Action::OpenRepoDialog);
-                        ui.close();
-                    }
-                    if ui.button("Clone repository…").clicked() {
-                        self.actions
-                            .push(Action::Global(dialogs::GlobalDialog::clone_repo()));
-                        ui.close();
-                    }
-                    if ui.button("Create repository…").clicked() {
-                        self.actions
-                            .push(Action::Global(dialogs::GlobalDialog::init_repo()));
-                        ui.close();
-                    }
-                })
-                .0
-                .on_hover_text("New tab: open, clone or create a repository");
+            egui::Popup::menu(&plus).show(|ui| {
+                let mut b = egui::Button::new("Open repository…");
+                if !open_key.is_empty() {
+                    b = b.shortcut_text(egui::RichText::new(&open_key).weak());
+                }
+                if ui.add(b).clicked() {
+                    self.actions.push(Action::OpenRepoDialog);
+                    ui.close();
+                }
+                if ui.button("Clone repository…").clicked() {
+                    self.actions
+                        .push(Action::Global(dialogs::GlobalDialog::clone_repo()));
+                    ui.close();
+                }
+                if ui.button("Create repository…").clicked() {
+                    self.actions
+                        .push(Action::Global(dialogs::GlobalDialog::init_repo()));
+                    ui.close();
+                }
+            });
+            plus.on_hover_text("New tab: open, clone or create a repository");
             if !self.tabs.is_empty() {
                 // Bookmarks and recent repositories while tabs are open.
                 let current = self.tabs.get(self.active).map(|t| t.path.clone());
@@ -559,10 +576,11 @@ impl GkApp {
             )
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new("⚠")
-                            .color(self.palette.conflict)
-                            .strong(),
+                    crate::icons::show(
+                        ui,
+                        crate::icons::Icon::Warning,
+                        1.0,
+                        crate::icons::Colors::mono(self.palette.conflict),
                     );
                     ui.label(text);
                     ui.hyperlink_to("Install the latest Git", GIT_DOWNLOAD_URL);
@@ -675,9 +693,14 @@ fn mono_family(s: &Settings) -> String {
 
 impl gk_dx11::App for GkApp {
     fn ui(&mut self, ui: &mut egui::Ui) {
+        if std::env::var_os("GITKWAKEN_ICON_SHEET").is_some() {
+            crate::icons::sheet(ui, &gk_settings::style::load(&self.settings.style).0);
+            return;
+        }
         let ctx = ui.ctx().clone();
         self.publish_keymap(&ctx);
         self.shortcuts(&ctx);
+        self.watch_style(&ctx);
         // First: the dialog takes Enter / Escape before lists and views read keys.
         self.updater.dialog(&ctx, &mut self.settings);
         let chrome = egui::Frame::new().fill(self.palette.chrome);
@@ -819,4 +842,33 @@ fn same_path(a: &std::path::Path, b: &std::path::Path) -> bool {
             .to_string()
     };
     norm(a) == norm(b)
+}
+
+impl GkApp {
+    /// A user style applies as soon as its file is saved: its modification time is checked
+    /// once a second while it is the selected style.
+    fn watch_style(&mut self, ctx: &egui::Context) {
+        let name = &self.settings.style;
+        if gk_settings::style::BUILTIN.iter().any(|(b, _)| b == name) {
+            return;
+        }
+        ctx.request_repaint_after(std::time::Duration::from_secs(1));
+        if self.style_watch.0.elapsed() < std::time::Duration::from_secs(1) {
+            return;
+        }
+        self.style_watch.0 = std::time::Instant::now();
+        let modified = gk_settings::style::list()
+            .into_iter()
+            .find(|l| &l.name == name)
+            .and_then(|l| l.path)
+            .and_then(|p| std::fs::metadata(p).ok())
+            .and_then(|m| m.modified().ok());
+        if modified != self.style_watch.1 {
+            let first = self.style_watch.1.is_none();
+            self.style_watch.1 = modified;
+            if !first {
+                self.actions.push(Action::ApplySettings);
+            }
+        }
+    }
 }

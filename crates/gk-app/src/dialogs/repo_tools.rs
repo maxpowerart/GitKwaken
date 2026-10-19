@@ -264,7 +264,14 @@ impl TabDialog for Clean {
                     );
                     warning(ui, "They are not in git: this cannot be undone.");
                     ctl.ok_label = format!("Delete {n} item(s)");
-                    if ui.small_button("◀ Back").clicked() {
+                    if ui
+                        .add(
+                            crate::icons::IconButton::new(crate::icons::Icon::Back)
+                                .text("Back")
+                                .small(),
+                        )
+                        .clicked()
+                    {
                         self.confirm = false;
                     }
                     return;
@@ -473,11 +480,11 @@ impl TabDialog for Optimize {
                 for (on, title, text) in optimization_rows(st) {
                     ui.horizontal_top(|ui| {
                         let (icon, color) = if on {
-                            ("✔", GOOD)
+                            (crate::icons::Icon::Ok, GOOD)
                         } else {
-                            ("✖", ui.visuals().weak_text_color())
+                            (crate::icons::Icon::Error, ui.visuals().weak_text_color())
                         };
-                        ui.label(RichText::new(icon).color(color).strong().size(15.0));
+                        crate::icons::show(ui, icon, 1.15, crate::icons::Colors::mono(color));
                         ui.vertical(|ui| {
                             ui.label(RichText::new(title).strong());
                             hint(ui, text);
@@ -488,7 +495,12 @@ impl TabDialog for Optimize {
                 let all = optimization_rows(st).iter().all(|r| r.0);
                 ui.add_space(4.0);
                 if all {
-                    ui.label(RichText::new("✔ This repository is fully optimized.").color(GOOD));
+                    crate::icons::label(
+                        ui,
+                        crate::icons::Icon::Ok,
+                        "This repository is fully optimized.",
+                        GOOD,
+                    );
                 } else {
                     hint(
                         ui,
@@ -635,7 +647,7 @@ fn diagnostics_ui(
                 command_box(ui, &diag::dev_drive_hint(workdir));
                 hint(ui, "GitKwaken never runs these commands itself.");
             } else {
-                ui.label(RichText::new(format!("✔ {line}")).color(GOOD));
+                crate::icons::label(ui, crate::icons::Icon::Ok, line.to_string(), GOOD);
             }
         }
         Some(Err(e)) => error(ui, e.clone()),

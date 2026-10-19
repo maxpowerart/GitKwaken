@@ -1,0 +1,29 @@
+# GitKwaken style "Classic": the SourceTree-like blue look GitKwaken started with. Icons are
+# drawn in one blue (no orange nodes), slightly thinner. Everything not set here comes from
+# Kwak.
+
+name = "Classic"
+
+[icons]
+width = 1.7
+nodes = false
+
+[dark]
+chrome = "#16335E"
+accent = "#2A7FE0"
+icon = "#4F9DF7"
+node = "#4F9DF7"
+text_selection = "#226AC4"
+text_selection_fg = "#FFFFFF"
+selection = "#4F9DF73C"
+lanes = ["#4F9DF7", "#F07A4A", "#3DC28B", "#C37BE8", "#E8C13D", "#2EC4D6", "#E85D8A", "#9AB84E"]
+
+[light]
+chrome = "#D9E4F4"
+accent = "#2A7FE0"
+icon = "#1F6FD6"
+node = "#1F6FD6"
+text_selection = "#90D1FF"
+text_selection_fg = "#00537D"
+selection = "#2F6FD832"
+lanes = ["#1F6FD6", "#D95A1F", "#1E9A62", "#9B4DCA", "#B08600", "#0E93A6", "#D03B6E", "#6A8A1F"]

@@ -214,7 +214,11 @@ fn top_bar(ui: &mut Ui, tab: &mut RepoTab) -> Option<Source> {
         if let Some(fm) = &mut s.file {
             ui.label(egui::RichText::new("File history:").strong());
             ui.label(egui::RichText::new(&fm.path).monospace());
-            if ui.small_button("⟳").on_hover_text("Refresh").clicked() {
+            if ui
+                .add(crate::icons::IconButton::new(crate::icons::Icon::Refresh).small())
+                .on_hover_text("Refresh")
+                .clicked()
+            {
                 fm.run += 1;
             }
             let all = tab.state.history_scope != "current";
@@ -291,7 +295,12 @@ fn top_bar(ui: &mut Ui, tab: &mut RepoTab) -> Option<Source> {
             Some(t) => ctx.request_repaint_after(DEBOUNCE.saturating_sub(t.elapsed())),
             None => {}
         }
-        if !s.text.is_empty() && ui.small_button("✖").on_hover_text("Clear").clicked() {
+        if !s.text.is_empty()
+            && ui
+                .add(crate::icons::IconButton::new(crate::icons::Icon::Close).small())
+                .on_hover_text("Clear")
+                .clicked()
+        {
             s.text.clear();
             s.applied.clear();
             s.edited_at = None;

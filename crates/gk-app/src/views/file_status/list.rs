@@ -599,7 +599,18 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
                     );
                     x += INDENT * k;
                     let clip = painter.with_clip_rect(rect.intersect(vis));
-                    let g = clip.layout_no_wrap(format!("📁 {name}"), body_font.clone(), strong);
+                    let icon_side = (body_font.size * 1.1).round();
+                    crate::icons::paint(
+                        &clip,
+                        crate::icons::Icon::Folder,
+                        Rect::from_center_size(
+                            pos2(x + icon_side / 2.0, cy),
+                            vec2(icon_side, icon_side),
+                        ),
+                        crate::icons::Colors::theme(),
+                    );
+                    x += icon_side + 4.0;
+                    let g = clip.layout_no_wrap(name.to_string(), body_font.clone(), strong);
                     let w = g.size().x;
                     clip.galley(pos2(x, cy - g.size().y / 2.0), g, strong);
                     let count = ls

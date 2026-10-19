@@ -47,7 +47,12 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
                 let refs = &snap.refs;
                 match &refs.head {
                     Head::Branch(b) => {
-                        crate::theme::branch_icon(ui, ui.visuals().strong_text_color());
+                        crate::icons::show(
+                            ui,
+                            crate::icons::Icon::Branch,
+                            1.0,
+                            crate::icons::Colors::theme(),
+                        );
                         ui.label(egui::RichText::new(b.to_string()).strong());
                         if let Some(br) = refs.current_branch()
                             && let Some(u) = &br.upstream
@@ -70,7 +75,12 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
                         );
                     }
                     Head::Unborn(b) => {
-                        crate::theme::branch_icon(ui, ui.visuals().text_color());
+                        crate::icons::show(
+                            ui,
+                            crate::icons::Icon::Branch,
+                            1.0,
+                            crate::icons::Colors::theme(),
+                        );
                         ui.label(format!("{b} (no commits yet)"));
                     }
                     Head::Unknown => {}

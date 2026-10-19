@@ -471,9 +471,16 @@ impl TabDialog for InteractiveRebase {
                         .show(ui, |ui| {
                             for (i, r) in rows.iter_mut().enumerate() {
                                 let row = ui.horizontal(|ui| {
-                                    let h = ui.add(
-                                        egui::Label::new(RichText::new("☰").weak())
-                                            .sense(egui::Sense::drag()),
+                                    let side = ui.text_style_height(&egui::TextStyle::Body);
+                                    let (hr, h) = ui.allocate_exact_size(
+                                        egui::vec2(side, side),
+                                        egui::Sense::drag(),
+                                    );
+                                    crate::icons::paint(
+                                        ui.painter(),
+                                        crate::icons::Icon::List,
+                                        hr,
+                                        crate::icons::Colors::mono(ui.visuals().weak_text_color()),
                                     );
                                     h.dnd_set_drag_payload(RowDrag(i));
                                     egui::ComboBox::from_id_salt(("rebase-action", i))
@@ -493,13 +500,21 @@ impl TabDialog for InteractiveRebase {
                                             }
                                         });
                                     if ui
-                                        .add_enabled(i > 0, egui::Button::new("↑").small())
+                                        .add_enabled(
+                                            i > 0,
+                                            crate::icons::IconButton::new(crate::icons::Icon::Up)
+                                                .small(),
+                                        )
                                         .clicked()
                                     {
                                         move_op = Some((i, i - 1));
                                     }
                                     if ui
-                                        .add_enabled(i + 1 < n, egui::Button::new("↓").small())
+                                        .add_enabled(
+                                            i + 1 < n,
+                                            crate::icons::IconButton::new(crate::icons::Icon::Down)
+                                                .small(),
+                                        )
                                         .clicked()
                                     {
                                         move_op = Some((i, i + 1));

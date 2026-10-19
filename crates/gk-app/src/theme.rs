@@ -1,42 +1,63 @@
-//! Colors and visuals. Dark is the default, tuned to resemble SourceTree.
+//! Colors and visuals from the selected style (see `gk_settings::style`): Kwak by default,
+//! Classic (the original SourceTree-like blue), or a user style file.
 
 use egui::{Color32, Visuals};
+use gk_settings::style::{Rgba, Style, Variant};
+use parking_lot::RwLock;
 
-/// Lane colors of the history graph.
-pub const LANES: [Color32; 8] = [
-    Color32::from_rgb(0x4F, 0x9D, 0xF7),
-    Color32::from_rgb(0xF0, 0x7A, 0x4A),
-    Color32::from_rgb(0x3D, 0xC2, 0x8B),
-    Color32::from_rgb(0xC3, 0x7B, 0xE8),
-    Color32::from_rgb(0xE8, 0xC1, 0x3D),
-    Color32::from_rgb(0x2E, 0xC4, 0xD6),
-    Color32::from_rgb(0xE8, 0x5D, 0x8A),
-    Color32::from_rgb(0x9A, 0xB8, 0x4E),
-];
+/// What the last [`apply_with`] chose, for code that draws without a [`Palette`] at hand
+/// (graph lanes, icons).
+struct Current {
+    lanes: Vec<Color32>,
+    icon: Color32,
+    node: Color32,
+    icon_width: f32,
+    nodes: bool,
+}
 
-/// Darker lane colors for the light theme (the dark-theme yellow, cyan and
-/// light green are hard to see on white).
-pub const LANES_LIGHT: [Color32; 8] = [
-    Color32::from_rgb(0x1F, 0x6F, 0xD6),
-    Color32::from_rgb(0xD9, 0x5A, 0x1F),
-    Color32::from_rgb(0x1E, 0x9A, 0x62),
-    Color32::from_rgb(0x9B, 0x4D, 0xCA),
-    Color32::from_rgb(0xB0, 0x86, 0x00),
-    Color32::from_rgb(0x0E, 0x93, 0xA6),
-    Color32::from_rgb(0xD0, 0x3B, 0x6E),
-    Color32::from_rgb(0x6A, 0x8A, 0x1F),
-];
+static CURRENT: RwLock<Option<Current>> = RwLock::new(None);
 
-/// Whether [`apply`] last selected the light theme.
-static LIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+fn color(c: Rgba) -> Color32 {
+    let [r, g, b, a] = c.0;
+    Color32::from_rgba_unmultiplied(r, g, b, a)
+}
+
+/// The built-in default style (always valid).
+fn kwak() -> Style {
+    gk_settings::style::load_in(std::path::Path::new(""), gk_settings::style::DEFAULT_STYLE).0
+}
+
+fn with_current<R>(f: impl FnOnce(&Current) -> R) -> R {
+    if let Some(c) = CURRENT.read().as_ref() {
+        return f(c);
+    }
+    let s = kwak();
+    f(&current_of(&s, false))
+}
+
+fn current_of(style: &Style, light: bool) -> Current {
+    let v = if light { &style.light } else { &style.dark };
+    Current {
+        lanes: v.lanes.iter().copied().map(color).collect(),
+        icon: color(v.icon),
+        node: color(v.node),
+        icon_width: style.icons.width,
+        nodes: style.icons.nodes,
+    }
+}
+
+/// Stroke and node colors of the icons ([`crate::icons`]).
+pub fn icon_colors() -> (Color32, Color32) {
+    with_current(|c| (c.icon, if c.nodes { c.node } else { c.icon }))
+}
+
+/// Icon stroke width on the 24-unit design grid.
+pub fn icon_width() -> f32 {
+    with_current(|c| c.icon_width)
+}
 
 pub fn lane_color(i: u16) -> Color32 {
-    let lanes = if LIGHT.load(std::sync::atomic::Ordering::Relaxed) {
-        &LANES_LIGHT
-    } else {
-        &LANES
-    };
-    lanes[i as usize % lanes.len()]
+    with_current(|c| c.lanes[i as usize % c.lanes.len().max(1)])
 }
 
 #[derive(Clone, Copy)]
@@ -59,7 +80,7 @@ pub struct Palette {
     pub modified: Color32,
     pub untracked: Color32,
     pub conflict: Color32,
-    /// Menu bar and repository tab strip (SourceTree's blue title area).
+    /// Menu bar and repository tab strip.
     pub chrome: Color32,
     /// Strong accent: selected sidebar entry, active view.
     pub accent: Color32,
@@ -68,56 +89,42 @@ pub struct Palette {
 }
 
 impl Palette {
-    pub fn dark() -> Self {
+    pub fn of(v: &Variant, dark: bool) -> Self {
         Self {
-            dark: true,
-            added_bg: Color32::from_rgba_unmultiplied(0x2E, 0xA0, 0x43, 40),
-            removed_bg: Color32::from_rgba_unmultiplied(0xF8, 0x51, 0x49, 40),
-            added_word: Color32::from_rgba_unmultiplied(0x2E, 0xA0, 0x43, 110),
-            removed_word: Color32::from_rgba_unmultiplied(0xF8, 0x51, 0x49, 110),
-            added_fg: Color32::from_rgb(0x56, 0xD3, 0x64),
-            removed_fg: Color32::from_rgb(0xF8, 0x51, 0x49),
-            hunk_bg: Color32::from_rgba_unmultiplied(0x58, 0x8B, 0xE8, 30),
-            muted: Color32::from_gray(140),
-            selection: Color32::from_rgba_unmultiplied(0x4F, 0x9D, 0xF7, 60),
-            branch: Color32::from_rgb(0x3D, 0x8B, 0xD8),
-            remote: Color32::from_rgb(0x8A, 0x63, 0xD2),
-            tag: Color32::from_rgb(0xC9, 0x9A, 0x2E),
-            head: Color32::from_rgb(0x3D, 0xA8, 0x5A),
-            stash: Color32::from_rgb(0x80, 0x80, 0x80),
-            modified: Color32::from_rgb(0xE8, 0xA7, 0x3D),
-            untracked: Color32::from_rgb(0x8A, 0x8A, 0x8A),
-            conflict: Color32::from_rgb(0xF8, 0x51, 0x49),
-            chrome: Color32::from_rgb(0x16, 0x33, 0x5E),
-            accent: Color32::from_rgb(0x2A, 0x7F, 0xE0),
-            on_accent: Color32::WHITE,
+            dark,
+            added_bg: color(v.added_bg),
+            removed_bg: color(v.removed_bg),
+            added_word: color(v.added_word),
+            removed_word: color(v.removed_word),
+            added_fg: color(v.added_fg),
+            removed_fg: color(v.removed_fg),
+            hunk_bg: color(v.hunk_bg),
+            muted: color(v.muted),
+            selection: color(v.selection),
+            branch: color(v.branch),
+            remote: color(v.remote),
+            tag: color(v.tag),
+            head: color(v.head),
+            stash: color(v.stash),
+            modified: color(v.modified),
+            untracked: color(v.untracked),
+            conflict: color(v.conflict),
+            chrome: color(v.chrome),
+            accent: color(v.accent),
+            on_accent: color(v.on_accent),
         }
     }
 
+    /// Kwak, dark (tests).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn dark() -> Self {
+        Self::of(&kwak().dark, true)
+    }
+
+    /// Kwak, light.
+    #[allow(dead_code)]
     pub fn light() -> Self {
-        Self {
-            dark: false,
-            added_bg: Color32::from_rgb(0xE6, 0xFF, 0xEC),
-            removed_bg: Color32::from_rgb(0xFF, 0xEB, 0xE9),
-            added_word: Color32::from_rgb(0xAB, 0xF2, 0xBC),
-            removed_word: Color32::from_rgb(0xFF, 0xC0, 0xBA),
-            added_fg: Color32::from_rgb(0x1A, 0x7F, 0x37),
-            removed_fg: Color32::from_rgb(0xCF, 0x22, 0x2E),
-            hunk_bg: Color32::from_rgb(0xDD, 0xF4, 0xFF),
-            muted: Color32::from_gray(110),
-            selection: Color32::from_rgba_unmultiplied(0x2F, 0x6F, 0xD8, 50),
-            branch: Color32::from_rgb(0x1F, 0x6F, 0xC5),
-            remote: Color32::from_rgb(0x6A, 0x43, 0xB2),
-            tag: Color32::from_rgb(0x9A, 0x6A, 0x00),
-            head: Color32::from_rgb(0x1A, 0x7F, 0x37),
-            stash: Color32::from_rgb(0x60, 0x60, 0x60),
-            modified: Color32::from_rgb(0xB0, 0x6F, 0x00),
-            untracked: Color32::from_rgb(0x70, 0x70, 0x70),
-            conflict: Color32::from_rgb(0xCF, 0x22, 0x2E),
-            chrome: Color32::from_rgb(0xD9, 0xE4, 0xF4),
-            accent: Color32::from_rgb(0x2A, 0x7F, 0xE0),
-            on_accent: Color32::WHITE,
-        }
+        Self::of(&kwak().light, false)
     }
 }
 
@@ -328,6 +335,7 @@ fn resolve_font(name: &str) -> Option<std::path::PathBuf> {
 pub fn apply_with(
     ctx: &egui::Context,
     theme: gk_settings::Theme,
+    style: &Style,
     ui_scale: f32,
     font_size: f32,
     mono_font_size: f32,
@@ -340,26 +348,40 @@ pub fn apply_with(
             .map(|t| t == egui::Theme::Dark)
             .unwrap_or(true),
     };
-    LIGHT.store(!dark, std::sync::atomic::Ordering::Relaxed);
+    *CURRENT.write() = Some(current_of(style, !dark));
+    let v = if dark { &style.dark } else { &style.light };
     let mut visuals = if dark {
         Visuals::dark()
     } else {
         Visuals::light()
     };
-    if dark {
-        visuals.panel_fill = Color32::from_rgb(0x25, 0x27, 0x2B);
-        visuals.window_fill = Color32::from_rgb(0x2B, 0x2D, 0x31);
-        visuals.extreme_bg_color = Color32::from_rgb(0x1E, 0x1F, 0x22);
-        visuals.faint_bg_color = Color32::from_rgb(0x2A, 0x2C, 0x30);
-        // SourceTree-like blue accent for selected toggles and text selection.
-        visuals.selection.bg_fill = Color32::from_rgb(0x22, 0x6A, 0xC4);
-        visuals.selection.stroke.color = Color32::WHITE;
+    if let Some(c) = v.panel {
+        visuals.panel_fill = color(c);
+    }
+    if let Some(c) = v.window {
+        visuals.window_fill = color(c);
+    }
+    if let Some(c) = v.extreme {
+        visuals.extreme_bg_color = color(c);
+    }
+    if let Some(c) = v.faint {
+        visuals.faint_bg_color = color(c);
+    }
+    // Selected toggles and text selection.
+    if let Some(c) = v.text_selection {
+        visuals.selection.bg_fill = color(c);
+    }
+    if let Some(c) = v.text_selection_fg {
+        visuals.selection.stroke.color = color(c);
+    }
+    // Text fields on light panels need a border.
+    if let Some(c) = v.border {
+        visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, color(c));
+    }
+    if let Some(c) = v.text {
+        visuals.override_text_color = Some(color(c));
     }
     visuals.striped = true;
-    if !dark {
-        // Light text fields otherwise blend into panels.
-        visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, Color32::from_gray(190));
-    }
     let theme = if dark {
         egui::Theme::Dark
     } else {
@@ -383,48 +405,7 @@ pub fn apply_with(
         s.spacing.item_spacing = egui::vec2(6.0, 4.0);
         s.spacing.button_padding = egui::vec2(6.0, 3.0);
     });
-    if dark {
-        Palette::dark()
-    } else {
-        Palette::light()
-    }
-}
-
-/// The git branch icon (one branch forking off another), drawn: the ⑂ glyph used before is
-/// missing from the usual Linux fonts. `size` is the height of the box it fills.
-pub fn paint_branch_icon(p: &egui::Painter, c: egui::Pos2, size: f32, color: Color32) {
-    use egui::{Stroke, epaint::QuadraticBezierShape, pos2};
-    let s = size;
-    let w = (s * 0.09).max(1.0);
-    let stroke = Stroke::new(w, color);
-    let r = s * 0.11;
-    let (left, right) = (c.x - s * 0.18, c.x + s * 0.2);
-    let (top, bottom) = (c.y - s * 0.3, c.y + s * 0.3);
-    // Trunk with a dot at each end.
-    p.line_segment([pos2(left, top + r), pos2(left, bottom - r)], stroke);
-    p.circle_stroke(pos2(left, top), r, stroke);
-    p.circle_stroke(pos2(left, bottom), r, stroke);
-    // The branch: from its own dot, curving into the trunk.
-    let tip = pos2(right, top + s * 0.06);
-    p.circle_stroke(tip, r, stroke);
-    p.add(QuadraticBezierShape::from_points_stroke(
-        [
-            pos2(right, tip.y + r),
-            pos2(right, c.y + s * 0.12),
-            pos2(left + w * 0.5, c.y + s * 0.2),
-        ],
-        false,
-        Color32::TRANSPARENT,
-        stroke,
-    ));
-}
-
-/// [`paint_branch_icon`] as a widget the height of body text (for labels in a row).
-pub fn branch_icon(ui: &mut egui::Ui, color: Color32) -> egui::Response {
-    let h = ui.text_style_height(&egui::TextStyle::Body);
-    let (r, resp) = ui.allocate_exact_size(egui::vec2(h * 0.8, h), egui::Sense::hover());
-    paint_branch_icon(ui.painter(), r.center(), h * 0.95, color);
-    resp
+    Palette::of(v, dark)
 }
 
 /// Body text size relative to the default 13 pt. Chrome drawn with fixed sizes (toolbar
@@ -505,7 +486,7 @@ mod tests {
     #[test]
     fn compact_density_keeps_the_classic_look() {
         let ctx = egui::Context::default();
-        apply_with(&ctx, gk_settings::Theme::Dark, 1.0, 13.0, 12.5);
+        apply_with(&ctx, gk_settings::Theme::Dark, &kwak(), 1.0, 13.0, 12.5);
         let before = ctx.style_of(egui::Theme::Dark).spacing.clone();
         apply_density(&ctx, Density::Compact);
         let after = ctx.style_of(egui::Theme::Dark).spacing.clone();
@@ -583,7 +564,7 @@ mod tests {
     #[test]
     fn mono_size_is_applied() {
         let ctx = egui::Context::default();
-        apply_with(&ctx, gk_settings::Theme::Dark, 1.0, 13.0, 15.5);
+        apply_with(&ctx, gk_settings::Theme::Dark, &kwak(), 1.0, 13.0, 15.5);
         let size = ctx.style_of(egui::Theme::Dark).text_styles[&egui::TextStyle::Monospace].size;
         assert_eq!(size, 15.5);
     }

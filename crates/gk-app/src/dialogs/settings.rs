@@ -140,6 +140,9 @@ pub struct SettingsDialog {
     ssh_task: Option<Task<SshCommands>>,
     ssh_loaded: Option<SshCommands>,
     ssh: SshCommands,
+    /// Styles offered under General › Style (re-read when the dialog opens).
+    styles: Vec<gk_settings::style::Listed>,
+    style_error: Option<String>,
 }
 
 impl SettingsDialog {
@@ -163,6 +166,8 @@ impl SettingsDialog {
             ssh_task: None,
             ssh_loaded: None,
             ssh: SshCommands::default(),
+            styles: Vec::new(),
+            style_error: None,
         }
     }
 
@@ -190,6 +195,7 @@ impl SettingsDialog {
             .map(|p| p.display().to_string())
             .unwrap_or_default();
         self.keys = Keymap::from_overrides(&s.keymap).bindings().to_vec();
+        self.styles = gk_settings::style::list();
         self.draft = Some(s);
         let log = shared.log.clone();
         self.identity_task = Some(Task::spawn(ctx, move || {
@@ -228,6 +234,7 @@ impl SettingsDialog {
     fn apply(&self, dst: &mut Settings) {
         let Some(src) = &self.draft else { return };
         dst.theme = src.theme;
+        dst.style = src.style.clone();
         dst.ui_scale = src.ui_scale;
         dst.font_size = src.font_size;
         dst.mono_font_size = src.mono_font_size;
@@ -482,6 +489,48 @@ impl AppDialog for SettingsDialog {
                                         ui.radio_value(&mut d.theme, Theme::System, "System");
                                     });
                                     ui.end_row();
+                                    ui.label("Style:");
+                                    ui.horizontal(|ui| {
+                                        egui::ComboBox::from_id_salt("set-style").selected_text(d.style.as_str()).show_ui(ui, |ui| {
+                                            for s in &self.styles {
+                                                let label = if s.path.is_some() { format!("{}  (your style)", s.name) } else { s.name.clone() };
+                                                match &s.error {
+                                                    None => {
+                                                        ui.selectable_value(&mut d.style, s.name.clone(), label);
+                                                    }
+                                                    Some(e) => {
+                                                        ui.add_enabled(false, egui::Button::selectable(false, format!("{label}  (error)"))).on_disabled_hover_text(e.as_str());
+                                                    }
+                                                }
+                                            }
+                                        });
+                                        if ui.add(crate::icons::IconButton::new(crate::icons::Icon::Add).text("New style from this one")).on_hover_text("Copies the selected style into your styles folder as a file to edit, and selects it").clicked() {
+                                            let (style, _) = gk_settings::style::load(&d.style);
+                                            match gk_settings::style::create_copy(&style) {
+                                                Ok((path, name)) => {
+                                                    d.style = name;
+                                                    self.styles = gk_settings::style::list();
+                                                    self.style_error = None;
+                                                    let _ = open::that(&path);
+                                                }
+                                                Err(e) => self.style_error = Some(format!("{e:#}")),
+                                            }
+                                        }
+                                        if ui.add(crate::icons::IconButton::new(crate::icons::Icon::Folder)).on_hover_text("Open the styles folder").clicked() {
+                                            let dir = gk_settings::style::styles_dir();
+                                            let _ = std::fs::create_dir_all(&dir);
+                                            let _ = open::that(&dir);
+                                        }
+                                        if ui.add(crate::icons::IconButton::new(crate::icons::Icon::Refresh)).on_hover_text("Reload the style files (Save applies the changes)").clicked() {
+                                            self.styles = gk_settings::style::list();
+                                        }
+                                    });
+                                    ui.end_row();
+                                    if let Some(e) = &self.style_error {
+                                        ui.label("");
+                                        ui.colored_label(ui.visuals().error_fg_color, e);
+                                        ui.end_row();
+                                    }
                                     ui.label("UI scale:");
                                     ui.add(egui::Slider::new(&mut d.ui_scale, 0.75..=2.5).step_by(0.05));
                                     ui.end_row();

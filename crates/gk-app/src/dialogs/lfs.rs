@@ -198,7 +198,10 @@ impl Lfs {
         ui.horizontal(|ui| {
             ui.label(RichText::new("Locks").strong());
             if ui
-                .add_enabled(self.locks_task.is_none(), egui::Button::new("⟳").small())
+                .add_enabled(
+                    self.locks_task.is_none(),
+                    crate::icons::IconButton::new(crate::icons::Icon::Refresh).small(),
+                )
                 .on_hover_text("Reload locks")
                 .clicked()
             {
@@ -357,7 +360,11 @@ impl TabDialog for Lfs {
             ui.separator();
             ui.horizontal(|ui| {
                 if ui
-                    .add_enabled(!busy, egui::Button::new("⬇ Pull LFS objects"))
+                    .add_enabled(
+                        !busy,
+                        crate::icons::IconButton::new(crate::icons::Icon::Pull)
+                            .text("Pull LFS objects"),
+                    )
                     .clicked()
                 {
                     pull = true;

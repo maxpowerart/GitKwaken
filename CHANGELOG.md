@@ -6,6 +6,12 @@ user-facing.
 
 ## 1.0.4
 
+- New look, "Kwak": every icon is drawn by GitKwaken in one style taken from the logo (teal
+  line icons with orange commit nodes), with the logo's navy title bar and teal selection.
+  Icons look the same on every system and at every font size.
+- Styles: Settings › General › Style switches between Kwak and Classic (the previous blue
+  look). Your own styles are small TOML files in the config folder's `styles` directory;
+  "New style from this one" starts one, and saving the file applies it immediately.
 - Install another version (Help menu): pick any release, read its changelog and install it,
   older ones included, to go back after an update that went wrong.
 - Withdrawn releases: when a release is pulled, installations running it offer to roll back
@@ -22,9 +28,8 @@ user-facing.
 - Panel sizes (file list, commit box, sidebar, output log) survive minimizing and smaller
   windows.
 - The sidebar scroll bar no longer covers the pin / filter buttons.
-- The branch icon is drawn instead of taken from a font, so it looks the same everywhere.
-- Linux: toolbar and branch icons render again (symbol fonts DejaVu Sans / Noto Sans Symbols;
-  the Arch package now depends on `ttf-dejavu`).
+- Linux: icons render again (they no longer depend on the installed fonts; the Arch package
+  also depends on `ttf-dejavu` for the remaining symbols in text).
 - Window: the menu bar and tabs are one band without a dividing line.
 
 ## 1.0.3

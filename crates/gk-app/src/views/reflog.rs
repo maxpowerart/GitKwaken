@@ -149,7 +149,11 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared
         } else {
             ui.label(RichText::new(format!("{} entries", entries.len())).weak());
         }
-        if ui.small_button("⟳").on_hover_text("Refresh").clicked() {
+        if ui
+            .add(crate::icons::IconButton::new(crate::icons::Icon::Refresh).small())
+            .on_hover_text("Refresh")
+            .clicked()
+        {
             tab.reflog.run += 1;
         }
         ui.separator();

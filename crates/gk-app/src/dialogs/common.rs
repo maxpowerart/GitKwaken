@@ -207,12 +207,12 @@ pub fn finish(out: Outcome, ok: impl FnOnce()) -> bool {
 }
 
 pub fn error(ui: &mut Ui, text: impl Into<String>) {
-    ui.colored_label(DANGER, format!("✖ {}", text.into()));
+    crate::icons::label(ui, crate::icons::Icon::Error, text.into(), DANGER);
 }
 
 pub fn warning(ui: &mut Ui, text: impl Into<String>) {
     let color = warn_color(ui);
-    ui.colored_label(color, format!("⚠ {}", text.into()));
+    crate::icons::label(ui, crate::icons::Icon::Warning, text.into(), color);
 }
 
 /// [`WARN`], darkened in light mode for contrast.

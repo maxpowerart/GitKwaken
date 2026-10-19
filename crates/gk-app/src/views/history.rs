@@ -488,7 +488,10 @@ fn toolbar(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot) {
         ui.separator();
         let head = head_oid(snap);
         if ui
-            .add_enabled(head.is_some(), egui::Button::new("↶ Undo…"))
+            .add_enabled(
+                head.is_some(),
+                crate::icons::IconButton::new(crate::icons::Icon::Undo).text("Undo…"),
+            )
             .on_hover_text("Undo the last operation (commit, merge, rebase, reset, pull, checkout)")
             .clicked()
         {
@@ -543,7 +546,7 @@ fn toolbar(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot) {
             }
             if f.edit.is_active()
                 && ui
-                    .small_button("✖")
+                    .add(crate::icons::IconButton::new(crate::icons::Icon::Close).small())
                     .on_hover_text("Clear filters")
                     .clicked()
             {

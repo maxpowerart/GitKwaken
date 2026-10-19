@@ -583,19 +583,33 @@ fn top_row(ui: &mut Ui, tab: &mut RepoTab, p: crate::theme::Palette) {
             .response
             .on_hover_text("Which changed files to list (combine with the chips on the right)");
         let tree = &mut tab.state.file_view_tree;
-        let icon = if *tree { "🌲 ▾" } else { "☰ ▾" };
-        ui.menu_button(icon, |ui| {
-            if ui.selectable_label(!*tree, "☰ Flat list").clicked() {
+        use crate::icons::{Icon, IconButton};
+        let mode = ui.add(IconButton::new(if *tree { Icon::Tree } else { Icon::List }).text("▾"));
+        egui::Popup::menu(&mode).show(|ui| {
+            if ui
+                .add(
+                    IconButton::new(Icon::List)
+                        .text("Flat list")
+                        .selected(!*tree),
+                )
+                .clicked()
+            {
                 *tree = false;
                 ui.close();
             }
-            if ui.selectable_label(*tree, "🌲 Tree view").clicked() {
+            if ui
+                .add(
+                    IconButton::new(Icon::Tree)
+                        .text("Tree view")
+                        .selected(*tree),
+                )
+                .clicked()
+            {
                 *tree = true;
                 ui.close();
             }
-        })
-        .response
-        .on_hover_text("List mode: flat list or folder tree");
+        });
+        mode.on_hover_text("List mode: flat list or folder tree");
         ui.add_space(8.0);
         ui.add(
             egui::TextEdit::singleline(&mut tab.status.filter)
@@ -848,7 +862,12 @@ fn banner(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &Shared) {
         .inner_margin(egui::Margin::symmetric(8, 4))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("⚠").color(p.conflict).strong());
+                crate::icons::show(
+                    ui,
+                    crate::icons::Icon::Warning,
+                    1.0,
+                    crate::icons::Colors::mono(p.conflict),
+                );
                 ui.label(RichText::new(title).strong());
                 if conflicts > 0 {
                     ui.label(

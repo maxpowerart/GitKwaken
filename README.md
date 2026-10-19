@@ -148,6 +148,49 @@ Limits on Linux:
   PKGBUILD). It has not had the hands-on testing the Windows build has had; please report
   problems with your desktop (GNOME/KDE, X11/Wayland) and GPU driver.
 
+## Styles
+
+Settings › General › Style picks the look: colors (dark and light variant), icons and history
+graph lanes.
+
+- **Kwak** (default): after the logo, a frog whose tentacles form a git graph. Teal line icons
+  with orange commit nodes, the logo's navy title bar, teal selection.
+- **Classic**: the original SourceTree-like blue, with single-color icons.
+
+<p>
+  <img src="docs/screenshots/style-classic.png" width="49%" alt="Classic style">
+  <img src="docs/screenshots/style-user.png" width="49%" alt="A user style">
+</p>
+
+**Your own style** is a TOML file in the `styles` folder of the config directory
+(`%APPDATA%\GitKwaken\styles` on Windows, `~/.config/gitkwaken/styles` on Linux). It only
+needs the keys it changes; the rest comes from Kwak, or from the style named in `inherits`:
+
+```toml
+name = "Midnight"
+inherits = "Kwak"     # optional
+
+[icons]
+width = 1.8           # stroke width on the 24-unit icon grid
+nodes = true          # orange commit nodes (false: one color)
+
+[dark]
+chrome = "#2A1F3D"    # title bar
+accent = "#7C5CD6"    # selected sidebar row
+icon = "#B49BFF"
+node = "#FFD166"
+lanes = ["#B49BFF", "#FFD166", "#5EE6C8", "#FF8FAB"]
+
+[light]
+accent = "#5E45B0"
+```
+
+*New style from this one* (next to the Style list) writes the selected style to that folder as a
+complete file with every key, opens it and selects it; [`assets/styles/kwak.toml`](assets/styles/kwak.toml)
+documents each key. While a style of yours is selected, saving its file applies it right away.
+Mistakes (an unknown key, a malformed color) are shown in the Style list and the app keeps using
+Kwak. `GITKWAKEN_ICON_SHEET=1` starts GitKwaken on a sheet of every icon in the selected style.
+
 ## Updates and going back
 
 GitKwaken checks the latest GitHub release at startup and every 6 hours. A newer one shows a

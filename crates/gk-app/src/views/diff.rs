@@ -406,7 +406,10 @@ impl DiffView {
                         .as_ref()
                         .is_some_and(|s| !s.diff.lines.is_empty());
                 if ui
-                    .add_enabled(has_diff, egui::Button::new("⎘").small())
+                    .add_enabled(
+                        has_diff,
+                        crate::icons::IconButton::new(crate::icons::Icon::Copy).small(),
+                    )
                     .on_hover_text("Copy as patch")
                     .clicked()
                 {
@@ -463,14 +466,20 @@ impl DiffView {
                     hint("Previous hunk", KAct::DiffPrevHunk),
                 );
                 if ui
-                    .add_enabled(hunks > 0, egui::Button::new("▼").small())
+                    .add_enabled(
+                        hunks > 0,
+                        crate::icons::IconButton::new(crate::icons::Icon::Down).small(),
+                    )
                     .on_hover_text(next_hint)
                     .clicked()
                 {
                     self.jump_hunk(true);
                 }
                 if ui
-                    .add_enabled(hunks > 0, egui::Button::new("▲").small())
+                    .add_enabled(
+                        hunks > 0,
+                        crate::icons::IconButton::new(crate::icons::Icon::Up).small(),
+                    )
                     .on_hover_text(prev_hint)
                     .clicked()
                 {

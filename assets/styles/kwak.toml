@@ -1,0 +1,85 @@
+# GitKwaken style "Kwak" (the default), after the logo: a frog whose tentacles form a git
+# graph. Teal round-capped line icons with orange commit nodes, the logo's navy title bar.
+#
+# This file is also the reference for your own styles: copy it into the "styles" folder of
+# GitKwaken's config directory (Settings > General > Style > "New style from this one" does
+# that), change what you like and pick it in Settings. Leave out any key to keep the value of
+# the style named in `inherits` (Kwak when not set). Colors are "#RRGGBB" or "#RRGGBBAA".
+
+name = "Kwak"
+
+[icons]
+# Stroke width on the icons' 24-unit design grid (2.0 = Kwak, 1.6 = thinner).
+width = 2.0
+# Orange commit nodes in the icons; false draws every icon in the stroke color only.
+nodes = true
+
+[dark]
+# Title bar (menu bar and repository tabs).
+chrome = "#1F2642"
+# Selected sidebar row, active view, and the text on it.
+accent = "#1F988D"
+on_accent = "#FFFFFF"
+# Icons: strokes and commit nodes.
+icon = "#3CBAAF"
+node = "#FD9921"
+# Panels and text fields.
+panel = "#25272B"
+window = "#2B2D31"
+extreme = "#1E1F22"
+faint = "#2A2C30"
+# Selected toggles and text selection.
+text_selection = "#1F887E"
+text_selection_fg = "#FFFFFF"
+# Selected rows in lists.
+selection = "#3CBAAF3C"
+muted = "#8C8C8C"
+# Refs.
+branch = "#3D8BD8"
+remote = "#8A63D2"
+tag = "#C99A2E"
+head = "#3DA85A"
+stash = "#808080"
+# File states.
+modified = "#E8A73D"
+untracked = "#8A8A8A"
+conflict = "#F85149"
+# Diffs.
+added_fg = "#56D364"
+removed_fg = "#F85149"
+added_bg = "#2EA04328"
+removed_bg = "#F8514928"
+added_word = "#2EA0436E"
+removed_word = "#F851496E"
+hunk_bg = "#588BE81E"
+# History graph lanes, in order.
+lanes = ["#3CBAAF", "#FD9921", "#3DC28B", "#C37BE8", "#E8C13D", "#2EC4D6", "#E85D8A", "#9AB84E"]
+
+[light]
+chrome = "#DCEEEB"
+accent = "#158C82"
+on_accent = "#FFFFFF"
+icon = "#158C82"
+node = "#E07C00"
+text_selection = "#9CDDD6"
+text_selection_fg = "#0B4D47"
+# Borders of text fields (they blend into light panels otherwise).
+border = "#BEBEBE"
+selection = "#158C8232"
+muted = "#6E6E6E"
+branch = "#1F6FC5"
+remote = "#6A43B2"
+tag = "#9A6A00"
+head = "#1A7F37"
+stash = "#606060"
+modified = "#B06F00"
+untracked = "#707070"
+conflict = "#CF222E"
+added_fg = "#1A7F37"
+removed_fg = "#CF222E"
+added_bg = "#E6FFEC"
+removed_bg = "#FFEBE9"
+added_word = "#ABF2BC"
+removed_word = "#FFC0BA"
+hunk_bg = "#DDF4FF"
+lanes = ["#158C82", "#D97800", "#1E9A62", "#9B4DCA", "#B08600", "#0E93A6", "#D03B6E", "#6A8A1F"]
