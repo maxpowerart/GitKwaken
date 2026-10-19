@@ -235,7 +235,17 @@ impl RepoTab {
         views::toolbar::show(ui, self, &snap, shared);
         views::commit_graph_offer::show(ui, self, &snap);
         views::statusbar::show(ui, self, &snap, shared);
-        let side = egui::Panel::left(egui::Id::new(("sidebar", &self.path)))
+        let side_id = egui::Id::new(("sidebar", &self.path));
+        let side_limit = ui.available_width().min(480.0);
+        use views::panel_size::{Axis, remember, restore};
+        restore(
+            ui.ctx(),
+            side_id,
+            Axis::Width,
+            self.state.layout.sidebar_width,
+            side_limit,
+        );
+        let side = egui::Panel::left(side_id)
             .resizable(true)
             // Small windows: keep the default sidebar to a fifth of the width.
             .default_size(
@@ -247,7 +257,12 @@ impl RepoTab {
             )
             .size_range(140.0..=480.0)
             .show(ui, |ui| views::sidebar::show(ui, self, &snap, shared));
-        self.state.layout.sidebar_width = side.response.rect.width();
+        remember(
+            side.response.rect,
+            Axis::Width,
+            side_limit,
+            &mut self.state.layout.sidebar_width,
+        );
         egui::CentralPanel::default().show(ui, |ui| match self.view {
             View::FileStatus => views::file_status::show(ui, self, &snap, shared),
             View::History => views::history::show(ui, self, &snap, shared),

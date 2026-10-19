@@ -43,7 +43,9 @@ impl<'a> Tool<'a> {
 
 /// Paints a toolbar button (icon over label, or icon only when `compact`).
 fn paint_tool(ui: &mut Ui, compact: bool, t: &Tool, sense: Sense) -> egui::Response {
-    let size = if compact { BUTTON_COMPACT } else { BUTTON };
+    // Everything follows the font size (1.0 at the default 13 pt).
+    let k = crate::theme::text_scale(ui.style());
+    let size = if compact { BUTTON_COMPACT } else { BUTTON } * k;
     let (rect, resp) = ui.allocate_exact_size(size, sense);
     let v = ui.visuals();
     let icon_color = if t.fill.is_some() {
@@ -67,9 +69,9 @@ fn paint_tool(ui: &mut Ui, compact: bool, t: &Tool, sense: Sense) -> egui::Respo
         _ => 1.0,
     };
     let (icon_size, icon_center) = if compact {
-        (ICON_SIZE_COMPACT, rect.center())
+        (ICON_SIZE_COMPACT * k, rect.center())
     } else {
-        (ICON_SIZE, pos2(rect.center().x, rect.top() + 17.0))
+        (ICON_SIZE * k, pos2(rect.center().x, rect.top() + 17.0 * k))
     };
     p.text(
         icon_center,
@@ -80,10 +82,10 @@ fn paint_tool(ui: &mut Ui, compact: bool, t: &Tool, sense: Sense) -> egui::Respo
     );
     if !compact {
         p.text(
-            pos2(rect.center().x, rect.bottom() - 9.0),
+            pos2(rect.center().x, rect.bottom() - 9.0 * k),
             egui::Align2::CENTER_CENTER,
             t.label,
-            egui::FontId::proportional(12.0),
+            egui::FontId::proportional(12.0 * k),
             if t.fill.is_some() {
                 Color32::BLACK
             } else {
@@ -97,15 +99,15 @@ fn paint_tool(ui: &mut Ui, compact: bool, t: &Tool, sense: Sense) -> egui::Respo
         } else {
             t.badge.to_string()
         };
-        let font = egui::FontId::proportional(10.0);
+        let font = egui::FontId::proportional(10.0 * k);
         let g = p.layout_no_wrap(s, font, Color32::WHITE);
-        let w = (g.size().x + 6.0).max(14.0);
+        let w = (g.size().x + 6.0 * k).max(14.0 * k);
         let c = pos2(
             icon_center.x + icon_size * 0.5,
             icon_center.y - icon_size * 0.4,
         );
-        let r = Rect::from_center_size(c, vec2(w, 14.0));
-        p.rect_filled(r, 7.0, crate::theme::lane_color(0));
+        let r = Rect::from_center_size(c, vec2(w, 14.0 * k));
+        p.rect_filled(r, 7.0 * k, crate::theme::lane_color(0));
         p.galley(r.center() - g.size() / 2.0, g, Color32::WHITE);
     }
     let hint = if compact {
@@ -139,11 +141,19 @@ fn group_gap(ui: &mut Ui) {
 
 pub fn show(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared) {
     egui::Panel::top(egui::Id::new(("toolbar", &tab.path)))
-        .frame(egui::Frame::side_top_panel(ui.style()).inner_margin(egui::Margin::symmetric(8, 4)))
+        .frame(
+            egui::Frame::side_top_panel(ui.style()).inner_margin(egui::Margin {
+                left: 8,
+                right: 8,
+                top: 1,
+                bottom: 1,
+            }),
+        )
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
-                let compact = ui.available_width() < COMPACT_BELOW;
+                let compact =
+                    ui.available_width() < COMPACT_BELOW * crate::theme::text_scale(ui.style());
                 let changes = snap.status.staged.len() + snap.status.unstaged.len();
                 left_groups(ui, compact, changes, tab, snap);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

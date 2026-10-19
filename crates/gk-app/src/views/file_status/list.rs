@@ -392,6 +392,7 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
     let list_id = ui.make_persistent_id(("gk-file-list", c.side));
     let body_font = egui::TextStyle::Body.resolve(ui.style());
     let mono = egui::TextStyle::Monospace.resolve(ui.style());
+    let k = crate::theme::text_scale(ui.style());
     let row_h = (ui.ctx().fonts_mut(|f| f.row_height(&body_font)) + c.row_pad).round();
     let n = ls.model.rows.len();
 
@@ -500,8 +501,8 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
                     };
                     let mut x = rect.left()
                         + 4.0
-                        + *depth as f32 * INDENT
-                        + if c.tree { INDENT } else { 0.0 };
+                        + *depth as f32 * INDENT * k
+                        + if c.tree { INDENT * k } else { 0.0 };
                     let cy = rect.center().y;
                     let cb = checkbox(
                         ui,
@@ -511,16 +512,18 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
                         c.side == Side::Staged,
                         dim(stroke_color),
                         dim(p.head),
+                        k,
                     );
-                    x += 18.0;
+                    x += 18.0 * k;
                     status_badge(
                         &painter,
                         pos2(x, cy),
                         e.kind.code(),
                         &mono,
                         dim(crate::util::status_color(&p, e.kind)),
+                        k,
                     );
-                    x += 20.0;
+                    x += 20.0 * k;
                     let (dir, name) = crate::views::diff::split_path(path);
                     let clip = painter.with_clip_rect(rect.intersect(vis));
                     let g = clip.layout_no_wrap(name.to_string(), body_font.clone(), dim(strong));
@@ -596,7 +599,7 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
                         painter.rect_filled(rect, 0.0, hover_fill);
                     }
                     let cy = rect.center().y;
-                    let mut x = rect.left() + 4.0 + *depth as f32 * INDENT;
+                    let mut x = rect.left() + 4.0 + *depth as f32 * INDENT * k;
                     painter.text(
                         pos2(x + 5.0, cy),
                         Align2::CENTER_CENTER,
@@ -604,7 +607,7 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
                         body_font.clone(),
                         p.muted,
                     );
-                    x += INDENT;
+                    x += INDENT * k;
                     let cb = checkbox(
                         ui,
                         &painter,
@@ -613,8 +616,9 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
                         c.side == Side::Staged,
                         stroke_color,
                         p.head,
+                        k,
                     );
-                    x += 18.0;
+                    x += 18.0 * k;
                     let clip = painter.with_clip_rect(rect.intersect(vis));
                     let g = clip.layout_no_wrap(format!("📁 {name}"), body_font.clone(), strong);
                     let w = g.size().x;
@@ -849,12 +853,16 @@ fn status_badge(
     code: impl ToString,
     font: &egui::FontId,
     color: Color32,
+    k: f32,
 ) {
-    let r = Rect::from_center_size(left_center + vec2(7.0, 0.0), vec2(14.0, 14.0));
-    painter.rect_filled(r, 3.0, color);
-    let font = egui::FontId::new((font.size - 1.0).max(9.0), font.family.clone());
+    let side = 14.0 * k;
+    let r = Rect::from_center_size(left_center + vec2(side / 2.0, 0.0), vec2(side, side));
+    painter.rect_filled(r, 3.0 * k, color);
+    // The letter always fits its box (a mono size above the body size would spill over).
+    let size = (font.size - 1.0).clamp(9.0, side * 0.82);
+    let font = egui::FontId::new(size, font.family.clone());
     painter.text(
-        r.center() + vec2(0.0, 0.5),
+        r.center() + vec2(0.0, 0.5 * k),
         Align2::CENTER_CENTER,
         code.to_string(),
         font,
@@ -871,8 +879,10 @@ fn checkbox(
     checked: bool,
     stroke: Color32,
     fill: Color32,
+    k: f32,
 ) -> egui::Response {
-    let r = Rect::from_center_size(left_center + vec2(6.5, 0.0), vec2(13.0, 13.0));
+    let side = 13.0 * k;
+    let r = Rect::from_center_size(left_center + vec2(side / 2.0, 0.0), vec2(side, side));
     let resp = ui.interact(r.expand(2.0), id, Sense::click());
     let stroke = if resp.hovered() {
         ui.visuals().widgets.hovered.fg_stroke.color
@@ -882,12 +892,12 @@ fn checkbox(
     if checked {
         painter.rect_filled(r, 2.0, fill);
         let pts = [
-            r.left_center() + vec2(3.0, 0.0),
-            r.center_bottom() + vec2(-1.0, -3.0),
-            r.right_top() + vec2(-3.0, 3.0),
+            r.left_center() + vec2(3.0, 0.0) * k,
+            r.center_bottom() + vec2(-1.0, -3.0) * k,
+            r.right_top() + vec2(-3.0, 3.0) * k,
         ];
-        painter.line_segment([pts[0], pts[1]], (1.6, Color32::WHITE));
-        painter.line_segment([pts[1], pts[2]], (1.6, Color32::WHITE));
+        painter.line_segment([pts[0], pts[1]], (1.6 * k, Color32::WHITE));
+        painter.line_segment([pts[1], pts[2]], (1.6 * k, Color32::WHITE));
     } else {
         painter.rect_stroke(r, 2.0, (1.0, stroke), egui::StrokeKind::Inside);
     }

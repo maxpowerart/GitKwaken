@@ -125,7 +125,8 @@ impl Palette {
 pub const DEFAULT_MONO_FONT: &str = "Consolas";
 
 /// Uses the platform UI fonts when present (Segoe UI / Consolas on Windows)
-/// and adds Segoe UI Symbol as a fallback so icons like ⑂ ⇄ ⎘ render.
+/// and adds Segoe UI Symbol as a fallback so icons like ⑂ ⇄ ⎘ render; on Linux
+/// DejaVu Sans / Noto Sans Symbols play that role ([`SYMBOL_FALLBACKS`]).
 ///
 /// The monospace family comes from `GITKWAKEN_MONO_FONT`; use
 /// [`install_fonts_with`] to pass `settings.mono_font_family`.
@@ -189,6 +190,11 @@ fn font_definitions(mono: Option<&str>) -> egui::FontDefinitions {
         &both,
         false,
     );
+    // Elsewhere (Linux) there is no Segoe UI Symbol: the common symbol fonts cover the
+    // same icons (⑂ ⇄ ⬇ ⬆ ⟳ ✔ ✖ ▣ ⚙ ☁ …). Absent files are skipped.
+    for (key, file) in SYMBOL_FALLBACKS {
+        add(key, load(system_font(file)), &both, false);
+    }
     if std::env::var_os("GITKWAKEN_EMOJI_FONT").is_some_and(|v| v == "1") {
         add(
             "segoe-emoji",
@@ -200,24 +206,90 @@ fn font_definitions(mono: Option<&str>) -> egui::FontDefinitions {
     fonts
 }
 
+/// Symbol fonts used as fallbacks after Segoe UI Symbol, by file name: DejaVu Sans
+/// (Arch `ttf-dejavu`, Debian `fonts-dejavu-core`), Noto Sans Symbols 1/2 and Noto Sans
+/// Math (`noto-fonts`).
+const SYMBOL_FALLBACKS: [(&str, &str); 4] = [
+    ("dejavu-sans", "DejaVuSans.ttf"),
+    ("noto-symbols2", "NotoSansSymbols2-Regular.ttf"),
+    ("noto-symbols", "NotoSansSymbols-Regular.ttf"),
+    ("noto-math", "NotoSansMath-Regular.ttf"),
+];
+
 /// Font folders: the system one, then the per-user one (fonts installed
-/// without admin rights).
+/// without admin rights). Linux: the XDG font folders.
 fn font_dirs() -> Vec<std::path::PathBuf> {
+    use std::path::PathBuf;
     let mut v = Vec::new();
-    if let Some(w) = std::env::var_os("WINDIR") {
-        v.push(std::path::PathBuf::from(w).join("Fonts"));
+    if cfg!(windows) {
+        if let Some(w) = std::env::var_os("WINDIR") {
+            v.push(PathBuf::from(w).join("Fonts"));
+        }
+        if let Some(l) = std::env::var_os("LOCALAPPDATA") {
+            v.push(PathBuf::from(l).join(r"Microsoft\Windows\Fonts"));
+        }
+        return v;
     }
-    if let Some(l) = std::env::var_os("LOCALAPPDATA") {
-        v.push(std::path::PathBuf::from(l).join(r"Microsoft\Windows\Fonts"));
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    if let Some(d) = std::env::var_os("XDG_DATA_HOME") {
+        v.push(PathBuf::from(d).join("fonts"));
+    } else if let Some(h) = &home {
+        v.push(h.join(".local/share/fonts"));
     }
+    if let Some(h) = &home {
+        v.push(h.join(".fonts"));
+    }
+    let data_dirs = std::env::var("XDG_DATA_DIRS")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "/usr/local/share:/usr/share".into());
+    v.extend(data_dirs.split(':').map(|d| PathBuf::from(d).join("fonts")));
     v
 }
 
+/// Font files under [`font_dirs`] by lower-case file name, first found wins. Linux keeps
+/// fonts in subfolders (`TTF/`, `truetype/dejavu/`, `noto/`), so the folders are walked
+/// once (a few levels deep).
+fn font_index() -> &'static std::collections::HashMap<String, std::path::PathBuf> {
+    use std::sync::OnceLock;
+    static INDEX: OnceLock<std::collections::HashMap<String, std::path::PathBuf>> = OnceLock::new();
+    INDEX.get_or_init(|| {
+        fn walk(
+            dir: &std::path::Path,
+            depth: u32,
+            out: &mut std::collections::HashMap<String, std::path::PathBuf>,
+        ) {
+            let Ok(rd) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    if depth < 4 {
+                        walk(&p, depth + 1, out);
+                    }
+                } else if let Some(n) = p.file_name().and_then(|n| n.to_str()) {
+                    out.entry(n.to_ascii_lowercase()).or_insert(p);
+                }
+            }
+        }
+        let mut out = std::collections::HashMap::new();
+        for d in font_dirs() {
+            walk(&d, 0, &mut out);
+        }
+        out
+    })
+}
+
 fn system_font(file: &str) -> Option<std::path::PathBuf> {
-    font_dirs()
-        .into_iter()
-        .map(|d| d.join(file))
-        .find(|p| p.is_file())
+    if cfg!(windows) {
+        // Flat folders: a direct lookup is cheaper than listing ~1000 files.
+        return font_dirs()
+            .into_iter()
+            .map(|d| d.join(file))
+            .find(|p| p.is_file());
+    }
+    font_index().get(&file.to_ascii_lowercase()).cloned()
 }
 
 /// Maps a family name, file name or path to a font file.
@@ -318,6 +390,17 @@ pub fn apply_with(
     }
 }
 
+/// Body text size relative to the default 13 pt. Chrome drawn with fixed sizes (toolbar
+/// buttons, row icons, badges, check boxes) is multiplied by it, so a bigger font never
+/// overflows its box; at the default size it is exactly 1.
+pub fn text_scale(style: &egui::Style) -> f32 {
+    let body = style
+        .text_styles
+        .get(&egui::TextStyle::Body)
+        .map_or(13.0, |f| f.size);
+    (body / 13.0).clamp(0.6, 4.0)
+}
+
 /// UI density (`settings.compact`). Compact, the default, is the look the
 /// app always had; Comfortable adds room to every list and widget.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -357,8 +440,9 @@ impl Density {
     }
 
     /// History / search / reflog row height from `settings.history.row_height`.
-    pub fn history_row(self, setting: f32) -> f32 {
-        setting.clamp(14.0, 60.0) + self.row_extra()
+    /// `scale` is [`text_scale`]: rows grow with a bigger font (unchanged at the default).
+    pub fn history_row(self, setting: f32, scale: f32) -> f32 {
+        (setting.clamp(14.0, 60.0) * scale.max(1.0)).round() + self.row_extra()
     }
 
     fn spacing(self, s: &mut egui::style::Spacing) {
@@ -393,7 +477,8 @@ mod tests {
         assert_eq!(before.interact_size, after.interact_size);
         let c = Density::Compact;
         assert_eq!(c.file_row_pad(), 6.0);
-        assert_eq!(c.history_row(22.0), 22.0);
+        assert_eq!(c.history_row(22.0, 1.0), 22.0);
+        assert_eq!(c.history_row(22.0, 1.5), 33.0);
         assert_eq!(c.sidebar_row(13.0), 17.0);
         // Comfortable is roomier everywhere.
         apply_density(&ctx, Density::Comfortable);
@@ -403,7 +488,7 @@ mod tests {
         assert!(roomy.interact_size.y > after.interact_size.y);
         let r = Density::Comfortable;
         assert!(r.file_row_pad() > c.file_row_pad());
-        assert!(r.history_row(22.0) > c.history_row(22.0));
+        assert!(r.history_row(22.0, 1.0) > c.history_row(22.0, 1.0));
         assert!(r.sidebar_row(13.0) > c.sidebar_row(13.0));
         assert_eq!(Density::of(true), c);
     }

@@ -239,6 +239,7 @@ impl SettingsDialog {
         dst.update_url = src.update_url.trim().to_string();
         dst.check_updates = src.check_updates;
         dst.show_untracked = src.show_untracked;
+        dst.staged_first = src.staged_first;
         dst.status_engine = src.status_engine;
         dst.commit = src.commit.clone();
         dst.diff = src.diff.clone();
@@ -485,10 +486,16 @@ impl AppDialog for SettingsDialog {
                                     ui.add(egui::Slider::new(&mut d.ui_scale, 0.75..=2.5).step_by(0.05));
                                     ui.end_row();
                                     ui.label("Font size:");
-                                    ui.add(egui::DragValue::new(&mut d.font_size).range(8.0..=32.0).speed(0.25));
+                                    ui.horizontal(|ui| {
+                                        ui.add(egui::DragValue::new(&mut d.font_size).range(8.0..=32.0).speed(0.25));
+                                        hint(ui, "menus, lists, toolbar, dialogs");
+                                    });
                                     ui.end_row();
-                                    ui.label("Monospace font size:");
-                                    ui.add(egui::DragValue::new(&mut d.mono_font_size).range(8.0..=32.0).speed(0.25));
+                                    ui.label("Code font size:");
+                                    ui.horizontal(|ui| {
+                                        ui.add(egui::DragValue::new(&mut d.mono_font_size).range(8.0..=32.0).speed(0.25));
+                                        hint(ui, "diffs, blame, console; also Ctrl+wheel over a diff");
+                                    });
                                     ui.end_row();
                                     ui.label("Language:");
                                     egui::ComboBox::from_id_salt("set-lang").selected_text("English").show_ui(ui, |ui| {
@@ -503,6 +510,12 @@ impl AppDialog for SettingsDialog {
                                     ui.end_row();
                                     ui.label("Untracked files:");
                                     ui.checkbox(&mut d.show_untracked, "Show untracked files");
+                                    ui.end_row();
+                                    ui.label("File Status lists:");
+                                    ui.horizontal(|ui| {
+                                        ui.radio_value(&mut d.staged_first, true, "Staged on top");
+                                        ui.radio_value(&mut d.staged_first, false, "Unstaged on top");
+                                    });
                                     ui.end_row();
                                     ui.label("Status engine:");
                                     ui.horizontal(|ui| {

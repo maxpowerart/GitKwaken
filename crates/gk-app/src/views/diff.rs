@@ -176,6 +176,7 @@ impl DiffView {
             shared.settings.diff.context_lines
         };
         let tab = shared.settings.diff.tab_width.clamp(1, 16) as usize;
+        zoom_code_font(ui, shared);
         // Worktree content only changes with the status; other targets are immutable.
         let diff_gen = match target {
             DiffTarget::Blobs { .. } => 0,
@@ -1521,6 +1522,31 @@ fn line_job(
 /// external diff tool (`settings.external_diff_tool`, `$LOCAL` / `$REMOTE`):
 /// the sides are written to temp files on a worker thread. Errors become
 /// messages of the tab. Usable from any view (e.g. commit details menus).
+/// Ctrl + mouse wheel over a diff: code font size (Settings › Code font size; diffs, blame,
+/// console, commit ids), saved like any other setting.
+fn zoom_code_font(ui: &egui::Ui, shared: &mut Shared) {
+    if !ui.rect_contains_pointer(ui.max_rect()) {
+        return;
+    }
+    let zoom = ui.input(|i| i.zoom_delta());
+    if (zoom - 1.0).abs() < 1e-3 {
+        return;
+    }
+    let s = &mut shared.settings.mono_font_size;
+    let next = ((*s * zoom) * 2.0).round() / 2.0;
+    // At least half a point per wheel step, so slow wheels still move it.
+    let next = if zoom > 1.0 {
+        next.max(*s + 0.5)
+    } else {
+        next.min(*s - 0.5)
+    }
+    .clamp(8.0, 32.0);
+    if next != *s {
+        *s = next;
+        shared.actions.push(crate::app::Action::ApplySettings);
+    }
+}
+
 pub fn open_external(session: &Session, target: &DiffTarget, shared: &Shared) {
     external::open(session, target, shared.settings.external_diff_tool.as_ref());
 }

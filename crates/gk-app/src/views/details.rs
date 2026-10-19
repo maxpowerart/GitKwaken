@@ -192,7 +192,8 @@ fn single(
     }
     retarget(&mut tab.details, (id, None), preferred);
     let note = note_of(tab, ui.ctx(), id);
-    let max_h = (ui.available_height() * 0.45).clamp(60.0, 240.0);
+    let max_h =
+        (ui.available_height() * 0.45).clamp(60.0, 240.0 * crate::theme::text_scale(ui.style()));
     egui::ScrollArea::vertical()
         .id_salt(("details-header", id))
         .max_height(max_h)
@@ -487,7 +488,11 @@ fn files_and_diff(
             ui.label(RichText::new(format!("{}", files.len())).color(shared.palette.muted))
                 .on_hover_text("Changed files");
         });
-        let row_h = ui.spacing().interact_size.y;
+        let row_h = ui
+            .spacing()
+            .interact_size
+            .y
+            .max(ui.text_style_height(&egui::TextStyle::Body) + 4.0);
         let font = egui::TextStyle::Body.resolve(ui.style());
         let mono = egui::TextStyle::Monospace.resolve(ui.style());
         let text_color = ui.visuals().text_color();

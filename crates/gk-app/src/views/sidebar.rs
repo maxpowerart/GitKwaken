@@ -202,6 +202,9 @@ enum SidebarModal {
 /// Drag-and-drop payload of a branch row.
 struct BranchDrag(String);
 
+/// Drag-and-drop payload of a PINNED row (reordering the pins).
+struct PinDrag(String);
+
 #[derive(Default)]
 pub struct SidebarState {
     pub filter: String,
@@ -541,6 +544,12 @@ enum Cmd {
     /// Adds a branch (local, or `remote/branch`) to the history filter or removes it.
     Filter(String),
     UnpinAll,
+    /// Moves pin `name` next to pin `target` (below it when `after`).
+    MovePin {
+        name: String,
+        target: String,
+        after: bool,
+    },
 }
 
 fn dialog(d: Dialog) -> Cmd {
@@ -696,6 +705,21 @@ fn apply(cmd: Cmd, ui: &Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Sha
             ui.ctx().request_repaint();
         }
         Cmd::Filter(name) => crate::views::history::toggle_branch_filter(tab, &name),
+        Cmd::MovePin {
+            name,
+            target,
+            after,
+        } => {
+            let pins = &mut tab.state.pinned_branches;
+            pins.retain(|p| *p != name);
+            let at = pins
+                .iter()
+                .position(|p| *p == target)
+                .map_or(pins.len(), |i| i + usize::from(after));
+            pins.insert(at, name);
+            st.derived = None;
+            ui.ctx().request_repaint();
+        }
         Cmd::UnpinAll => {
             tab.state.pinned_branches.clear();
             st.derived = None;
@@ -723,6 +747,8 @@ struct Cx<'a> {
     filter: Vec<String>,
     /// `RepoState::pinned_branches`.
     pins: &'a [String],
+    /// [`crate::theme::text_scale`]: row furniture grows with the font.
+    k: f32,
 }
 
 /// Width kept free at the right of a branch row for its pin / filter buttons.
@@ -751,7 +777,8 @@ fn ref_buttons(
     selected: bool,
 ) -> (bool, bool) {
     let over_row = ui.rect_contains_pointer(rect);
-    let size = vec2(18.0, rect.height());
+    let k = cx.k;
+    let size = vec2(18.0 * k, rect.height());
     let filter_rect = Rect::from_min_size(pos2(rect.right() - 2.0 - size.x, rect.top()), size);
     let pin_rect = filter_rect.translate(vec2(-size.x - 2.0, 0.0));
     let mut clicked = (false, false);
@@ -792,27 +819,29 @@ fn ref_buttons(
         }
         let p = ui.painter_at(rect);
         let c = rect.center();
-        let stroke = Stroke::new(1.2, color);
+        let stroke = Stroke::new(1.2 * k, color);
+        // Icon geometry in points at the default font size.
+        let v = |x: f32, y: f32| vec2(x, y) * k;
         if kind == "pin" {
             // Push pin, upright: cap, body, collar, needle.
-            let body = Rect::from_min_max(c + vec2(-2.0, -4.5), c + vec2(2.0, 0.5));
-            p.line_segment([c + vec2(-3.5, -5.0), c + vec2(3.5, -5.0)], stroke);
+            let body = Rect::from_min_max(c + v(-2.0, -4.5), c + v(2.0, 0.5));
+            p.line_segment([c + v(-3.5, -5.0), c + v(3.5, -5.0)], stroke);
             if on {
                 p.rect_filled(body, 0.0, color);
             } else {
                 p.rect_stroke(body, 0.0, stroke, egui::StrokeKind::Inside);
             }
-            p.line_segment([c + vec2(-4.5, 0.5), c + vec2(4.5, 0.5)], stroke);
-            p.line_segment([c + vec2(0.0, 0.5), c + vec2(0.0, 5.5)], stroke);
+            p.line_segment([c + v(-4.5, 0.5), c + v(4.5, 0.5)], stroke);
+            p.line_segment([c + v(0.0, 0.5), c + v(0.0, 5.5)], stroke);
         } else {
             // Funnel.
             let cup = vec![
-                c + vec2(-5.0, -4.5),
-                c + vec2(5.0, -4.5),
-                c + vec2(1.2, 0.5),
-                c + vec2(-1.2, 0.5),
+                c + v(-5.0, -4.5),
+                c + v(5.0, -4.5),
+                c + v(1.2, 0.5),
+                c + v(-1.2, 0.5),
             ];
-            let stem = Rect::from_min_max(c + vec2(-1.2, 0.5), c + vec2(1.2, 5.0));
+            let stem = Rect::from_min_max(c + v(-1.2, 0.5), c + v(1.2, 5.0));
             if on {
                 p.add(egui::Shape::convex_polygon(cup, color, Stroke::NONE));
                 p.rect_filled(stem, 0.0, color);
@@ -866,8 +895,8 @@ fn menu_item(ui: &mut Ui, enabled: bool, text: &str) -> bool {
     clicked
 }
 
-fn paint_arrow(p: &egui::Painter, c: Pos2, open: bool, color: Color32) {
-    let s = 3.5;
+fn paint_arrow(p: &egui::Painter, c: Pos2, open: bool, color: Color32, k: f32) {
+    let s = 3.5 * k;
     let pts = if open {
         vec![
             pos2(c.x - s, c.y - s * 0.55),
@@ -946,16 +975,17 @@ fn paint_row(ui: &Ui, cx: &Cx, rect: Rect, depth: u8, hovered: bool, mut look: L
         );
     }
     let y = rect.center().y;
-    let mut x = rect.left() + 2.0 + depth as f32 * INDENT;
+    let k = cx.k;
+    let mut x = rect.left() + 2.0 + depth as f32 * INDENT * k;
     if let Some(open) = look.arrow {
-        paint_arrow(&p, pos2(x + ARROW_W / 2.0, y), open, cx.pal.muted);
+        paint_arrow(&p, pos2(x + ARROW_W * k / 2.0, y), open, cx.pal.muted, k);
     } else if let Some(c) = look.marker {
-        p.circle_filled(pos2(x + ARROW_W / 2.0, y), 3.0, c);
+        p.circle_filled(pos2(x + ARROW_W * k / 2.0, y), 3.0 * k, c);
     }
-    x += ARROW_W;
+    x += ARROW_W * k;
     if let Some((icon, color)) = look.icon {
-        paint_text(&p, x, y, ICON_W, icon, &cx.font, color, false);
-        x += ICON_W;
+        paint_text(&p, x, y, ICON_W * k, icon, &cx.font, color, false);
+        x += ICON_W * k;
     }
     // Badges from the right.
     let mut right = rect.right() - 4.0 - look.reserve;
@@ -982,7 +1012,7 @@ fn paint_row(ui: &Ui, cx: &Cx, rect: Rect, depth: u8, hovered: bool, mut look: L
 
 fn row_ui(ui: &mut Ui, cx: &Cx, row: &Row, h: f32, cmds: &mut Vec<Cmd>) {
     let w = ui.available_width().max(40.0);
-    let sense = if matches!(row.kind, RowKind::Branch(_)) {
+    let sense = if matches!(row.kind, RowKind::Branch(_) | RowKind::PinnedBranch(_)) {
         Sense::click_and_drag()
     } else {
         Sense::click()
@@ -1052,8 +1082,8 @@ fn row_ui(ui: &mut Ui, cx: &Cx, row: &Row, h: f32, cmds: &mut Vec<Cmd>) {
             let mut plus_clicked = false;
             if plus {
                 let pr = Rect::from_center_size(
-                    pos2(rect.right() - 12.0, rect.center().y),
-                    vec2(16.0, h - 2.0),
+                    pos2(rect.right() - 12.0 * cx.k, rect.center().y),
+                    vec2(16.0 * cx.k, h - 2.0),
                 );
                 let r = ui.interact(pr, ui.id().with(("sidebar-plus", s.key())), Sense::click());
                 let color = if r.hovered() { cx.strong } else { pal.muted };
@@ -1241,7 +1271,7 @@ fn row_ui(ui: &mut Ui, cx: &Cx, row: &Row, h: f32, cmds: &mut Vec<Cmd>) {
                     bold: b.is_head,
                     badges,
                     selected: sel(&key),
-                    reserve: REF_BUTTONS_W,
+                    reserve: REF_BUTTONS_W * cx.k,
                     ..base
                 },
             );
@@ -1268,8 +1298,37 @@ fn row_ui(ui: &mut Ui, cx: &Cx, row: &Row, h: f32, cmds: &mut Vec<Cmd>) {
             } else {
                 resp
             };
-            // Drag a branch onto another one: merge / rebase popup.
-            resp.dnd_set_drag_payload(BranchDrag(b.name.clone()));
+            if in_pins {
+                // PINNED: drag a pin above / below another one to reorder them.
+                resp.dnd_set_drag_payload(PinDrag(b.name.clone()));
+                let pointer_y = ui.ctx().pointer_interact_pos().map(|p| p.y);
+                let after = pointer_y.is_some_and(|y| y > rect.center().y);
+                if let Some(p) = resp.dnd_hover_payload::<PinDrag>()
+                    && p.0 != b.name
+                {
+                    let y = if after {
+                        rect.bottom() - 1.0
+                    } else {
+                        rect.top() + 1.0
+                    };
+                    ui.painter().line_segment(
+                        [pos2(rect.left() + 4.0, y), pos2(rect.right() - 4.0, y)],
+                        Stroke::new(2.0, pal.accent),
+                    );
+                }
+                if let Some(p) = resp.dnd_release_payload::<PinDrag>()
+                    && p.0 != b.name
+                {
+                    cmds.push(Cmd::MovePin {
+                        name: p.0.clone(),
+                        target: b.name.clone(),
+                        after,
+                    });
+                }
+            } else {
+                // Drag a branch onto another one: merge / rebase popup.
+                resp.dnd_set_drag_payload(BranchDrag(b.name.clone()));
+            }
             if let Some(p) = resp.dnd_hover_payload::<BranchDrag>()
                 && p.0 != b.name
             {
@@ -1327,7 +1386,7 @@ fn row_ui(ui: &mut Ui, cx: &Cx, row: &Row, h: f32, cmds: &mut Vec<Cmd>) {
                     icon: Some(("⑂", pal.remote)),
                     text: model::leaf_name(&rb.name),
                     selected: sel(&key),
-                    reserve: REF_BUTTONS_W,
+                    reserve: REF_BUTTONS_W * cx.k,
                     ..base
                 },
             );
@@ -2061,11 +2120,15 @@ fn rows_ui(
         kb_menu,
         filter: crate::views::history::filtered_branches(&tab.session.options().scope).to_vec(),
         pins: &tab.state.pinned_branches,
+        k: crate::theme::text_scale(&style),
     };
     let rows = &st.rows[range];
 
     ui.scope(|ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
+        // A solid scroll bar takes its own column: a floating one would cover the
+        // pin / filter buttons at the right edge of the rows.
+        ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
         if scroll {
             egui::ScrollArea::vertical()
                 .id_salt("sidebar-refs")
@@ -2160,13 +2223,16 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
         key_cmds(k, &sel, snap, &tab.sidebar, &tab.path, &mut cmds);
     }
 
-    // A branch being dragged follows the pointer.
-    if let Some(p) = egui::DragAndDrop::payload::<BranchDrag>(ui.ctx())
+    // A branch (or pin) being dragged follows the pointer.
+    let dragged = egui::DragAndDrop::payload::<BranchDrag>(ui.ctx())
+        .map(|p| p.0.clone())
+        .or_else(|| egui::DragAndDrop::payload::<PinDrag>(ui.ctx()).map(|p| p.0.clone()));
+    if let Some(name) = dragged
         && let Some(pos) = ui.ctx().pointer_interact_pos()
     {
         let layer = egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("branch-drag"));
         let painter = ui.ctx().layer_painter(layer);
-        let text = format!("⑂ {}", p.0);
+        let text = format!("⑂ {name}");
         let g = painter.layout_no_wrap(
             text,
             egui::TextStyle::Body.resolve(ui.style()),

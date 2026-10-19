@@ -46,6 +46,8 @@ pub struct GkApp {
     global: Option<dialogs::GlobalDialog>,
     actions: Vec<Action>,
     show_log: bool,
+    /// Output log height the user chose (see `views::panel_size`).
+    log_height: f32,
     errors: Vec<String>,
     command_palette: views::palette::PaletteState,
     updater: crate::update::Updater,
@@ -139,6 +141,7 @@ impl GkApp {
             global: None,
             actions: Vec::new(),
             show_log: false,
+            log_height: 0.0,
             errors: Vec::new(),
             command_palette: std::env::var("GITKWAKEN_PALETTE")
                 .map(views::palette::PaletteState::run_on_start)
@@ -296,18 +299,22 @@ impl GkApp {
         let strong = ui.visuals().strong_text_color();
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
+            let k = crate::theme::text_scale(ui.style());
+            let tab_h = TAB_H * k;
             let font = egui::TextStyle::Body.resolve(ui.style());
+            let paths: Vec<&std::path::Path> = self.tabs.iter().map(|t| t.path.as_path()).collect();
+            let labels = crate::util::tab_labels(&paths);
             for (i, t) in self.tabs.iter().enumerate() {
                 let selected = i == self.active;
                 let color = if selected { strong } else { text };
                 let g = ui
                     .painter()
-                    .layout_no_wrap(t.name.clone(), font.clone(), color);
-                let size = egui::vec2(12.0 + g.size().x + 8.0 + 16.0 + 6.0, TAB_H);
+                    .layout_no_wrap(labels[i].clone(), font.clone(), color);
+                let size = egui::vec2(12.0 + g.size().x + 8.0 + 16.0 * k + 6.0, tab_h);
                 let (rect, r) = ui.allocate_exact_size(size, egui::Sense::click());
                 let close_rect = egui::Rect::from_center_size(
-                    egui::pos2(rect.right() - 6.0 - 8.0, rect.center().y),
-                    egui::vec2(16.0, 16.0),
+                    egui::pos2(rect.right() - 6.0 - 8.0 * k, rect.center().y),
+                    egui::vec2(16.0 * k, 16.0 * k),
                 );
                 let close = ui.interact(
                     close_rect,
@@ -374,9 +381,9 @@ impl GkApp {
                 });
             }
             ui.add_space(4.0);
-            let plus = egui::Button::new(egui::RichText::new("+").size(18.0))
+            let plus = egui::Button::new(egui::RichText::new("+").size(18.0 * k))
                 .frame(false)
-                .min_size(egui::vec2(TAB_H, TAB_H));
+                .min_size(egui::vec2(tab_h, tab_h));
             let open_key = self.keymap.text(Act::OpenRepo);
             egui::containers::menu::MenuButton::from_button(plus)
                 .ui(ui, |ui| {
@@ -671,7 +678,9 @@ impl gk_dx11::App for GkApp {
         // First: the dialog takes Enter / Escape before lists and views read keys.
         self.updater.dialog(&ctx);
         let chrome = egui::Frame::new().fill(self.palette.chrome);
+        // Menu bar and tabs form one blue band: no separator line between them.
         egui::Panel::top("menubar")
+            .show_separator_line(false)
             .frame(chrome.inner_margin(egui::Margin {
                 left: 6,
                 right: 6,
@@ -679,20 +688,33 @@ impl gk_dx11::App for GkApp {
                 bottom: 0,
             }))
             .show(ui, |ui| self.menu_bar(ui));
+        // 6 points taller than it used to be; the toolbar gave them up (its margins), so
+        // everything below the toolbar stays where it was.
         egui::Panel::top("tabs")
+            .show_separator_line(false)
             .frame(chrome.inner_margin(egui::Margin {
                 left: 6,
                 right: 6,
-                top: 2,
-                bottom: 0,
+                top: 5,
+                bottom: 3,
             }))
             .show(ui, |ui| self.tab_bar(ui));
         self.git_banner(ui);
         if self.show_log {
-            egui::Panel::bottom("output")
+            use views::panel_size::{Axis, remember, restore};
+            let id = egui::Id::new("output");
+            let limit = ui.available_height();
+            restore(ui.ctx(), id, Axis::Height, self.log_height, limit);
+            let shown = egui::Panel::bottom(id)
                 .resizable(true)
                 .default_size(180.0)
                 .show(ui, |ui| views::log::show(ui, &self.log));
+            remember(
+                shown.response.rect,
+                Axis::Height,
+                limit,
+                &mut self.log_height,
+            );
         }
         let palette = self.palette;
         let mut shared = Shared {

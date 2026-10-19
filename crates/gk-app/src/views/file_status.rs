@@ -270,18 +270,50 @@ pub fn show(ui: &mut egui::Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
         .show(ui, |ui| top_row(ui, tab, shared.palette));
     // Rebuild immediately so the filter / mode change shows this frame.
     tab.status.sync(snap, tab.state.file_view_tree);
-    egui::Panel::bottom(Id::new(("fs-commit", &key)))
+    use crate::views::panel_size::{Axis, remember, restore};
+    let commit_id = Id::new(("fs-commit", &key));
+    let commit_limit = ui.available_height().min(520.0);
+    let layout = tab.state.layout;
+    restore(
+        ui.ctx(),
+        commit_id,
+        Axis::Height,
+        layout.commit_height,
+        commit_limit,
+    );
+    let commit = egui::Panel::bottom(commit_id)
         .resizable(true)
         .default_size(170.0)
         .size_range(120.0..=520.0)
         .show(ui, |ui| commit::show(ui, tab, snap, shared));
+    remember(
+        commit.response.rect,
+        Axis::Height,
+        commit_limit,
+        &mut tab.state.layout.commit_height,
+    );
 
     let mut events: Vec<(Side, Ev)> = Vec::new();
-    egui::Panel::left(Id::new(("fs-lists", &key)))
+    let lists_id = Id::new(("fs-lists", &key));
+    let lists_limit = ui.available_width().min(1200.0);
+    restore(
+        ui.ctx(),
+        lists_id,
+        Axis::Width,
+        layout.file_list_width,
+        lists_limit,
+    );
+    let shown = egui::Panel::left(lists_id)
         .resizable(true)
         .default_size((ui.available_width() * 0.42).clamp(220.0, 400.0))
         .size_range(220.0..=1200.0)
         .show(ui, |ui| lists(ui, tab, snap, shared, &mut events));
+    remember(
+        shown.response.rect,
+        Axis::Width,
+        lists_limit,
+        &mut tab.state.layout.file_list_width,
+    );
     for (side, ev) in events {
         handle(ui, tab, snap, shared, side, ev);
     }
@@ -365,22 +397,18 @@ fn lists(
             .fill(ui.visuals().faint_bg_color)
             .inner_margin(egui::Margin::symmetric(4, 2))
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    let title = match side {
-                        Side::Staged => "Staged files",
-                        Side::Unstaged => "Unstaged files",
-                    };
-                    ui.label(RichText::new(title).strong());
-                    let count = if filtered {
-                        format!("({shown} of {total})")
-                    } else {
-                        format!("({total})")
-                    };
-                    ui.label(RichText::new(count).color(p.muted));
-                    if pending_here {
-                        ui.spinner();
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Buttons first (right to left), then the title in the room left over,
+                // cut with "…" rather than drawn under the buttons. One row high.
+                let row_h = ui
+                    .spacing()
+                    .interact_size
+                    .y
+                    .max(ui.text_style_height(&egui::TextStyle::Body) + 4.0);
+                let width = ui.available_width();
+                ui.allocate_ui_with_layout(
+                    egui::vec2(width, row_h),
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| {
                         let (all, some) = match side {
                             Side::Staged => ("Unstage All", "Unstage Selected"),
                             Side::Unstaged => ("Stage All", "Stage Selected"),
@@ -398,8 +426,31 @@ fn lists(
                         {
                             evs.push(Ev::All);
                         }
-                    });
-                });
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            let title = match side {
+                                Side::Staged => "Staged files",
+                                Side::Unstaged => "Unstaged files",
+                            };
+                            let count = if filtered {
+                                format!(" ({shown} of {total})")
+                            } else {
+                                format!(" ({total})")
+                            };
+                            let font = egui::TextStyle::Body.resolve(ui.style());
+                            let mut job = egui::text::LayoutJob::default();
+                            let strong = ui.visuals().strong_text_color();
+                            job.append(title, 0.0, egui::TextFormat::simple(font.clone(), strong));
+                            job.append(&count, 0.0, egui::TextFormat::simple(font, p.muted));
+                            let r = ui.add(egui::Label::new(job).truncate());
+                            if r.hovered() {
+                                r.on_hover_text(format!("{title}{count}"));
+                            }
+                            if pending_here {
+                                ui.spinner();
+                            }
+                        });
+                    },
+                );
             });
         let paths: &[String] = match side {
             Side::Staged => &st.paths.staged,
@@ -451,23 +502,45 @@ fn lists(
         accepting
     };
 
-    let over_staged = egui::Panel::top(Id::new(("fs-staged", &key)))
+    // SourceTree puts the staged list on top, Fork the unstaged one (Settings › General).
+    let (first, second) = if shared.settings.staged_first {
+        (Side::Staged, Side::Unstaged)
+    } else {
+        (Side::Unstaged, Side::Staged)
+    };
+    use crate::views::panel_size::{Axis, remember, restore};
+    let first_id = Id::new(("fs-first", &key, first));
+    let first_limit = (avail - 90.0).max(90.0);
+    let saved = tab.state.layout.file_split_height;
+    restore(ui.ctx(), first_id, Axis::Height, saved, first_limit);
+    let first_panel = egui::Panel::top(first_id)
         .resizable(true)
         .default_size((avail * 0.4).max(90.0))
         .size_range(70.0..=(avail - 90.0).max(90.0))
-        // No inner margin: keep the staged list aligned with the unstaged one.
+        // No inner margin: keep the top list aligned with the bottom one.
         .frame(egui::Frame::new().inner_margin(egui::Margin {
             bottom: 4,
             ..Default::default()
         }))
-        .show(ui, |ui| one(ui, &mut tab.status, Side::Staged, events))
-        .inner;
-    let over_unstaged = egui::CentralPanel::no_frame()
+        .show(ui, |ui| one(ui, &mut tab.status, first, events));
+    remember(
+        first_panel.response.rect,
+        Axis::Height,
+        first_limit,
+        &mut tab.state.layout.file_split_height,
+    );
+    let over_first = first_panel.inner;
+    let over_second = egui::CentralPanel::no_frame()
         .show(ui, |ui| {
             ui.add_space(4.0);
-            one(ui, &mut tab.status, Side::Unstaged, events)
+            one(ui, &mut tab.status, second, events)
         })
         .inner;
+    let (over_staged, over_unstaged) = if first == Side::Staged {
+        (over_first, over_second)
+    } else {
+        (over_second, over_first)
+    };
 
     if let Some(pl) = egui::DragAndDrop::payload::<DragFiles>(ui.ctx())
         && pl.scope == dnd_scope

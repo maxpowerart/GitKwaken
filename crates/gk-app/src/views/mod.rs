@@ -10,6 +10,7 @@ pub mod log;
 pub mod menubar;
 pub mod merge;
 pub mod palette;
+pub mod panel_size;
 pub mod reflog;
 pub mod search;
 pub mod sidebar;

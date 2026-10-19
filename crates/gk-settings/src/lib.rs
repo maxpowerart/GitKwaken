@@ -41,6 +41,9 @@ pub struct Settings {
     pub diff: DiffSettings,
     pub status_engine: StatusEngine,
     pub show_untracked: bool,
+    /// File Status: staged list above the unstaged one (SourceTree); false puts the
+    /// unstaged list on top (Fork).
+    pub staged_first: bool,
     /// 0 = off.
     pub auto_fetch_minutes: u32,
     pub git_path: Option<PathBuf>,
@@ -77,6 +80,7 @@ impl Default for Settings {
             diff: DiffSettings::default(),
             status_engine: StatusEngine::default(),
             show_untracked: true,
+            staged_first: true,
             auto_fetch_minutes: 10,
             git_path: None,
             update_url: String::new(),
