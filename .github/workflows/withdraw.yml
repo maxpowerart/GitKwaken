@@ -1,0 +1,67 @@
+name: Withdraw release
+
+# Pulls a bad release: it is marked "(withdrawn)" and as a pre-release, so the update channel
+# (releases/latest/download/update.json) goes back to the newest good release. Nobody is offered
+# the bad version any more, and GitKwaken installations already running it see "Roll back to
+# <good version>" with the reason given here. "restore" undoes it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version, e.g. 1.0.4'
+        required: true
+      reason:
+        description: 'Why (shown to users in GitKwaken)'
+        required: false
+        default: ''
+      restore:
+        description: 'Undo: put a withdrawn release back'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  withdraw:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      VERSION: ${{ inputs.version }}
+      REASON: ${{ inputs.reason }}
+      RESTORE: ${{ inputs.restore }}
+    steps:
+      - name: Update the release
+        run: |
+          set -euo pipefail
+          ver="${VERSION#v}"
+          tag="v$ver"
+          # Notes without an earlier "Withdrawn:" line.
+          body="$(gh release view "$tag" --repo "$REPO" --json body --jq .body | sed '/^\*\*Withdrawn:\*\*/d')"
+          body="$(printf '%s\n' "$body" | sed '/./,$!d')"
+          if [ "$RESTORE" = true ]; then
+            gh release edit "$tag" --repo "$REPO" --title "GitKwaken $ver" --prerelease=false --notes "$body"
+            echo "restored $tag"
+          else
+            note="**Withdrawn:** ${REASON:-this release has a serious problem.}"
+            gh release edit "$tag" --repo "$REPO" --title "GitKwaken $ver (withdrawn)" --prerelease \
+              --notes "$(printf '%s\n\n%s\n' "$note" "$body")"
+            echo "withdrew $tag"
+          fi
+
+      - name: Point "latest" (the update channel) at the newest good release
+        run: |
+          set -euo pipefail
+          latest="$(gh api "repos/$REPO/releases?per_page=100" --jq '.[]
+            | select((.draft or .prerelease) | not)
+            | select(.name | ascii_downcase | contains("(withdrawn)") | not)
+            | .tag_name' | sort -V | tail -n 1)"
+          if [ -z "$latest" ]; then
+            echo "no good release left to serve" >&2
+            exit 1
+          fi
+          gh release edit "$latest" --repo "$REPO" --latest
+          echo "the update channel now serves $latest"
+          curl -fsSL "https://github.com/$REPO/releases/latest/download/update.json" | head -c 300 || true

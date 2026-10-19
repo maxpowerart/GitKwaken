@@ -16,6 +16,8 @@ use egui::Ui;
 pub struct MenuOut {
     pub toggle_palette: bool,
     pub update: Option<crate::update::UpdateAction>,
+    /// Help › Install another version…
+    pub versions: bool,
 }
 
 /// A top-level menu; its button is collected for [`switch_on_hover`].
@@ -457,6 +459,9 @@ pub fn show(ui: &mut Ui, mc: MenuCtx, shared: &mut Shared) -> MenuOut {
             let (label, enabled, action) = &update;
             if item(ui, label, none(), *enabled) {
                 out.update = Some(*action);
+            }
+            if item(ui, "Install another version…", none(), true) {
+                out.versions = true;
             }
             ui.separator();
             if item(ui, "About GitKwaken", none(), true) {

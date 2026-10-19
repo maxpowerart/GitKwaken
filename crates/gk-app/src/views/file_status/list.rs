@@ -870,7 +870,8 @@ fn status_badge(
     );
 }
 
-/// Small stage toggle; `checked` in the staged list.
+/// Small stage toggle; `checked` in the staged list. `k`: [`crate::theme::text_scale`].
+#[allow(clippy::too_many_arguments)]
 fn checkbox(
     ui: &mut Ui,
     painter: &egui::Painter,

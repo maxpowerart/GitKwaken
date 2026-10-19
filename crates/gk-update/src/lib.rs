@@ -149,17 +149,127 @@ fn agent(timeout: Duration) -> ureq::Agent {
 ///
 /// Blocking (network): call from a background thread.
 pub fn check(current: &str, channel_url: &str) -> Result<Option<Release>> {
-    let (reader, _) = open_source(channel_url, Duration::from_secs(20))?;
+    let release = fetch_manifest(channel_url)?;
+    Ok(is_newer(current, &release.version)?.then_some(release))
+}
+
+/// The manifest at `url` (any version), its download URLs resolved.
+///
+/// Blocking (network): call from a background thread.
+pub fn fetch_manifest(url: &str) -> Result<Release> {
+    let (reader, _) = open_source(url, Duration::from_secs(20))?;
     let mut body = String::new();
     reader
         .take(MANIFEST_LIMIT)
         .read_to_string(&mut body)
         .context("read update manifest")?;
     let mut release = parse_manifest(&body)?;
-    for (url, _) in release.assets_mut() {
-        *url = resolve_url(channel_url, url);
+    for (u, _) in release.assets_mut() {
+        *u = resolve_url(url, u);
     }
-    Ok(is_newer(current, &release.version)?.then_some(release))
+    Ok(release)
+}
+
+/// A published release that can be installed (it carries an `update.json`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Listed {
+    pub version: String,
+    /// `YYYY-MM-DD`.
+    pub published: String,
+    pub prerelease: bool,
+    /// Withdrawn after release (`.github/workflows/withdraw.yml`): its title carries
+    /// "(withdrawn)". Never offered; installs of it are offered a way back.
+    pub withdrawn: bool,
+    /// Why it was withdrawn (the "Withdrawn: …" line of its notes), if given.
+    pub reason: String,
+    /// Its own `update.json`, for [`fetch_manifest`].
+    pub manifest_url: String,
+}
+
+/// Marker the withdraw workflow puts in a release title.
+pub const WITHDRAWN_MARK: &str = "(withdrawn)";
+
+/// The "Withdrawn: <reason>" line the withdraw workflow puts at the top of the notes.
+fn withdrawn_reason(body: &str) -> String {
+    body.lines()
+        .map(|l| l.trim().trim_start_matches("**").replace("**", ""))
+        .find_map(|l| l.strip_prefix("Withdrawn:").map(|r| r.trim().to_string()))
+        .unwrap_or_default()
+}
+
+/// GitHub API URL listing the releases of the repository a GitHub channel
+/// (`https://github.com/<owner>/<repo>/releases/latest/download/update.json`) belongs to.
+pub fn releases_api_url(channel_url: &str) -> Option<String> {
+    let rest = channel_url.strip_prefix("https://github.com/")?;
+    let mut parts = rest.split('/');
+    let (owner, repo) = (parts.next()?, parts.next()?);
+    if owner.is_empty() || repo.is_empty() || parts.next() != Some("releases") {
+        return None;
+    }
+    Some(format!(
+        "https://api.github.com/repos/{owner}/{repo}/releases?per_page=50"
+    ))
+}
+
+/// Releases of the channel's repository, newest first: drafts and releases without an
+/// `update.json` (nothing to install from) are left out.
+///
+/// Blocking (network): call from a background thread.
+pub fn list_releases(channel_url: &str) -> Result<Vec<Listed>> {
+    let api = releases_api_url(channel_url)
+        .ok_or_else(|| anyhow!("only GitHub release channels list older versions"))?;
+    let (reader, _) = open_source(&api, Duration::from_secs(20))?;
+    let mut body = String::new();
+    reader
+        .take(16 * MANIFEST_LIMIT)
+        .read_to_string(&mut body)
+        .context("read release list")?;
+    parse_release_list(&body)
+}
+
+/// [`list_releases`] on a GitHub API response body (testable core).
+pub fn parse_release_list(json: &str) -> Result<Vec<Listed>> {
+    let v: serde_json::Value = serde_json::from_str(json).context("invalid release list")?;
+    let items = v
+        .as_array()
+        .ok_or_else(|| anyhow!("invalid release list"))?;
+    let mut out: Vec<Listed> = items
+        .iter()
+        .filter(|r| !r["draft"].as_bool().unwrap_or(false))
+        .filter_map(|r| {
+            let tag = r["tag_name"].as_str()?;
+            parse_version(tag).ok()?;
+            let manifest_url = r["assets"]
+                .as_array()?
+                .iter()
+                .find(|a| a["name"].as_str() == Some("update.json"))?["browser_download_url"]
+                .as_str()?
+                .to_string();
+            Some(Listed {
+                version: tag.trim_start_matches(['v', 'V']).to_string(),
+                published: r["published_at"]
+                    .as_str()
+                    .unwrap_or("")
+                    .chars()
+                    .take(10)
+                    .collect(),
+                prerelease: r["prerelease"].as_bool().unwrap_or(false),
+                withdrawn: r["name"]
+                    .as_str()
+                    .is_some_and(|n| n.to_lowercase().contains(WITHDRAWN_MARK)),
+                reason: withdrawn_reason(r["body"].as_str().unwrap_or("")),
+                manifest_url,
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| {
+        let (x, y) = (parse_version(&a.version), parse_version(&b.version));
+        match (x, y) {
+            (Ok(x), Ok(y)) => y.cmp_precedence(&x),
+            _ => std::cmp::Ordering::Equal,
+        }
+    });
+    Ok(out)
 }
 
 /// Resolves a download URL that is relative to the manifest's location

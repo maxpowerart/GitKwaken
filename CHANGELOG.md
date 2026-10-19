@@ -4,6 +4,25 @@ Each release's section is shown in GitKwaken's "update available" dialog and on 
 release page (the release workflow copies the `## <version>` section). Keep entries short and
 user-facing.
 
+## 1.0.4
+
+- Install another version (Help menu): pick any release, read its changelog and install it,
+  older ones included, to go back after an update that went wrong.
+- Withdrawn releases: when a release is pulled, installations running it offer to roll back
+  to the last good version, with the reason. The update dialog can also skip a version.
+- Pinned branches can be reordered by dragging them within PINNED.
+- Settings: choose whether staged or unstaged files are listed on top in File Status.
+- Tabs of repositories with the same folder name show the part of the path that differs.
+- Font size: toolbar, tabs, sidebar icons, file status badges and check boxes, and history
+  rows now grow with it; the status letters no longer spill out of their boxes. Code font
+  size (diffs) is in Settings and follows Ctrl+mouse wheel over a diff.
+- Panel sizes (file list, commit box, sidebar, output log) survive minimizing and smaller
+  windows.
+- The sidebar scroll bar no longer covers the pin / filter buttons.
+- Linux: toolbar and branch icons render again (symbol fonts DejaVu Sans / Noto Sans Symbols;
+  the Arch package now depends on `ttf-dejavu`).
+- Window: the menu bar and tabs are one band without a dividing line.
+
 ## 1.0.3
 
 - Update dialog: the update button now shows what's new in the release and asks before

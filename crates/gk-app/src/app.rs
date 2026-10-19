@@ -287,6 +287,9 @@ impl GkApp {
         if let Some(a) = out.update {
             self.updater.act(a, ui.ctx());
         }
+        if out.versions {
+            self.updater.open_versions(ui.ctx());
+        }
     }
 
     /// SourceTree-style repository tabs: one per repository with a close
@@ -676,7 +679,7 @@ impl gk_dx11::App for GkApp {
         self.publish_keymap(&ctx);
         self.shortcuts(&ctx);
         // First: the dialog takes Enter / Escape before lists and views read keys.
-        self.updater.dialog(&ctx);
+        self.updater.dialog(&ctx, &mut self.settings);
         let chrome = egui::Frame::new().fill(self.palette.chrome);
         // Menu bar and tabs form one blue band: no separator line between them.
         egui::Panel::top("menubar")

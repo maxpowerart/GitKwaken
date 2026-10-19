@@ -20,6 +20,9 @@ enum State {
     /// Manual check found nothing newer.
     UpToDate,
     Available(Release),
+    /// The running version was withdrawn (a bad release): roll back to this one, the newest
+    /// good release. The `String` is the reason given when it was withdrawn.
+    Withdrawn(Release, String),
     Downloading(u64, u64),
     /// `pkexec pacman -U` running (polkit asks for the password).
     Installing,
@@ -57,6 +60,23 @@ pub struct Updater {
     url: Option<String>,
     /// The "update available" dialog (changelog, install or not) is open.
     asking: Mutex<bool>,
+    /// `Settings::skipped_version`: background checks do not offer it.
+    skip: Arc<Mutex<String>>,
+    /// Help › Install another version… dialog.
+    versions: Arc<Mutex<Versions>>,
+}
+
+/// State of the "Install another version" dialog.
+#[derive(Default)]
+struct Versions {
+    open: bool,
+    /// `None` while loading.
+    list: Option<Result<Vec<gk_update::Listed>, String>>,
+    selected: Option<usize>,
+    /// Manifest of the selected version (`None` while loading).
+    detail: Option<(usize, Result<Release, String>)>,
+    /// Going back: do not offer the newer release again.
+    skip_newer: bool,
 }
 
 impl Updater {
@@ -72,6 +92,8 @@ impl Updater {
             staged,
             url,
             asking: Mutex::new(false),
+            skip: Arc::new(Mutex::new(settings.skipped_version.clone())),
+            versions: Arc::default(),
         };
         // Local builds have no built-in channel; release builds get it at build time.
         let enabled =
@@ -79,9 +101,10 @@ impl Updater {
         if enabled && let Some(url) = u.url.clone() {
             let s = u.state.clone();
             let c = ctx.clone();
+            let skip = u.skip.clone();
             std::thread::spawn(move || {
                 loop {
-                    check(&url, &s, &c, false);
+                    check(&url, &s, &c, false, &skip);
                     std::thread::sleep(CHECK_EVERY);
                 }
             });
@@ -105,7 +128,8 @@ impl Updater {
         *self.state.lock() = State::Checking;
         let s = self.state.clone();
         let c = ctx.clone();
-        std::thread::spawn(move || check(&url, &s, &c, true));
+        let skip = self.skip.clone();
+        std::thread::spawn(move || check(&url, &s, &c, true, &skip));
     }
 
     /// Downloads `rel`, then stages the new executable or installs the package.
@@ -157,6 +181,11 @@ impl Updater {
                 true,
                 UpdateAction::Install,
             ),
+            State::Withdrawn(rel, _) => (
+                format!("Roll back to {}", rel.version),
+                true,
+                UpdateAction::Install,
+            ),
             State::Ready(v) => (
                 format!("Restart to finish update {v}"),
                 true,
@@ -183,7 +212,10 @@ impl Updater {
         match action {
             UpdateAction::Check => self.check_now(ctx),
             UpdateAction::Install => {
-                if matches!(*self.state.lock(), State::Available(_)) {
+                if matches!(
+                    *self.state.lock(),
+                    State::Available(_) | State::Withdrawn(..)
+                ) {
                     *self.asking.lock() = true;
                     ctx.request_repaint();
                 }
@@ -199,12 +231,15 @@ impl Updater {
 
     /// The "update available" dialog: version, changelog, and Install / Not now. "Not now"
     /// (also Escape or a click outside) only closes it; the update button stays. Enter installs.
-    pub fn dialog(&self, ctx: &egui::Context) {
+    pub fn dialog(&self, ctx: &egui::Context, settings: &mut gk_settings::Settings) {
+        self.versions_dialog(ctx, settings);
         if !*self.asking.lock() {
             return;
         }
-        let rel = match &*self.state.lock() {
-            State::Available(rel) => rel.clone(),
+        // `Some(reason)`: the running version was withdrawn and `rel` is the way back.
+        let (rel, withdrawn) = match &*self.state.lock() {
+            State::Available(rel) => (rel.clone(), None),
+            State::Withdrawn(rel, reason) => (rel.clone(), Some(reason.clone())),
             _ => {
                 *self.asking.lock() = false;
                 return;
@@ -222,6 +257,7 @@ impl Updater {
             Err(_) => "",
         };
         // Taken before anything else reads the keyboard this frame.
+        let mut skip = false;
         let (mut install, mut close) = ctx.input_mut(|i| {
             (
                 i.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
@@ -230,21 +266,37 @@ impl Updater {
         });
         let modal = egui::Modal::new(egui::Id::new("update-available")).show(ctx, |ui| {
             ui.set_width(520.0);
-            ui.heading(format!("GitKwaken {} is available", rel.version));
-            let published = rel
-                .published
-                .as_deref()
-                .map(|d| format!("Released {d}. "))
-                .unwrap_or_default();
-            ui.label(
-                egui::RichText::new(format!(
-                    "{published}You have {}.",
-                    env!("CARGO_PKG_VERSION")
-                ))
-                .weak(),
-            );
+            let current = env!("CARGO_PKG_VERSION");
+            if let Some(reason) = &withdrawn {
+                ui.heading(format!("GitKwaken {current} was withdrawn"));
+                ui.label(format!(
+                    "This release was pulled after it went out{}. Going back to {} is \
+                     recommended; settings and repositories are kept.",
+                    if reason.is_empty() {
+                        String::new()
+                    } else {
+                        format!(": {reason}")
+                    },
+                    rel.version
+                ));
+            } else {
+                ui.heading(format!("GitKwaken {} is available", rel.version));
+                let published = rel
+                    .published
+                    .as_deref()
+                    .map(|d| format!("Released {d}. "))
+                    .unwrap_or_default();
+                ui.label(egui::RichText::new(format!("{published}You have {current}.")).weak());
+            }
             ui.add_space(6.0);
-            ui.label(egui::RichText::new("What's new").strong());
+            ui.label(
+                egui::RichText::new(if withdrawn.is_some() {
+                    format!("GitKwaken {}", rel.version)
+                } else {
+                    "What's new".to_string()
+                })
+                .strong(),
+            );
             egui::Frame::new()
                 .fill(ui.visuals().extreme_bg_color)
                 .corner_radius(4.0)
@@ -261,14 +313,26 @@ impl Updater {
             }
             ui.add_space(8.0);
             ui.horizontal(|ui| {
+                if withdrawn.is_none()
+                    && ui
+                        .button("Skip this version")
+                        .on_hover_text("Don't offer this version again (a newer one will be)")
+                        .clicked()
+                {
+                    skip = true;
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("Not now").clicked() {
                         close = true;
                     }
-                    let b = egui::Button::new(
-                        egui::RichText::new("Install update").color(egui::Color32::WHITE),
-                    )
-                    .fill(ui.visuals().selection.bg_fill);
+                    let label = if withdrawn.is_some() {
+                        format!("Roll back to {}", rel.version)
+                    } else {
+                        "Install update".to_string()
+                    };
+                    let b =
+                        egui::Button::new(egui::RichText::new(label).color(egui::Color32::WHITE))
+                            .fill(ui.visuals().selection.bg_fill);
                     if ui.add(b).clicked() {
                         install = true;
                     }
@@ -281,8 +345,258 @@ impl Updater {
         if install {
             *self.asking.lock() = false;
             self.install(rel, ctx);
+        } else if skip {
+            *self.asking.lock() = false;
+            self.skip_version(&rel.version, settings);
         } else if close {
             *self.asking.lock() = false;
+        }
+    }
+
+    /// Stops offering `version` (until a newer one is out).
+    fn skip_version(&self, version: &str, settings: &mut gk_settings::Settings) {
+        settings.skipped_version = version.to_string();
+        *self.skip.lock() = version.to_string();
+        let mut s = self.state.lock();
+        if matches!(&*s, State::Available(r) if r.version == version) {
+            *s = State::Idle;
+        }
+    }
+
+    /// Help › Install another version…: lists the published releases.
+    pub fn open_versions(&self, ctx: &egui::Context) {
+        let Some(url) = self.url.clone() else {
+            *self.state.lock() = State::Failed("This build has no update channel".into());
+            return;
+        };
+        let mut v = self.versions.lock();
+        *v = Versions {
+            open: true,
+            skip_newer: true,
+            ..Default::default()
+        };
+        drop(v);
+        let versions = self.versions.clone();
+        let c = ctx.clone();
+        std::thread::spawn(move || {
+            let r = gk_update::list_releases(&url).map_err(|e| format!("{e:#}"));
+            versions.lock().list = Some(r);
+            c.request_repaint();
+        });
+    }
+
+    fn select_version(&self, i: usize, ctx: &egui::Context) {
+        let mut v = self.versions.lock();
+        let Some(Ok(list)) = &v.list else { return };
+        let Some(item) = list.get(i).cloned() else {
+            return;
+        };
+        v.selected = Some(i);
+        v.detail = None;
+        drop(v);
+        let versions = self.versions.clone();
+        let c = ctx.clone();
+        std::thread::spawn(move || {
+            let r = gk_update::fetch_manifest(&item.manifest_url)
+                .and_then(|rel| gk_update::method(&rel).map(|_| rel))
+                .map_err(|e| format!("{e:#}"));
+            let mut v = versions.lock();
+            if v.selected == Some(i) {
+                v.detail = Some((i, r));
+            }
+            c.request_repaint();
+        });
+    }
+
+    /// The "Install another version" dialog: releases newest first, the selected one's
+    /// changelog, Install. Going back to an older version can also skip the newer one.
+    fn versions_dialog(&self, ctx: &egui::Context, settings: &mut gk_settings::Settings) {
+        if !self.versions.lock().open {
+            return;
+        }
+        let current = env!("CARGO_PKG_VERSION");
+        let mut pick: Option<usize> = None;
+        let mut install: Option<Release> = None;
+        let mut close = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        let busy = matches!(
+            *self.state.lock(),
+            State::Downloading(..) | State::Installing | State::Ready(_)
+        );
+        let modal = egui::Modal::new(egui::Id::new("update-versions")).show(ctx, |ui| {
+            let mut v = self.versions.lock();
+            ui.set_width(640.0);
+            ui.heading("Install another version");
+            ui.label(
+                egui::RichText::new(format!(
+                    "You have {current}. Pick a release to install, for example to go back \
+                     after an update that went wrong."
+                ))
+                .weak(),
+            );
+            ui.add_space(6.0);
+            let list = match &v.list {
+                None => {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label("Loading releases…");
+                    });
+                    None
+                }
+                Some(Err(e)) => {
+                    ui.colored_label(ui.visuals().error_fg_color, e);
+                    None
+                }
+                Some(Ok(list)) => Some(list.clone()),
+            };
+            if let Some(list) = list {
+                let latest = list
+                    .iter()
+                    .find(|l| !l.prerelease && !l.withdrawn)
+                    .map(|l| l.version.clone());
+                ui.horizontal_top(|ui| {
+                    // Left: versions.
+                    ui.vertical(|ui| {
+                        ui.set_width(200.0);
+                        egui::ScrollArea::vertical()
+                            .id_salt("versions-list")
+                            .max_height(320.0)
+                            .show(ui, |ui| {
+                                for (i, l) in list.iter().enumerate() {
+                                    let mut text = format!("{}   {}", l.version, l.published);
+                                    if l.version == current {
+                                        text.push_str("   (installed)");
+                                    } else if latest.as_deref() == Some(l.version.as_str()) {
+                                        text.push_str("   (latest)");
+                                    }
+                                    if l.withdrawn {
+                                        text.push_str("   (withdrawn)");
+                                    } else if l.prerelease && l.version != current {
+                                        text.push_str("   (pre-release)");
+                                    }
+                                    if ui.selectable_label(v.selected == Some(i), text).clicked() {
+                                        pick = Some(i);
+                                    }
+                                }
+                            });
+                    });
+                    ui.add_space(12.0);
+                    // Right: the selected release.
+                    ui.vertical(|ui| {
+                        let Some(i) = v.selected else {
+                            ui.label(egui::RichText::new("Select a version.").weak());
+                            return;
+                        };
+                        let l = &list[i];
+                        ui.label(egui::RichText::new(format!("GitKwaken {}", l.version)).strong());
+                        if l.withdrawn {
+                            let why = if l.reason.is_empty() {
+                                String::new()
+                            } else {
+                                format!(": {}", l.reason)
+                            };
+                            ui.colored_label(ui.visuals().warn_fg_color, format!("Withdrawn{why}"));
+                        }
+                        let detail = v.detail.clone();
+                        match &detail {
+                            Some((di, Ok(rel))) if *di == i => {
+                                egui::Frame::new()
+                                    .fill(ui.visuals().extreme_bg_color)
+                                    .corner_radius(4.0)
+                                    .inner_margin(8.0)
+                                    .show(ui, |ui| {
+                                        egui::ScrollArea::vertical()
+                                            .id_salt("versions-notes")
+                                            .max_height(240.0)
+                                            .auto_shrink([false, true])
+                                            .show(ui, |ui| changelog_ui(ui, &rel.notes));
+                                    });
+                                let older =
+                                    gk_update::is_newer(&rel.version, current).unwrap_or(false);
+                                if older {
+                                    ui.label(
+                                        egui::RichText::new(
+                                            "Older than the installed version. Settings and \
+                                             repositories are kept.",
+                                        )
+                                        .weak(),
+                                    );
+                                    if let Some(newest) = latest.as_deref()
+                                        && newest != rel.version
+                                    {
+                                        ui.checkbox(
+                                            &mut v.skip_newer,
+                                            format!("Don't offer {newest} again"),
+                                        );
+                                    }
+                                }
+                                ui.add_space(4.0);
+                                let same = rel.version == current;
+                                let label = if same {
+                                    "Reinstall".to_string()
+                                } else {
+                                    format!("Install {}", rel.version)
+                                };
+                                let b = egui::Button::new(
+                                    egui::RichText::new(label).color(egui::Color32::WHITE),
+                                )
+                                .fill(ui.visuals().selection.bg_fill);
+                                if ui
+                                    .add_enabled(!busy, b)
+                                    .on_disabled_hover_text("An update is already in progress")
+                                    .clicked()
+                                {
+                                    install = Some(rel.clone());
+                                }
+                            }
+                            Some((di, Err(e))) if *di == i => {
+                                ui.colored_label(ui.visuals().error_fg_color, e);
+                            }
+                            _ => {
+                                ui.spinner();
+                            }
+                        }
+                    });
+                });
+            }
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Close").clicked() {
+                        close = true;
+                    }
+                });
+            });
+        });
+        if modal.should_close() {
+            close = true;
+        }
+        if let Some(i) = pick {
+            self.select_version(i, ctx);
+        }
+        if let Some(rel) = install {
+            let (skip_newer, newest) = {
+                let v = self.versions.lock();
+                let newest = match &v.list {
+                    Some(Ok(list)) => list
+                        .iter()
+                        .find(|l| !l.prerelease && !l.withdrawn)
+                        .map(|l| l.version.clone()),
+                    _ => None,
+                };
+                (v.skip_newer, newest)
+            };
+            if skip_newer
+                && gk_update::is_newer(&rel.version, current).unwrap_or(false)
+                && let Some(newest) = newest
+                && newest != rel.version
+            {
+                self.skip_version(&newest, settings);
+            }
+            close = true;
+            self.install(rel, ctx);
+        }
+        if close {
+            self.versions.lock().open = false;
         }
     }
 
@@ -309,6 +623,22 @@ impl Updater {
                     .button(format!("⬆ Update to {}", rel.version))
                     .on_hover_text("See what's new and install");
                 if b.clicked() {
+                    *self.asking.lock() = true;
+                }
+            }
+            State::Withdrawn(rel, reason) => {
+                let text = egui::RichText::new(format!("⚠ Roll back to {}", rel.version))
+                    .color(egui::Color32::BLACK);
+                let b = egui::Button::new(text).fill(egui::Color32::from_rgb(0xE8, 0xA7, 0x3D));
+                let tip = if reason.is_empty() {
+                    format!("GitKwaken {} was withdrawn", env!("CARGO_PKG_VERSION"))
+                } else {
+                    format!(
+                        "GitKwaken {} was withdrawn: {reason}",
+                        env!("CARGO_PKG_VERSION")
+                    )
+                };
+                if ui.add(b).on_hover_text(tip).clicked() {
                     *self.asking.lock() = true;
                 }
             }
@@ -416,18 +746,48 @@ fn rich_line(ui: &mut egui::Ui, text: &str) {
     }
 }
 
+/// What a check of the channel found for the running `current` version.
+enum Found {
+    Newer(Release),
+    /// `current` was withdrawn; the release is the newest good one, the `String` the reason.
+    Withdrawn(Release, String),
+    Nothing,
+}
+
+/// The channel's release is newer: offered, unless skipped (background checks only) or not
+/// installable here (e.g. no Linux build in it). It is older: then `current` is a release that
+/// was withdrawn after it went out (the channel moved back to the previous one) when the
+/// release list says so, and the channel's release is the way back.
+fn find(url: &str, current: &str, report: bool, skip: &Mutex<String>) -> anyhow::Result<Found> {
+    let latest = gk_update::fetch_manifest(url)?;
+    if gk_update::is_newer(current, &latest.version)? {
+        if !report && *skip.lock() == latest.version {
+            return Ok(Found::Nothing);
+        }
+        gk_update::method(&latest)?;
+        return Ok(Found::Newer(latest));
+    }
+    if gk_update::is_newer(&latest.version, current)? {
+        // Only GitHub channels list releases; elsewhere there is nothing to tell.
+        if let Ok(list) = gk_update::list_releases(url)
+            && let Some(me) = list.iter().find(|l| l.version == current && l.withdrawn)
+            && gk_update::method(&latest).is_ok()
+        {
+            return Ok(Found::Withdrawn(latest, me.reason.clone()));
+        }
+    }
+    Ok(Found::Nothing)
+}
+
 /// Checks the channel at `url`. A manual check (`report`) always shows its outcome; a
 /// background one only announces a newer release, and only while nothing else is going on.
-fn check(url: &str, state: &Mutex<State>, ctx: &egui::Context, report: bool) {
-    // A release this installation cannot take (e.g. no Linux build in it) is not offered.
-    let r = gk_update::check(env!("CARGO_PKG_VERSION"), url).and_then(|rel| match rel {
-        Some(rel) => gk_update::method(&rel).map(|_| Some(rel)),
-        None => Ok(None),
-    });
+fn check(url: &str, state: &Mutex<State>, ctx: &egui::Context, report: bool, skip: &Mutex<String>) {
+    let r = find(url, env!("CARGO_PKG_VERSION"), report, skip);
     let mut s = state.lock();
     let next = match r {
-        Ok(Some(rel)) if report || s.quiet() => State::Available(rel),
-        Ok(None) if report => State::UpToDate,
+        Ok(Found::Newer(rel)) if report || s.quiet() => State::Available(rel),
+        Ok(Found::Withdrawn(rel, why)) if report || s.quiet() => State::Withdrawn(rel, why),
+        Ok(Found::Nothing) if report => State::UpToDate,
         Err(e) if report => State::Failed(format!("{e:#}")),
         _ => return,
     };

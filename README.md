@@ -16,9 +16,16 @@ background threads, so the UI never blocks on the repository.
 > copied from other projects; third-party code is used only as normal dependencies under their
 > own licenses (see [Third-party software](#third-party-software)).
 
-> Status: 1.0.3. Windows is the primary target. Linux x86_64 releases use an `eframe`/wgpu
+> Status: 1.0.4. Windows is the primary target. Linux x86_64 releases use an `eframe`/wgpu
 > renderer instead of Direct3D (launch-tested in CI under Xvfb on Ubuntu and Arch; see
 > [Linux](#linux-x86_64)). macOS builds through the same fallback but is only compile-checked.
+
+![History](docs/screenshots/history-dark.png)
+
+<p>
+  <img src="docs/screenshots/file-status-dark.png" width="49%" alt="File Status">
+  <img src="docs/screenshots/history-light.png" width="49%" alt="History, light theme">
+</p>
 
 ## Features
 
@@ -140,6 +147,25 @@ Limits on Linux:
   with Mesa software rendering on Ubuntu 22.04 and on Arch Linux (installed through the
   PKGBUILD). It has not had the hands-on testing the Windows build has had; please report
   problems with your desktop (GNOME/KDE, X11/Wayland) and GPU driver.
+
+## Updates and going back
+
+GitKwaken checks the latest GitHub release at startup and every 6 hours. A newer one shows a
+button in the tab bar (and Help › Install update): it opens the release's changelog with
+*Install update*, *Not now* and *Skip this version*.
+
+- **Install another version** (Help): lists every release with its changelog; any of them can
+  be installed, older ones included, e.g. to go back after an update that went wrong. Going
+  back can also skip the newer release so it is not offered again.
+- **Withdrawing a bad release** (maintainers): run the *Withdraw release* workflow
+  (Actions › Withdraw release) with the version and a reason. The release is marked
+  "(withdrawn)" and as a pre-release, and the update channel goes back to the newest good
+  release, so nobody is offered the bad one any more. Installations already running it
+  (1.0.4 and later) show *⚠ Roll back to &lt;good version&gt;* with the reason. Running the
+  workflow with *restore* undoes it.
+
+Release notes come from [CHANGELOG.md](CHANGELOG.md): the release workflow copies the
+`## <version>` section into the update channel and the GitHub release.
 
 ## Building
 

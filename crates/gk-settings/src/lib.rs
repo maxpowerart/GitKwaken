@@ -50,6 +50,9 @@ pub struct Settings {
     /// Update manifest URL; empty means the built-in release channel.
     pub update_url: String,
     pub check_updates: bool,
+    /// A release the user chose not to be offered (update dialog › Skip this version, or
+    /// going back to an older version); a newer one is offered again.
+    pub skipped_version: String,
     pub external_diff_tool: Option<ExternalTool>,
     pub external_merge_tool: Option<ExternalTool>,
     pub terminal: Option<ExternalTool>,
@@ -85,6 +88,7 @@ impl Default for Settings {
             git_path: None,
             update_url: String::new(),
             check_updates: true,
+            skipped_version: String::new(),
             external_diff_tool: None,
             external_merge_tool: None,
             terminal: None,
