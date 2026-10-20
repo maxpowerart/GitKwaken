@@ -946,16 +946,33 @@ fn paint_row(ui: &Ui, cx: &Cx, rect: Rect, depth: u8, hovered: bool, mut look: L
         if let Some((_, c)) = &mut look.icon {
             *c = cx.pal.on_accent;
         }
-    } else if hovered {
-        p.rect_filled(
-            rect,
-            2.0,
-            ui.visuals()
+        // Status colors (green ahead, orange behind…) vanish on the accent; the arrows and
+        // words still tell them apart.
+        for (_, c) in &mut look.badges {
+            *c = cx.pal.on_accent;
+        }
+    } else {
+        let base = ui.visuals().panel_fill;
+        let row_bg = if hovered {
+            let fill = ui
+                .visuals()
                 .widgets
                 .hovered
                 .weak_bg_fill
-                .gamma_multiply(0.6),
-        );
+                .gamma_multiply(0.6);
+            p.rect_filled(rect, 2.0, fill);
+            crate::contrast::over(fill, base)
+        } else {
+            base
+        };
+        // Every color keeps its meaning but reads on the row, hovered or not.
+        look.color = crate::contrast::text_on(look.color, row_bg);
+        if let Some((_, c)) = &mut look.icon {
+            *c = crate::contrast::secondary_on(*c, row_bg);
+        }
+        for (_, c) in &mut look.badges {
+            *c = crate::contrast::secondary_on(*c, row_bg);
+        }
     }
     let y = rect.center().y;
     let k = cx.k;
@@ -1524,6 +1541,9 @@ fn row_ui(ui: &mut Ui, cx: &Cx, row: &Row, h: f32, cmds: &mut Vec<Cmd>) {
                 }
                 if menu_item(ui, true, "Branch from stash…") {
                     cmds.push(dialog(Dialog::stash_branch(idx)));
+                }
+                if menu_item(ui, true, "Rename…") {
+                    cmds.push(dialog(Dialog::stash_rename(idx)));
                 }
                 ui.separator();
                 if menu_item(ui, true, "Copy message") {

@@ -123,7 +123,12 @@ impl Palette {
             untracked: color(v.untracked),
             conflict: color(v.conflict),
             chrome: color(v.chrome),
-            accent: color(v.accent),
+            // The selected sidebar row: its text must read on it, whatever the style says.
+            accent: crate::contrast::fill_for(
+                color(v.accent),
+                color(v.on_accent),
+                crate::contrast::TEXT,
+            ),
             on_accent: color(v.on_accent),
         }
     }
@@ -391,10 +396,23 @@ pub fn apply_with(
     if let Some(c) = v.border {
         visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, color(c));
     }
+    // The style's text color goes to every widget state rather than egui's override, which
+    // would also paint it on selected toggles and pressed buttons, readable or not; each
+    // state is then made readable on its own fill.
     if let Some(c) = v.text {
-        visuals.override_text_color = Some(color(c));
+        let w = &mut visuals.widgets;
+        for s in [
+            &mut w.noninteractive,
+            &mut w.inactive,
+            &mut w.hovered,
+            &mut w.active,
+            &mut w.open,
+        ] {
+            s.fg_stroke.color = color(c);
+        }
     }
     visuals.striped = true;
+    readable_visuals(&mut visuals);
     let theme = if dark {
         egui::Theme::Dark
     } else {
@@ -418,7 +436,124 @@ pub fn apply_with(
         s.spacing.item_spacing = egui::vec2(6.0, 4.0);
         s.spacing.button_padding = egui::vec2(6.0, 3.0);
     });
-    Palette::of(v, dark)
+    let mut palette = Palette::of(v, dark);
+    readable_palette(&mut palette, &ctx.style_of(theme).visuals);
+    palette
+}
+
+/// Palette colors drawn as text (secondary text, status and ref colors, diff signs and line
+/// numbers) pushed to readable contrast with the panels, list rows and diff lines they sit
+/// on, whatever a style sets.
+fn readable_palette(p: &mut Palette, v: &Visuals) {
+    use crate::contrast::{SECONDARY, over, readable};
+    let hover = v.widgets.hovered.weak_bg_fill;
+    let rows = [
+        v.panel_fill,
+        v.window_fill,
+        v.extreme_bg_color,
+        over(v.faint_bg_color, v.panel_fill),
+        over(hover.gamma_multiply(0.5), v.panel_fill),
+        over(hover.gamma_multiply(0.6), v.panel_fill),
+    ];
+    let mut lines = rows.to_vec();
+    for bg in [p.added_bg, p.removed_bg, p.hunk_bg] {
+        lines.push(over(bg, v.panel_fill));
+        lines.push(over(bg, v.extreme_bg_color));
+    }
+    let on_all = |c: Color32, bgs: &[Color32]| {
+        bgs.iter()
+            .fold(c, |c, bg| readable(c, *bg, SECONDARY + 0.3))
+    };
+    p.muted = on_all(p.muted, &lines);
+    p.added_fg = on_all(p.added_fg, &lines);
+    p.removed_fg = on_all(p.removed_fg, &lines);
+    for c in [
+        &mut p.modified,
+        &mut p.untracked,
+        &mut p.conflict,
+        &mut p.branch,
+        &mut p.remote,
+        &mut p.tag,
+        &mut p.head,
+        &mut p.stash,
+    ] {
+        *c = on_all(*c, &rows);
+    }
+}
+
+/// Text colors of egui's widgets pushed to readable contrast with what they are painted on,
+/// whatever a style sets: hints and secondary text, disabled items, links, and the text of
+/// buttons and menu items in every state (idle, hovered, pressed, open).
+fn readable_visuals(v: &mut Visuals) {
+    use crate::contrast::{SECONDARY, TEXT, over, ratio, readable};
+    // Panels, striped rows and hovered rows of the lists (their hover fills are the hovered
+    // widget fill at half strength).
+    let hover = v.widgets.hovered.weak_bg_fill;
+    let panels = vec![
+        v.panel_fill,
+        v.window_fill,
+        v.extreme_bg_color,
+        over(v.faint_bg_color, v.panel_fill),
+        over(hover.gamma_multiply(0.5), v.panel_fill),
+        over(hover.gamma_multiply(0.6), v.panel_fill),
+    ];
+    let on_all =
+        |c: Color32, min: f32, bgs: &[Color32]| bgs.iter().fold(c, |c, bg| readable(c, *bg, min));
+    if let Some(t) = v.override_text_color {
+        v.override_text_color = Some(on_all(t, TEXT, &panels));
+    }
+    // Hints, placeholders, column headers, menu shortcuts: weaker than text, still readable,
+    // also on a hovered or pressed menu item.
+    let mut weak_bgs = panels.to_vec();
+    for w in [&v.widgets.hovered, &v.widgets.active, &v.widgets.inactive] {
+        weak_bgs.push(over(w.weak_bg_fill, v.window_fill));
+        weak_bgs.push(over(w.weak_bg_fill, v.panel_fill));
+    }
+    v.weak_text_color = Some(on_all(v.weak_text_color(), SECONDARY + 0.6, &weak_bgs));
+    v.hyperlink_color = on_all(v.hyperlink_color, TEXT, &panels);
+    let w = &mut v.widgets;
+    for (state, base) in [
+        (&mut w.noninteractive, v.panel_fill),
+        (&mut w.inactive, v.panel_fill),
+        (&mut w.hovered, v.panel_fill),
+        (&mut w.active, v.panel_fill),
+        (&mut w.open, v.panel_fill),
+    ] {
+        let mut fills = vec![
+            over(state.weak_bg_fill, base),
+            over(state.bg_fill, base),
+            over(state.weak_bg_fill, v.window_fill),
+        ];
+        // Body text is the non-interactive color: it sits on every list row.
+        fills.extend_from_slice(&panels);
+        state.fg_stroke.color = on_all(state.fg_stroke.color, TEXT, &fills);
+    }
+    v.selection.stroke.color = readable(
+        v.selection.stroke.color,
+        over(v.selection.bg_fill, v.panel_fill),
+        TEXT,
+    );
+    // Disabled widgets fade their text by `disabled_alpha`: just enough to read on any
+    // button or panel.
+    let texts = [
+        v.override_text_color
+            .unwrap_or(v.widgets.inactive.fg_stroke.color),
+        v.override_text_color
+            .unwrap_or(v.widgets.noninteractive.fg_stroke.color),
+    ];
+    let mut bgs = panels.clone();
+    bgs.push(over(v.widgets.inactive.weak_bg_fill, v.panel_fill));
+    bgs.push(over(v.widgets.inactive.weak_bg_fill, v.window_fill));
+    let mut a = v.disabled_alpha.clamp(0.1, 1.0);
+    while a < 1.0
+        && texts.iter().any(|t| {
+            bgs.iter()
+                .any(|bg| ratio(over(t.gamma_multiply(a), *bg), *bg) < SECONDARY + 0.2)
+        })
+    {
+        a += 0.02;
+    }
+    v.disabled_alpha = a.min(1.0);
 }
 
 /// Body text size relative to the default 13 pt. Chrome drawn with fixed sizes (toolbar
@@ -495,6 +630,106 @@ pub fn apply_density(ctx: &egui::Context, density: Density) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Primary text reads at WCAG AA (4.5:1) on every surface it is drawn on, secondary text
+    /// and disabled items at 3:1, in the built-in styles and in a user style that gets its
+    /// colors badly wrong.
+    #[test]
+    fn every_style_keeps_text_readable() {
+        use crate::contrast::{SECONDARY, TEXT, over, ratio};
+        let dir = std::env::temp_dir().join(format!("gk-theme-contrast-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("ugly.toml"),
+            r##"name = "Ugly"
+[dark]
+panel = "#444444"
+text = "#666666"
+accent = "#7FD7CF"
+on_accent = "#FFFFFF"
+remote = "#D0C0FF"
+selection = "#5A5A5A"
+chrome = "#777777"
+[light]
+panel = "#BBBBBB"
+text = "#999999"
+accent = "#1A1A40"
+on_accent = "#000000"
+tag = "#FFE070"
+"##,
+        )
+        .unwrap();
+        for name in ["Kwak", "Classic", "Ugly"] {
+            let (style, err) = gk_settings::style::load_in(&dir, name);
+            assert!(err.is_none(), "{err:?}");
+            for theme in [gk_settings::Theme::Dark, gk_settings::Theme::Light] {
+                let ctx = egui::Context::default();
+                let p = apply_with(&ctx, theme, &style, 1.0, 13.0, 12.5);
+                let egui_theme = if p.dark {
+                    egui::Theme::Dark
+                } else {
+                    egui::Theme::Light
+                };
+                let v = ctx.style_of(egui_theme).visuals.clone();
+                let at = format!("{name} {theme:?}");
+                let check = |what: &str, fg: Color32, bg: Color32, min: f32| {
+                    let r = ratio(over(fg, bg), bg);
+                    assert!(r >= min, "{at}: {what} {fg:?} on {bg:?} = {r:.2}");
+                };
+                check("selected sidebar row", p.on_accent, p.accent, TEXT);
+                check(
+                    "chrome",
+                    crate::contrast::text_on(v.text_color(), p.chrome),
+                    p.chrome,
+                    TEXT,
+                );
+                let hover = v.widgets.hovered.weak_bg_fill;
+                for (surface, bg) in [
+                    ("panel", v.panel_fill),
+                    ("window", v.window_fill),
+                    ("striped row", over(v.faint_bg_color, v.panel_fill)),
+                    ("hovered row", over(hover.gamma_multiply(0.5), v.panel_fill)),
+                ] {
+                    check(surface, v.text_color(), bg, TEXT);
+                    check(surface, v.weak_text_color(), bg, SECONDARY);
+                    check(surface, v.disable(v.text_color()), bg, SECONDARY);
+                }
+                for (state, w) in [
+                    ("idle button", &v.widgets.inactive),
+                    ("hovered button", &v.widgets.hovered),
+                    ("pressed button", &v.widgets.active),
+                ] {
+                    check(
+                        state,
+                        w.fg_stroke.color,
+                        over(w.weak_bg_fill, v.panel_fill),
+                        TEXT,
+                    );
+                }
+                // Rows painted on the selection get their colors through `text_on`.
+                for sel in [p.selection, p.selection.gamma_multiply(0.6)] {
+                    let bg = over(sel, v.panel_fill);
+                    check(
+                        "selected row",
+                        crate::contrast::text_on(v.text_color(), bg),
+                        bg,
+                        TEXT,
+                    );
+                    check(
+                        "selected row, secondary",
+                        crate::contrast::secondary_on(p.muted, bg),
+                        bg,
+                        SECONDARY,
+                    );
+                }
+                for c in [p.branch, p.remote, p.tag, p.head, p.stash] {
+                    let (fill, ink) = crate::views::history::table::chip_colors(c);
+                    check("ref chip", ink, fill, TEXT);
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn compact_density_keeps_the_classic_look() {

@@ -468,16 +468,21 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
                     }
                     let selected = ls.selected.contains(path);
                     let is_cursor = ls.cursor.as_deref() == Some(path.as_str());
-                    if selected {
+                    let base = ui.visuals().panel_fill;
+                    let row_bg = if selected {
                         let fill = if c.active {
                             p.selection
                         } else {
                             p.selection.gamma_multiply(0.5)
                         };
                         painter.rect_filled(rect, 0.0, fill);
+                        crate::contrast::over(fill, base)
                     } else if resp.hovered() {
                         painter.rect_filled(rect, 0.0, hover_fill);
-                    }
+                        crate::contrast::over(hover_fill, base)
+                    } else {
+                        base
+                    };
                     if is_cursor && vis.contains(rect.center()) {
                         menu_pos = Some(pos2(rect.left() + 30.0, rect.bottom()));
                     }
@@ -497,6 +502,12 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
                             col
                         }
                     };
+                    // Pending files fade, but every text still reads on the row.
+                    let name_color = if pending {
+                        crate::contrast::secondary_on(dim(strong), row_bg)
+                    } else {
+                        crate::contrast::text_on(strong, row_bg)
+                    };
                     let mut x = rect.left()
                         + 4.0
                         + *depth as f32 * INDENT * k
@@ -509,15 +520,16 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
                         pos2(x, cy),
                         e.kind,
                         dim(crate::util::status_color(&p, e.kind)),
+                        row_bg,
                         p.dark,
                         k,
                     );
                     x += 20.0 * k;
                     let (dir, name) = crate::views::diff::split_path(path);
                     let clip = painter.with_clip_rect(rect.intersect(vis));
-                    let g = clip.layout_no_wrap(name.to_string(), body_font.clone(), dim(strong));
+                    let g = clip.layout_no_wrap(name.to_string(), body_font.clone(), name_color);
                     let w = g.size().x;
-                    clip.galley(pos2(x, cy - g.size().y / 2.0), g, strong);
+                    clip.galley(pos2(x, cy - g.size().y / 2.0), g, name_color);
                     x += w + 6.0;
                     let mut extra = String::new();
                     if !c.tree && !dir.is_empty() {
@@ -532,7 +544,7 @@ pub fn show(ui: &mut Ui, ls: &mut ListState, c: &ListCtx, out: &mut Vec<Ev>) {
                             Align2::LEFT_CENTER,
                             extra,
                             body_font.clone(),
-                            dim(p.muted),
+                            crate::contrast::secondary_on(dim(p.muted), row_bg),
                         );
                     }
                     if resp.double_clicked() && matches!(e.kind, Kind::Conflict(_)) {

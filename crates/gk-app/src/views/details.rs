@@ -507,18 +507,23 @@ fn files_and_diff(
                         ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::click());
                     let selected = current == Some(i);
                     let p = ui.painter();
-                    if selected {
-                        p.rect_filled(rect, 0.0, shared.palette.selection);
+                    let fill = if selected {
+                        Some(shared.palette.selection)
                     } else if resp.hovered() {
-                        p.rect_filled(
-                            rect,
-                            0.0,
+                        Some(
                             ui.visuals()
                                 .widgets
                                 .hovered
                                 .weak_bg_fill
                                 .gamma_multiply(0.5),
-                        );
+                        )
+                    } else {
+                        None
+                    };
+                    let base = ui.visuals().panel_fill;
+                    let row_bg = fill.map_or(base, |c| crate::contrast::over(c, base));
+                    if let Some(c) = fill {
+                        p.rect_filled(rect, 0.0, c);
                     }
                     table::text_at(
                         p,
@@ -526,14 +531,15 @@ fn files_and_diff(
                         rect.center().y,
                         f.kind.code().to_string(),
                         &mono,
-                        kind_color(f.kind, &shared.palette),
+                        crate::contrast::text_on(kind_color(f.kind, &shared.palette), row_bg),
                     );
                     let text = match &f.old_path {
                         Some(o) => format!("{o} → {}", f.path),
                         None => f.path.clone(),
                     };
                     let cell = Rect::from_min_max(pos2(rect.left() + 16.0, rect.top()), rect.max);
-                    table::cell_text(p, cell, text, &font, text_color);
+                    let color = crate::contrast::text_on(text_color, row_bg);
+                    table::cell_text(p, cell, text, &font, color);
                     if resp.clicked() {
                         st.selected_file = Some(f.path.clone());
                     }

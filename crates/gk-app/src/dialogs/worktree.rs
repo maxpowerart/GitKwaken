@@ -563,6 +563,81 @@ impl TabDialog for StashBranch {
     }
 }
 
+pub struct StashRename {
+    stash: StashRef,
+    /// None until the stash's current message has been read.
+    message: Option<String>,
+}
+
+impl StashRename {
+    pub fn new(index: usize) -> Self {
+        Self {
+            stash: StashRef::new(index),
+            message: None,
+        }
+    }
+}
+
+impl TabDialog for StashRename {
+    fn show(
+        &mut self,
+        ctx: &Context,
+        tab: &mut RepoTab,
+        snap: &Snapshot,
+        _shared: &mut Shared,
+    ) -> bool {
+        let label = self.stash.label(snap);
+        if self.message.is_none() {
+            let id = self.stash.id();
+            self.message = snap
+                .refs
+                .stashes
+                .iter()
+                .find(|s| s.id == id)
+                .map(|s| gk_core::ops::stash_message(&s.message).to_string());
+        }
+        let message = self.message.get_or_insert_with(String::new);
+        let (out, ()) = modal(
+            ctx,
+            "stash-rename",
+            "Rename stash",
+            480.0,
+            "Rename",
+            |ui, ctl| {
+                match &label {
+                    Some(l) => {
+                        ui.label(RichText::new(l).strong());
+                    }
+                    None => {
+                        error(ui, "The stash no longer exists.");
+                        ctl.invalid();
+                    }
+                }
+                ui.horizontal(|ui| {
+                    ui.label("Message:");
+                    let r = ui.add(egui::TextEdit::singleline(message).desired_width(320.0));
+                    ctl.focus(&r);
+                });
+                hint(
+                    ui,
+                    "Keeps the stash's place in the list and the branch it was made on.",
+                );
+                if message.trim().is_empty() {
+                    ctl.invalid();
+                }
+            },
+        );
+        finish(out, || {
+            let id = self.stash.id();
+            let message = self.message.clone().unwrap_or_default();
+            tab.session.run_op("Rename stash", move |repo, _, _| {
+                repo.stash_rename(stash_index(repo, &id)?, &message)?;
+                Ok(String::new())
+            });
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

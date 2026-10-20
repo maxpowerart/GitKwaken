@@ -369,7 +369,15 @@ impl Running {
         let app = &mut self.app;
         let ui_start = std::time::Instant::now();
         let output = ctx.run_ui(input, |ui| app.ui(ui));
-        frame_stats(ui_start.elapsed());
+        let ui_time = ui_start.elapsed();
+        frame_stats(ui_time);
+        let uploads: (usize, usize) = output
+            .textures_delta
+            .set
+            .iter()
+            .fold((0, 0), |(n, px), (_, d)| {
+                (n + 1, px + d.image.width() * d.image.height())
+            });
         if scripted || std::env::var_os("GK_DX11_SCREENSHOT").is_some() {
             // Keep frames coming while a script runs or a screenshot is pending.
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -400,7 +408,10 @@ impl Running {
         }
         let clear = self.app.clear_color();
         let gfx = self.gfx.as_mut().expect("gfx recreated above");
-        match gfx.frame(ctx, r_out, clear, [size.width, size.height], self.vsync) {
+        let gfx_start = std::time::Instant::now();
+        let presented = gfx.frame(ctx, r_out, clear, [size.width, size.height], self.vsync);
+        hitch_log(ui_time, gfx_start.elapsed(), gfx.last_times, uploads);
+        match presented {
             Ok(gfx::Presented::Shown) => self.gfx_failures = 0,
             Ok(gfx::Presented::Occluded) => {
                 self.gfx_failures = 0;
@@ -505,6 +516,49 @@ fn hwnd_of(window: &Window) -> Result<HWND> {
     match window.window_handle()?.as_raw() {
         RawWindowHandle::Win32(h) => Ok(HWND(h.hwnd.get() as _)),
         other => Err(anyhow!("unexpected window handle {other:?}")),
+    }
+}
+
+/// `GK_DX11_HITCH_LOG=<file>` appends one line per slow frame (UI build plus render and
+/// present over 20 ms, or more than 50 ms since the previous frame): what took the time and
+/// the texture uploads (count, pixels) of that frame. For hunting stutters.
+fn hitch_log(
+    ui: Duration,
+    gfx: Duration,
+    (draw, present): (Duration, Duration),
+    uploads: (usize, usize),
+) {
+    use std::sync::Mutex;
+    static STATE: Mutex<Option<(Instant, Instant)>> = Mutex::new(None);
+    let Some(path) = std::env::var_os("GK_DX11_HITCH_LOG") else {
+        return;
+    };
+    let now = Instant::now();
+    let mut guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    let (start, last) = *guard.get_or_insert((now, now));
+    *guard = Some((start, now));
+    let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+    let interval = ms(now - last);
+    if ms(ui + gfx) < 20.0 && interval < 50.0 {
+        return;
+    }
+    let line = format!(
+        "t={:.3}s interval_ms={interval:.1} ui_ms={:.1} render_present_ms={:.1} (draw {:.1}, present {:.1}) uploads={} upload_px={}\n",
+        (now - start).as_secs_f64(),
+        ms(ui),
+        ms(gfx),
+        ms(draw),
+        ms(present),
+        uploads.0,
+        uploads.1
+    );
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        use std::io::Write;
+        let _ = f.write_all(line.as_bytes());
     }
 }
 

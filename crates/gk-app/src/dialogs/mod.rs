@@ -156,6 +156,9 @@ impl Dialog {
     pub fn stash_branch(index: usize) -> Self {
         Self::new(worktree::StashBranch::new(index))
     }
+    pub fn stash_rename(index: usize) -> Self {
+        Self::new(worktree::StashRename::new(index))
+    }
 
     // tags
     pub fn tag(rev: Option<String>) -> Self {
@@ -382,6 +385,7 @@ pub fn debug_open(spec: &str, snap: &Snapshot) -> Option<Dialog> {
         "stash-apply" => Dialog::stash_apply(stash()),
         "stash-drop" => Dialog::stash_drop(stash()),
         "stash-branch" => Dialog::stash_branch(stash()),
+        "stash-rename" => Dialog::stash_rename(stash()),
         "tag" => Dialog::tag(arg.clone()),
         "delete-tag" => Dialog::delete_tag(tag()),
         "push-tag" => Dialog::push_tag(tag()),

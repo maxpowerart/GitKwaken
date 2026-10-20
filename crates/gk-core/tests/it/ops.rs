@@ -809,6 +809,49 @@ fn stash_push_apply_pop_drop() {
 }
 
 #[test]
+fn stash_rename_keeps_order_branch_and_contents() {
+    let t = TestRepo::new();
+    t.commit_file("a.txt", "a\n", "init");
+    for (text, msg) in [("1\n", "first"), ("2\n", ""), ("3\n", "third")] {
+        t.write("a.txt", text);
+        t.repo
+            .stash_push(msg, &StashOptions::default(), &[])
+            .unwrap();
+    }
+    let before = refs::load(&t.repo).unwrap().stashes;
+    let ids: Vec<String> = before.iter().map(|s| s.id.clone()).collect();
+    let branch = t.git(&["rev-parse", "--abbrev-ref", "HEAD"]);
+    let branch = branch.trim();
+
+    // The middle one (made without a message: "WIP on <branch>: <id> init").
+    t.repo.stash_rename(1, "  renamed  ").unwrap();
+    let after = refs::load(&t.repo).unwrap().stashes;
+    assert_eq!(
+        after.iter().map(|s| s.id.clone()).collect::<Vec<_>>(),
+        ids,
+        "same stashes, same order"
+    );
+    assert_eq!(after[1].message, format!("On {branch}: renamed"));
+    assert_eq!(after[0].message, before[0].message);
+    assert_eq!(after[2].message, before[2].message);
+    // The renamed stash still holds its change.
+    t.repo.stash_apply(1, false, false).unwrap();
+    assert_eq!(t.read("a.txt"), "2\n");
+    t.git(&["checkout", "--", "a.txt"]);
+
+    // The top one, twice; prefix editing helpers agree.
+    t.repo.stash_rename(0, "top").unwrap();
+    let top = &refs::load(&t.repo).unwrap().stashes[0];
+    assert_eq!(top.message, format!("On {branch}: top"));
+    assert_eq!(stash_message(&top.message), "top");
+    assert_eq!(renamed_stash_subject("custom", "x"), "x");
+
+    assert!(t.repo.stash_rename(0, "   ").is_err());
+    assert!(t.repo.stash_rename(9, "nope").is_err());
+    assert_eq!(refs::load(&t.repo).unwrap().stashes.len(), 3);
+}
+
+#[test]
 fn stash_keep_index_and_restore_index() {
     let t = TestRepo::new();
     t.commit_file("a.txt", "a\n", "init");

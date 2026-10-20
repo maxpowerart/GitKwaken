@@ -3,24 +3,12 @@
 //! dark theme and white in the light one, on every status; fills too dark or too light for it
 //! are adjusted so it always reads.
 
+use crate::contrast::luminance;
 use egui::{Color32, FontFamily, FontId, Painter, Pos2, Rect, vec2};
 use gk_status::Kind;
 
 /// Letter color in the dark theme (white in the light one).
 const LETTER: Color32 = Color32::from_rgb(0x16, 0x18, 0x1C);
-
-/// WCAG relative luminance of `c`.
-fn luminance(c: Color32) -> f32 {
-    let lin = |v: u8| {
-        let v = v as f32 / 255.0;
-        if v <= 0.04045 {
-            v / 12.92
-        } else {
-            ((v + 0.055) / 1.055).powf(2.4)
-        }
-    };
-    0.2126 * lin(c.r()) + 0.7152 * lin(c.g()) + 0.0722 * lin(c.b())
-}
 
 /// Fill and letter colors of a badge in `color`: a dark letter in the dark theme, a white one
 /// in the light theme. The fill is moved toward white (dark theme) or black (light theme),
@@ -49,9 +37,18 @@ pub fn badge_colors(color: Color32, dark: bool) -> (Color32, Color32) {
     (c, letter)
 }
 
-/// Paints the badge of `kind` in `color` (dimmed colors, e.g. a pending file, stay dimmed) with
-/// its left edge at `left_center`; `k` is the text scale.
-pub fn paint(p: &Painter, left_center: Pos2, kind: Kind, color: Color32, dark: bool, k: f32) {
+/// Paints the badge of `kind` in `color` with its left edge at `left_center` on a row whose
+/// (opaque) background is `bg`; `k` is the text scale. A dimmed color (a pending file) fades
+/// the badge into the row, its letter stays readable.
+pub fn paint(
+    p: &Painter,
+    left_center: Pos2,
+    kind: Kind,
+    color: Color32,
+    bg: Color32,
+    dark: bool,
+    k: f32,
+) {
     let side = 14.0 * k;
     let r = Rect::from_center_size(left_center + vec2(side / 2.0, 0.0), vec2(side, side));
     // A dimmed color: work on the opaque one, dim the result alike.
@@ -64,7 +61,8 @@ pub fn paint(p: &Painter, left_center: Pos2, kind: Kind, color: Color32, dark: b
     };
     let (fill, letter) = badge_colors(opaque, dark);
     let (fill, letter) = if a < 1.0 {
-        (fill.gamma_multiply(a), letter.gamma_multiply(a))
+        let fill = crate::contrast::over(fill.gamma_multiply(a), bg);
+        (fill, crate::contrast::text_on(letter, fill))
     } else {
         (fill, letter)
     };
@@ -83,10 +81,7 @@ mod tests {
 
     #[test]
     fn the_letter_reads_on_every_status_color() {
-        let contrast = |a: Color32, b: Color32| {
-            let (x, y) = (luminance(a), luminance(b));
-            (x.max(y) + 0.05) / (x.min(y) + 0.05)
-        };
+        let contrast = crate::contrast::ratio;
         for style in ["Kwak", "Classic"] {
             let (s, _) = gk_settings::style::load_in(std::path::Path::new(""), style);
             for (v, dark) in [(&s.dark, true), (&s.light, false)] {

@@ -56,6 +56,7 @@ pub(crate) enum StashCmd {
     Pop,
     Drop,
     Branch,
+    Rename,
 }
 
 /// What a palette entry (or a menu bar item, see `views::menubar`) does.
@@ -342,6 +343,7 @@ fn items(tab: Option<&RepoTab>, snap: Option<&Snapshot>, km: &keymap::Keymap) ->
             ("Pop", StashCmd::Pop),
             ("Drop", StashCmd::Drop),
             ("Branch from", StashCmd::Branch),
+            ("Rename", StashCmd::Rename),
         ] {
             add(
                 &format!("{verb} stash {name}…"),
@@ -658,6 +660,7 @@ pub(crate) fn execute(
                 StashCmd::Pop => Dialog::stash_pop(i),
                 StashCmd::Drop => Dialog::stash_drop(i),
                 StashCmd::Branch => Dialog::stash_branch(i),
+                StashCmd::Rename => Dialog::stash_rename(i),
             })
         }
         (Cmd::SubmoduleUpdate(p), Some(t), _) => crate::views::sidebar::update_submodule(t, p),

@@ -161,6 +161,12 @@ scripts/compare-clients.ps1              GitKwaken vs SourceGit/Fork vs git CLI
 scripts/fetch-corpus.sh [linux|chromium|lfs]
 ```
 
+Stutter hunting: `GK_DX11_HITCH_LOG=<file>` (Windows) appends one line per slow frame (UI
+build plus render over 20 ms, or more than 50 ms since the previous frame) with the UI build,
+draw and Present times and the texture uploads of that frame. Long Present waits with a fast
+UI build and draw mean the GPU was busy with another application (seen with a 3D editor on
+the same GPU: 100-400 ms stalls that vanish with `GK_DX11_WARP=1`), not GitKwaken's work.
+
 ## Object reader: gitoxide vs `git cat-file --batch`
 
 `gk-bench objects <dir> [n]` reads the first `n` objects of `git rev-list --objects --all`

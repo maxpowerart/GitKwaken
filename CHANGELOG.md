@@ -4,6 +4,17 @@ Each release's section is shown in GitKwaken's "update available" dialog and on 
 release page (the release workflow copies the `## <version>` section). Keep entries short and
 user-facing.
 
+## Unreleased
+
+- Readable everywhere: text on selected and hovered rows, ref labels, badges, menus,
+  disabled buttons and hints keeps WCAG contrast (4.5:1 for text, 3:1 for secondary text) in
+  every theme and style, your own styles included: colors that would not read are adjusted.
+  The selected sidebar row no longer hides the green/orange ahead/behind counts.
+- Commits that are only on a remote (fetched, not pulled yet) are shown faded in the history,
+  like in Fork.
+- Stashes can be renamed (sidebar or command palette: Rename…); the stash keeps its place
+  and branch.
+
 ## 1.0.4
 
 - New look, "Kwak": every icon is drawn by GitKwaken in one style taken from the logo (teal
