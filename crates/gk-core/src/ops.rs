@@ -688,6 +688,48 @@ impl Repo {
         Ok(())
     }
 
+    /// Renames `stash@{index}` to `message`, keeping its place in the list and its "On
+    /// <branch>:" prefix. Git cannot rename a stash: the entries down to it are dropped from
+    /// the stash list and stored back in the same order (the stash commits themselves do not
+    /// change). If storing fails, the remaining entries are still put back and the error names
+    /// any commit that could not be.
+    pub fn stash_rename(&self, index: usize, message: &str) -> Result<()> {
+        let message = message.trim();
+        anyhow::ensure!(!message.is_empty(), "the stash message is empty");
+        let list = self
+            .git()
+            .run(&["stash", "list", "--format=%H%x00%gs"])?
+            .stdout_str();
+        let entries: Vec<(String, String)> = list
+            .lines()
+            .filter_map(|l| {
+                let (id, subject) = l.split_once('\0')?;
+                Some((id.to_string(), subject.to_string()))
+            })
+            .collect();
+        anyhow::ensure!(index < entries.len(), "stash@{{{index}}} does not exist");
+        let mut keep = entries[..=index].to_vec();
+        keep[index].1 = renamed_stash_subject(&keep[index].1, message);
+        for _ in 0..=index {
+            self.git().run(&["stash", "drop", "-q", "stash@{0}"])?;
+        }
+        let mut lost = Vec::new();
+        let mut first_err = None;
+        for (id, subject) in keep.iter().rev() {
+            if let Err(e) = self.git().run(&["stash", "store", "-m", subject, id]) {
+                lost.push(id.clone());
+                first_err.get_or_insert(e);
+            }
+        }
+        match first_err {
+            None => Ok(()),
+            Some(e) => Err(e.context(format!(
+                "could not put back stash commits {} (recover with `git stash store <id>`)",
+                lost.join(", ")
+            ))),
+        }
+    }
+
     pub fn stash_branch(&self, index: usize, branch: &str) -> Result<()> {
         self.git()
             .run(&["stash", "branch", branch, &format!("stash@{{{index}}}")])?;
@@ -912,6 +954,28 @@ fn conflict_aware(out: gk_cli::Output) -> Result<String> {
         return Ok(text);
     }
     Err(anyhow!(text.trim().to_string()))
+}
+
+/// The branch prefix of a stash subject ("On main: " or "WIP on main: "), if any.
+fn stash_prefix(subject: &str) -> Option<(&str, &str)> {
+    let rest = subject
+        .strip_prefix("On ")
+        .or_else(|| subject.strip_prefix("WIP on "))?;
+    let (branch, message) = rest.split_once(": ")?;
+    (!branch.is_empty() && !branch.contains(' ')).then_some((branch, message))
+}
+
+/// The message of a stash subject without its "On <branch>:" prefix: what a rename edits.
+pub fn stash_message(subject: &str) -> &str {
+    stash_prefix(subject).map_or(subject, |(_, m)| m)
+}
+
+/// `subject` renamed to `message`, keeping the branch it was made on ("On <branch>: ").
+pub fn renamed_stash_subject(subject: &str, message: &str) -> String {
+    match stash_prefix(subject) {
+        Some((branch, _)) => format!("On {branch}: {message}"),
+        None => message.to_string(),
+    }
 }
 
 /// True when git output says an operation stopped on new conflicts. Failures

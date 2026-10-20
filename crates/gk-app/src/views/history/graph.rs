@@ -79,6 +79,8 @@ pub struct RowGraph<'a> {
     pub is_head: bool,
     pub bg: Color32,
     pub head_color: Color32,
+    /// Only on a remote (not pulled): node and its own lane drawn faded.
+    pub faded: bool,
 }
 
 pub fn paint_row(p: &Painter, g: &RowGraph) {
@@ -93,7 +95,11 @@ pub fn paint_row(p: &Painter, g: &RowGraph) {
         if e.from.max(e.to) >= MAX_LANES && e.from.min(e.to) >= MAX_LANES {
             continue;
         }
-        let stroke = Stroke::new(width, crate::theme::lane_color(e.color));
+        let mut lane = crate::theme::lane_color(e.color);
+        if g.faded && e.color == r.color {
+            lane = fade(lane, g.bg);
+        }
+        let stroke = Stroke::new(width, lane);
         match edge_seg(e, r.lane, g.rect, g.left, g.lane_w) {
             Seg::Line(pts) => {
                 p.line_segment(pts, stroke);
@@ -113,7 +119,10 @@ pub fn paint_row(p: &Painter, g: &RowGraph) {
         return;
     }
     let c = pos2(cx, g.rect.center().y);
-    let color = crate::theme::lane_color(r.color);
+    let mut color = crate::theme::lane_color(r.color);
+    if g.faded {
+        color = fade(color, g.bg);
+    }
     let radius = (g.lane_w * 0.3).clamp(3.0, g.rect.height() * 0.3);
     if g.is_head {
         p.circle_stroke(c, radius + 2.5, Stroke::new(1.5, g.head_color));
@@ -124,6 +133,12 @@ pub fn paint_row(p: &Painter, g: &RowGraph) {
     } else {
         p.circle_filled(c, radius, color);
     }
+}
+
+/// A lane color half faded into the background (commits not pulled yet), still visible.
+pub fn fade(c: Color32, bg: Color32) -> Color32 {
+    let faded = crate::contrast::over(c.gamma_multiply(0.45), bg);
+    crate::contrast::readable(faded, bg, 1.8)
 }
 
 /// When row `row` needs more lanes than fit in the (capped) graph column

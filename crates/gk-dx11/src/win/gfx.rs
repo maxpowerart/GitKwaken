@@ -37,6 +37,8 @@ pub struct Gfx {
     size: [u32; 2],
     /// Human-readable adapter / driver / feature level summary.
     pub info: String,
+    /// Time of the last frame spent drawing (tessellation, buffers, draw calls) and in Present.
+    pub last_times: (std::time::Duration, std::time::Duration),
 }
 
 impl Gfx {
@@ -79,6 +81,7 @@ impl Gfx {
             device,
             size: [size[0].max(1), size[1].max(1)],
             info,
+            last_times: Default::default(),
         })
     }
 
@@ -109,7 +112,9 @@ impl Gfx {
             }
         };
         unsafe { self.context.ClearRenderTargetView(&rtv, &clear) };
+        let t0 = std::time::Instant::now();
         self.renderer.render(&self.context, &rtv, ctx, output)?;
+        let drawn = t0.elapsed();
         if let Some(path) = super::script::take_shot().or_else(take_screenshot_request) {
             match self.capture() {
                 Ok(img) => {
@@ -123,7 +128,9 @@ impl Gfx {
             }
         }
 
+        let t1 = std::time::Instant::now();
         let hr = unsafe { self.swap_chain.Present(u32::from(vsync), DXGI_PRESENT(0)) };
+        self.last_times = (drawn, t1.elapsed());
         if hr == DXGI_STATUS_OCCLUDED {
             Ok(Presented::Occluded)
         } else {

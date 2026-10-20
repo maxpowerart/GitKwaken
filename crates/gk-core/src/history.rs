@@ -44,6 +44,29 @@ impl History {
         self.row_of.get(id).map(|r| *r as usize)
     }
 
+    /// Per display row: whether the commit is reachable from any of `tips` (e.g. HEAD and
+    /// the local branches; the rest exist only on remotes, not pulled yet). Parents always
+    /// come after their children in display order, so one pass over the rows does it.
+    pub fn reachable(&self, tips: &[ObjectId]) -> Vec<bool> {
+        let n = self.ids.len();
+        let mut seen = vec![false; n];
+        for t in tips {
+            if let Some(r) = self.row(t) {
+                seen[r] = true;
+            }
+        }
+        for row in 0..n.min(self.layout.rows.len()) {
+            if seen[row] {
+                for &p in self.layout.parents_of(row) {
+                    if let Some(s) = seen.get_mut(p as usize) {
+                        *s = true;
+                    }
+                }
+            }
+        }
+        seen
+    }
+
     /// Builds a history from commits already in display order. `parents(row)`
     /// gives the display rows of that row's parents ([`NONE`] when outside).
     pub fn from_rows<'a>(
@@ -569,5 +592,19 @@ mod tests {
         assert_eq!(h.len(), 3);
         assert_eq!(h.row(&ids[2]), Some(2));
         assert_eq!(h.layout.parents_of(0), &[1]);
+    }
+
+    #[test]
+    fn reachable_rows_follow_parents() {
+        // 0 (origin/main, not pulled) -> 2; 1 (main) -> 2 -> 3; 4 is a side root
+        // only a remote branch reaches, merged into 0.
+        let ids: Vec<ObjectId> = (0..5u8)
+            .map(|i| ObjectId::from_bytes_or_panic(&[i; 20]))
+            .collect();
+        let parents: Vec<Vec<u32>> = vec![vec![2, 4], vec![2], vec![3], vec![], vec![]];
+        let h = History::from_rows(ids.clone(), |r| &parents[r], Duration::ZERO);
+        assert_eq!(h.reachable(&[ids[1]]), vec![false, true, true, true, false]);
+        assert_eq!(h.reachable(&[ids[0], ids[1]]), vec![true; 5]);
+        assert_eq!(h.reachable(&[]), vec![false; 5]);
     }
 }

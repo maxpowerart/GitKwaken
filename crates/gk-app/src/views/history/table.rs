@@ -395,7 +395,8 @@ pub fn nav_keys(ui: &Ui) -> Vec<(egui::Key, bool)> {
     })
 }
 
-/// Background of a row: stripes, hover and selection.
+/// Background of a row: stripes, hover and selection. Returns the opaque color the row
+/// ends up with (for [`CellStyle::on`]).
 pub fn paint_row_bg(
     f: &ListFrame,
     row: usize,
@@ -404,9 +405,13 @@ pub fn paint_row_bg(
     focused: bool,
     palette: &Palette,
     v: &egui::Visuals,
-) {
-    if let Some(c) = row_bg(f, row, selected, focused, palette, v) {
-        f.painter.rect_filled(rect, 0.0, c);
+) -> Color32 {
+    match row_bg(f, row, selected, focused, palette, v) {
+        Some(c) => {
+            f.painter.rect_filled(rect, 0.0, c);
+            crate::contrast::over(c, v.panel_fill)
+        }
+        None => v.panel_fill,
     }
 }
 
@@ -540,7 +545,7 @@ pub fn paint_chip(
     if room < 16.0 {
         return x;
     }
-    let fg = chip_text_color(color);
+    let (color, fg) = chip_colors(color);
     let g = text_trunc(p, text, font.clone(), fg, room.min(220.0));
     let size = g.size();
     let rect = Rect::from_min_size(
@@ -559,6 +564,16 @@ pub fn paint_chip(
     }
     p.galley(pos2(rect.left() + 4.0, rect.top() + 1.0), g, fg);
     rect.right() + 4.0
+}
+
+/// Fill and text of a ref chip in `color`: [`chip_text_color`], with the fill adjusted (same
+/// hue) until the text reads at normal-text contrast.
+pub fn chip_colors(color: Color32) -> (Color32, Color32) {
+    let ink = chip_text_color(color);
+    (
+        crate::contrast::fill_for(color, ink, crate::contrast::TEXT),
+        ink,
+    )
 }
 
 /// White or near-black, whichever contrasts more with the chip `bg`
@@ -584,6 +599,7 @@ pub fn chip_text_color(bg: Color32) -> Color32 {
 }
 
 /// Style shared by all cells of a frame.
+#[derive(Clone)]
 pub struct CellStyle<'a> {
     pub font: FontId,
     pub small: FontId,
@@ -592,6 +608,29 @@ pub struct CellStyle<'a> {
     pub muted: Color32,
     pub palette: &'a Palette,
     pub settings: &'a gk_settings::HistorySettings,
+}
+
+impl CellStyle<'_> {
+    /// The style for a row painted on the opaque `bg` (selected, hovered, striped): text
+    /// and secondary text adjusted until they read on it.
+    pub fn on(&self, bg: Color32) -> Self {
+        Self {
+            text: crate::contrast::text_on(self.text, bg),
+            muted: crate::contrast::secondary_on(self.muted, bg),
+            ..self.clone()
+        }
+    }
+
+    /// A commit that is only on a remote (not pulled): text faded toward `bg` like Fork's,
+    /// still readable as secondary text.
+    pub fn faded(&self, bg: Color32) -> Self {
+        use crate::contrast::{over, secondary_on};
+        Self {
+            text: secondary_on(over(self.text.gamma_multiply(0.55), bg), bg),
+            muted: secondary_on(over(self.muted.gamma_multiply(0.7), bg), bg),
+            ..self.clone()
+        }
+    }
 }
 
 /// Paints description (chips + summary), date, author and short id of a commit row.

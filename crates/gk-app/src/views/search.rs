@@ -421,7 +421,7 @@ fn results_table(
         for r in range {
             let Some(cid) = key_at(r) else { continue };
             let rect = f.row_rect(r);
-            table::paint_row_bg(
+            let row_bg = table::paint_row_bg(
                 f,
                 r,
                 rect,
@@ -436,7 +436,7 @@ fn results_table(
                 f.painter,
                 rect,
                 &rects,
-                &st,
+                &st.on(row_bg),
                 &cid,
                 meta,
                 labels,

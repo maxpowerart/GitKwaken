@@ -94,15 +94,17 @@ fn paint_tool(ui: &mut Ui, compact: bool, t: &Tool, sense: Sense) -> egui::Respo
             t.badge.to_string()
         };
         let font = egui::FontId::proportional(10.0 * k);
-        let g = p.layout_no_wrap(s, font, Color32::WHITE);
+        let fill = icons::Colors::theme().node;
+        let ink = crate::contrast::ink_on(fill);
+        let g = p.layout_no_wrap(s, font, ink);
         let w = (g.size().x + 6.0 * k).max(14.0 * k);
         let c = pos2(
             icon_center.x + icon_size * 0.5,
             icon_center.y - icon_size * 0.4,
         );
         let r = Rect::from_center_size(c, vec2(w, 14.0 * k));
-        p.rect_filled(r, 7.0 * k, icons::Colors::theme().node);
-        p.galley(r.center() - g.size() / 2.0, g, Color32::WHITE);
+        p.rect_filled(r, 7.0 * k, fill);
+        p.galley(r.center() - g.size() / 2.0, g, ink);
     }
     let hint = if compact {
         format!("{}: {}", t.label, t.hint)

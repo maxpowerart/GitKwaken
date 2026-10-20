@@ -317,10 +317,12 @@ impl GkApp {
             let labels = crate::util::tab_labels(&paths);
             for (i, t) in self.tabs.iter().enumerate() {
                 let selected = i == self.active;
-                let color = if selected { strong } else { text };
-                let g = ui
-                    .painter()
-                    .layout_no_wrap(labels[i].clone(), font.clone(), color);
+                // Colored once the tab's fill is known.
+                let g = ui.painter().layout_no_wrap(
+                    labels[i].clone(),
+                    font.clone(),
+                    egui::Color32::PLACEHOLDER,
+                );
                 let size = egui::vec2(12.0 + g.size().x + 8.0 + 16.0 * k + 6.0, tab_h);
                 let (rect, r) = ui.allocate_exact_size(size, egui::Sense::click());
                 let close_rect = egui::Rect::from_center_size(
@@ -346,6 +348,8 @@ impl GkApp {
                     se: 0,
                 };
                 ui.painter().rect_filled(rect, radius, fill);
+                let tab_bg = crate::contrast::over(fill, p.chrome);
+                let color = crate::contrast::text_on(if selected { strong } else { text }, tab_bg);
                 if selected {
                     ui.painter().line_segment(
                         [
@@ -713,7 +717,10 @@ impl gk_dx11::App for GkApp {
                 top: 2,
                 bottom: 0,
             }))
-            .show(ui, |ui| self.menu_bar(ui));
+            .show(ui, |ui| {
+                on_chrome(ui, self.palette.chrome);
+                self.menu_bar(ui)
+            });
         // 6 points taller than it used to be; the toolbar gave them up (its margins), so
         // everything below the toolbar stays where it was.
         egui::Panel::top("tabs")
@@ -724,7 +731,10 @@ impl gk_dx11::App for GkApp {
                 top: 5,
                 bottom: 3,
             }))
-            .show(ui, |ui| self.tab_bar(ui));
+            .show(ui, |ui| {
+                on_chrome(ui, self.palette.chrome);
+                self.tab_bar(ui)
+            });
         self.git_banner(ui);
         if self.show_log {
             use views::panel_size::{Axis, remember, restore};
@@ -872,3 +882,38 @@ impl GkApp {
         }
     }
 }
+
+/// Text on the chrome band (menu bar, repository tabs) reads on the chrome color, which a
+/// style may set far from its panels. Menu titles sit on the band itself, buttons on their
+/// fill: a fill their text would not read on is nudged until it does (never in the built-in
+/// styles).
+pub(crate) fn on_chrome(ui: &mut egui::Ui, chrome: egui::Color32) {
+    use crate::contrast::{SECONDARY, TEXT, fill_for, over, ratio, text_on};
+    let v = ui.visuals_mut();
+    let text = v.text_color();
+    v.override_text_color = None;
+    v.widgets.noninteractive.fg_stroke.color = text_on(text, chrome);
+    for w in [
+        &mut v.widgets.inactive,
+        &mut v.widgets.hovered,
+        &mut v.widgets.active,
+        &mut v.widgets.open,
+    ] {
+        let fg = text_on(w.fg_stroke.color, chrome);
+        w.fg_stroke.color = fg;
+        for fill in [&mut w.weak_bg_fill, &mut w.bg_fill] {
+            let shown = over(*fill, chrome);
+            if ratio(fg, shown) < TEXT {
+                *fill = fill_for(shown, fg, TEXT);
+            }
+        }
+    }
+    v.weak_text_color = Some(crate::contrast::readable(
+        v.weak_text_color(),
+        chrome,
+        SECONDARY + 0.6,
+    ));
+}
+
+#[cfg(test)]
+mod contrast_tests;

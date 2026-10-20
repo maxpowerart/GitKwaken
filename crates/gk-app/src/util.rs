@@ -54,8 +54,9 @@ pub fn short_id(id: &str) -> &str {
 
 /// Small rounded label, as used for branch/tag decorations.
 pub fn chip(ui: &mut Ui, text: &str, color: Color32, bold: bool) -> egui::Response {
+    let (color, ink) = crate::views::history::table::chip_colors(color);
     let mut rt = RichText::new(text)
-        .color(crate::views::history::table::chip_text_color(color))
+        .color(ink)
         .size(ui.style().text_styles[&egui::TextStyle::Small].size);
     if bold {
         rt = rt.strong();

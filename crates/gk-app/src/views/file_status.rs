@@ -632,8 +632,9 @@ fn kind_chips(ui: &mut Ui, kinds: &mut u8, counts: &[usize; 8], p: crate::theme:
     for &(bit, code, label) in list::KIND_FILTERS.iter() {
         let n = counts[bit.trailing_zeros() as usize];
         let on = *kinds & bit != 0;
+        // Empty kinds look weaker, but stay readable.
         let text = RichText::new(code).monospace().color(if n == 0 && !on {
-            p.muted.gamma_multiply(0.6)
+            ui.visuals().weak_text_color()
         } else {
             p.muted
         });

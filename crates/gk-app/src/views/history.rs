@@ -50,6 +50,9 @@ pub struct HistoryState {
     pub(crate) clipboard: Oneshot<String>,
     /// "Jump to:" field (SHA prefix, branch, tag or HEAD).
     jump: String,
+    /// Rows reachable from HEAD, local branches and stashes, for the history (pointer) and
+    /// local tips (hash) it was computed for; the others are only on remotes (not pulled).
+    local_rows: Option<(usize, u64, std::sync::Arc<Vec<bool>>)>,
 }
 
 impl Default for HistoryState {
@@ -67,6 +70,7 @@ impl Default for HistoryState {
             auto_selected: false,
             clipboard: Oneshot::default(),
             jump: String::new(),
+            local_rows: None,
         }
     }
 }
@@ -700,7 +704,7 @@ fn filtered_table(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
         for r in range {
             let cid = rows[r];
             let rect = f.row_rect(r);
-            table::paint_row_bg(
+            let row_bg = table::paint_row_bg(
                 f,
                 r,
                 rect,
@@ -715,7 +719,7 @@ fn filtered_table(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut 
                 f.painter,
                 rect,
                 &rects,
-                &st,
+                &st.on(row_bg),
                 &cid,
                 meta,
                 labels,
@@ -860,6 +864,7 @@ fn commit_table(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Sh
     let rects = table::layout_columns(left, right, tab.history.graph_w, &tab.history.cols);
     table::header(ui, id.with("header"), &mut tab.history.cols, &rects, true);
 
+    let local = local_rows(&mut tab.history, &hist, snap);
     let st = cell_style(ui, shared);
     let cols = tab.history.cols;
     let session = &tab.session;
@@ -892,10 +897,10 @@ fn commit_table(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Sh
         for r in range.clone() {
             let rect = f.row_rect(r);
             if r < off {
-                table::paint_row_bg(f, r, rect, false, focused, st.palette, &visuals);
+                let row_bg = table::paint_row_bg(f, r, rect, false, focused, st.palette, &visuals);
                 let text = format!("Uncommitted changes ({changes})");
                 let desc = Rect::from_x_y_ranges(rects.desc, rect.y_range());
-                table::cell_text(f.painter, desc, text, &st.font, st.muted);
+                table::cell_text(f.painter, desc, text, &st.font, st.on(row_bg).muted);
                 continue;
             }
             let cr = r - off;
@@ -906,6 +911,8 @@ fn commit_table(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Sh
                 f.painter.rect_filled(rect, 0.0, c);
             }
             let is_head = head == Some(cid);
+            // Only on a remote: not pulled yet (like Fork, drawn faded).
+            let faded = !local.get(cr).copied().unwrap_or(true);
             graph::paint_row(
                 &gp,
                 &graph::RowGraph {
@@ -917,6 +924,7 @@ fn commit_table(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Sh
                     is_head,
                     bg,
                     head_color: st.palette.head,
+                    faded,
                 },
             );
             graph::fade_overflow(
@@ -933,7 +941,21 @@ fn commit_table(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Sh
                 .and_then(|i| metas.get(i))
                 .and_then(|m| m.as_deref());
             let labels = table::labels_of(&snap.refs.labels, &cid);
-            table::paint_commit_cells(f.painter, rect, &rects, &st, &cid, meta, labels, is_head);
+            let row_bg = row_fill.map_or(bg, |c| crate::contrast::over(c, bg));
+            table::paint_commit_cells(
+                f.painter,
+                rect,
+                &rects,
+                &if faded {
+                    st.on(row_bg).faded(row_bg)
+                } else {
+                    st.on(row_bg)
+                },
+                &cid,
+                meta,
+                labels,
+                is_head,
+            );
         }
         if dirty {
             // Worktree node on HEAD's lane, dashed into the HEAD commit.
@@ -1149,5 +1171,37 @@ pub fn commit_menu(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, ids: &[Objec
     }
     if let Some(d) = dialog {
         tab.dialog = Some(d);
+    }
+}
+
+/// [`HistoryState::local_rows`] for `hist`, recomputed only when the history or the local
+/// tips (HEAD, local branches, stashes) change.
+fn local_rows(
+    state: &mut HistoryState,
+    hist: &std::sync::Arc<gk_core::history::History>,
+    snap: &Snapshot,
+) -> std::sync::Arc<Vec<bool>> {
+    use std::hash::{Hash, Hasher};
+    let refs = &snap.refs;
+    let mut tips: Vec<ObjectId> = refs
+        .branches
+        .iter()
+        .map(|b| b.target.as_str())
+        .chain(refs.stashes.iter().map(|s| s.id.as_str()))
+        .filter_map(|h| ObjectId::from_hex(h.as_bytes()).ok())
+        .chain(head_oid(snap))
+        .collect();
+    tips.sort_unstable();
+    tips.dedup();
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    tips.hash(&mut h);
+    let key = (std::sync::Arc::as_ptr(hist) as usize, h.finish());
+    match &state.local_rows {
+        Some((p, k, rows)) if (*p, *k) == key => rows.clone(),
+        _ => {
+            let rows = std::sync::Arc::new(hist.reachable(&tips));
+            state.local_rows = Some((key.0, key.1, rows.clone()));
+            rows
+        }
     }
 }

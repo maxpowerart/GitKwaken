@@ -265,7 +265,9 @@ fn list(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared, en
         for r in range {
             let e = &entries[r];
             let rect = f.row_rect(r);
-            table::paint_row_bg(f, r, rect, sel == Some(r), focused, st.palette, &visuals);
+            let row_bg =
+                table::paint_row_bg(f, r, rect, sel == Some(r), focused, st.palette, &visuals);
+            let st = st.on(row_bg);
             let cell = |a: f32, b: f32| Rect::from_x_y_ranges(a..=b, rect.y_range());
             let (action, msg) = split_subject(&e.subject);
             let mut x = x0;
@@ -277,7 +279,7 @@ fn list(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared, en
                 st.muted,
             );
             x += sel_w;
-            let color = action_color(action, st.palette);
+            let color = crate::contrast::text_on(action_color(action, st.palette), row_bg);
             table::cell_text(
                 f.painter,
                 cell(x, x + act_w),
@@ -288,7 +290,7 @@ fn list(ui: &mut Ui, tab: &mut RepoTab, snap: &Snapshot, shared: &mut Shared, en
             x += act_w;
             let right = f.x.max - id_w - date_w;
             let text_color = if head == Some(e.id) {
-                st.palette.head
+                crate::contrast::text_on(st.palette.head, row_bg)
             } else {
                 st.text
             };
