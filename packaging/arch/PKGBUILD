@@ -10,7 +10,7 @@
 # This template keeps 'SKIP' as the checksum; the release copy pins it.
 
 pkgname=gitkwaken-bin
-_ver=1.0.4
+_ver=1.0.5
 pkgver=${_ver//-/_}
 pkgrel=1
 pkgdesc='Fast, lightweight git client'

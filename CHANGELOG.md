@@ -4,7 +4,7 @@ Each release's section is shown in GitKwaken's "update available" dialog and on 
 release page (the release workflow copies the `## <version>` section). Keep entries short and
 user-facing.
 
-## Unreleased
+## 1.0.5
 
 - Readable everywhere: text on selected and hovered rows, ref labels, badges, menus,
   disabled buttons and hints keeps WCAG contrast (4.5:1 for text, 3:1 for secondary text) in
